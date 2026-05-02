@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from cli.job import job_app
 from cli.project import project_app
 
 app = typer.Typer(
@@ -13,6 +14,7 @@ app = typer.Typer(
 )
 
 app.add_typer(project_app, name="project", help="Manage hammock-registered projects.")
+app.add_typer(job_app, name="job", help="Submit and manage hammock jobs.")
 
 
 if __name__ == "__main__":
