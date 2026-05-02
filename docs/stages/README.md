@@ -15,3 +15,4 @@ The intent is to give future agents (and humans) enough context that reading `de
 | Stage | File | Status | PR |
 |---|---|---|---|
 | 0 | [stage-00.md](stage-00.md) | merged | [#1](https://github.com/NitinJ/hammock/pull/1) |
+| 1 | [stage-01.md](stage-01.md) | merged | [#2](https://github.com/NitinJ/hammock/pull/2) |
