@@ -17,4 +17,5 @@ The intent is to give future agents (and humans) enough context that reading `de
 | 0 | [stage-00.md](stage-00.md) | merged | [#1](https://github.com/NitinJ/hammock/pull/1) |
 | 1 | [stage-01.md](stage-01.md) | merged | [#2](https://github.com/NitinJ/hammock/pull/2) |
 | 2 | [stage-02.md](stage-02.md) | merged | [#3](https://github.com/NitinJ/hammock/pull/3) |
+| 3 | [stage-03.md](stage-03.md) | in flight | [#6](https://github.com/NitinJ/hammock/pull/6) |
 | 8 | [stage-08.md](stage-08.md) | merged | [#4](https://github.com/NitinJ/hammock/pull/4) |
