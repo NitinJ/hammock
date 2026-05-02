@@ -15,9 +15,16 @@
 #   3. Runs `uv sync --dev` in the worktree.
 #   4. Substitutes <NN> in docs/prompts/stage-prompt.txt, prepends the worktree
 #      path so the agent knows where to operate, then `exec`s `claude` from
-#      ~/workspace (the user's main work dir) with that prompt as the first
-#      user message. The current terminal becomes the Claude Code session
-#      (interactive).
+#      ~/workspace with that prompt as the first user message. The current
+#      terminal becomes the Claude Code session (interactive).
+#
+# CWD policy:
+#   The script's own cwd stays at ~/workspace from the very start (after
+#   preflight) so claude inherits ~/workspace as its project directory —
+#   this is where the user's claude config (CLAUDE.md, .claude/, etc.) lives.
+#   Worktree operations are scoped to subshells so the parent cwd never
+#   drifts. The agent gets the worktree path explicitly via the prompt
+#   header.
 #
 # Exits non-zero before launching Claude on any setup error.
 
@@ -68,6 +75,16 @@ if ! command -v uv >/dev/null 2>&1; then
     echo "Error: 'uv' CLI not found in PATH." >&2
     exit 1
 fi
+
+# ----------------------------------------------------------------- cwd ------
+# Anchor cwd at ~/workspace immediately. Every subsequent command in this
+# script either uses an absolute path or runs in a subshell — the parent
+# shell never leaves ~/workspace, so the final `exec claude` inherits it.
+if [[ ! -d "$HOME/workspace" ]]; then
+    echo "Error: $HOME/workspace does not exist." >&2
+    exit 1
+fi
+cd "$HOME/workspace"
 
 # --------------------------------------------------------------- worktree ---
 if [[ -d "$WORKTREE_DIR" ]]; then
@@ -120,6 +137,13 @@ cat <<EOF
 
 EOF
 
-# Drop into ~/workspace and replace the shell with claude.
-cd "$HOME/workspace"
+# Sanity: pwd should still be ~/workspace (we never `cd` outside subshells).
+if [[ "$PWD" != "$HOME/workspace" ]]; then
+    echo "Internal error: pwd drifted to $PWD; expected $HOME/workspace" >&2
+    exit 1
+fi
+
+# Replace the shell with claude. Claude inherits cwd=~/workspace, picking up
+# the user's claude config there. The agent reads its target worktree from
+# the WORKING DIRECTORY header in the prompt.
 exec claude "$PROMPT"
