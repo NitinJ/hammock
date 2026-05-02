@@ -1,0 +1,78 @@
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual envs
+.env
+.venv
+env/
+venv/
+ENV/
+
+# uv
+.uv/
+
+# Type checkers
+.mypy_cache/
+.pyright/
+.pytype/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- Node / pnpm / Vite ---------------------------------------------------
+node_modules/
+dist/
+.vite/
+.cache/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- IDE / OS -------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Hammock runtime (must never be committed) ----------------------------
+# ~/.hammock/ is the runtime dir; never inside the repo, but defend against
+# accidental in-repo runtime dirs:
+.hammock/
+
+# Local scratch
+scratch/
+*.local
