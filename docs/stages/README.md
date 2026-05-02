@@ -18,3 +18,4 @@ The intent is to give future agents (and humans) enough context that reading `de
 | 1 | [stage-01.md](stage-01.md) | merged | [#2](https://github.com/NitinJ/hammock/pull/2) |
 | 2 | [stage-02.md](stage-02.md) | merged | [#3](https://github.com/NitinJ/hammock/pull/3) |
 | 8 | [stage-08.md](stage-08.md) | merged | [#4](https://github.com/NitinJ/hammock/pull/4) |
+| 11 | [stage-11.md](stage-11.md) | merged | [#5](https://github.com/NitinJ/hammock/pull/5) |
