@@ -1,77 +1,78 @@
-  READ FIRST (in this order):            
-  1. docs/implementation.md §7 Stage <NN>             — the spec for this stage                                                                                                               
-  2. docs/implementation.md §8                        — conventions (TDD,                                                                                                                     
-                                                         parallel-stage,                                                                                                                      
-                                                         summary docs,                                                                                                                        
-                                                         conflict resolution)                                                                                                                 
-  3. docs/design.md (sections referenced by §7 Stage <NN>)                        
-  4. docs/stages/stage-00.md and docs/stages/stage-01.md                                                                                                                                      
-     (and any other docs/stages/stage-*.md present)                                                                                                                                           
-     — context for what's locked, what was decided                                                                                                                                            
-  5. shared/ to learn the contract surface (don't modify it)                                                                                                                                  
-                                                                                                                                                                                              
-  SETUP                                                                                                                                                                                       
-  - This is a fresh worktree off main. Run `uv sync --dev` to install deps.                                                                                                                   
-  - Branch: `feat/stage-<NN>-<short-name>`. Pick a short slug from the                                                                                                                        
-    stage's goal (e.g. stage-08-fastapi-shell, stage-11-frontend-scaffold).                                                                                                                   
-                                                                                                                                                                                              
-  DISCIPLINE (mandatory)                                                                                                                                                                      
-  - TDD per §8.5:                                                                                                                                                                             
-      1. Write the interface skeletons (types, function signatures, empty                                                                                                                     
-         bodies that raise NotImplementedError).                                                                                                                                              
-      2. Write FAILING tests against those interfaces. Commit:                                                                                                                                
-           test(stage-<NN>): failing tests for <feature>                                                                                                                                      
-      3. Write impl until tests pass. Commit:                                                                                                                                                 
-           feat(stage-<NN>): impl that makes tests pass                                                                                                                                       
-      4. Add edge / property / integration tests as needed. Commit:               
-           test(stage-<NN>): edge + property coverage   (optional)                                                                                                                            
-  - For Stages 4, 7, 13, 15 ONLY: consider escalating to a T2||T3 sub-agent                                                                                                                   
-    split per §8.5. For all other stages, single-agent tests-first is fine.                                                                                                                   
-                                                                                                                                                                                              
-  VERIFY BEFORE PUSHING (must all pass)                                                                                                                                                       
-      uv run ruff check .                                                                                                                                                                     
-      uv run ruff format --check .                                                                                                                                                            
-      uv run pyright shared/ dashboard/                                           
-      uv run pytest tests/ -q                                                                                                                                                                 
-      uv run python scripts/manual-smoke-stage<NN>.py     # if applicable         
-                                                                                                                                                                                              
-  SHIP                                                                            
-  - gh pr create with title `feat(stage-<NN>): <stage name>`.                                                                                                                                 
-  - PR body must include: design-doc sections relied on, impl-plan stage                                                                                                                      
-    reference, "verify" subsection with smoke output, test plan checklist.                                                                                                                    
-  - Wait for CI green on both py3.12 and py3.13. Don't merge — the human does                                                                                                                 
-    that.                                                                                                                                                                                     
-                                                                                                                                                                                              
-  REBASE / CONFLICTS (per §8.4)                                                                                                                                                               
-  - If your PR shows merge conflict on GitHub, run:                               
-      git fetch origin                                                                                                                                                                        
-      git rebase origin/main                                                      
-      # Mechanical conflicts (pyproject.toml, uv.lock, docs/stages/README.md):                                                                                                                
-      # union the additions, then `uv sync` and rerun verify.                                                                                                                                 
-      git push --force-with-lease                                                                                                                                                             
-  - For SEMANTIC conflicts (interface incompatibilities, behavioural overlap),                                                                                                                
-    HALT. Post a PR comment explaining the conflict and ping the human. Do                                                                                                                    
-    not ship a guessed fix.                                                                                                                                                                   
-                                                                                                                                                                                              
-  AFTER MERGE                                                                                                                                                                                 
-  - git checkout main && git pull                                                                                                                                                             
-  - Write docs/stages/stage-<NN>.md mirroring the structure of                                                                                                                                
-    docs/stages/stage-01.md. Update docs/stages/README.md to add the row.
-  - Commit on main directly (small docs commit, permitted per §8.6):                                                                                                                          
-      docs: stage-<NN> summary                                                                                                                                                                
-  - git push origin main                                                                                                                                                                      
-                                                                                                                                                                                              
-  THEN (if your stage chain continues): pick up the next stage in your group                                                                                                                  
+  READ FIRST (in this order):
+  1. docs/implementation.md §7 Stage <NN>             — the spec for this stage
+  2. docs/implementation.md §8                        — conventions (TDD,
+                                                         parallel-stage,
+                                                         summary docs,
+                                                         conflict resolution)
+  3. docs/design.md (sections referenced by §7 Stage <NN>)
+  4. docs/stages/stage-00.md and docs/stages/stage-01.md
+     (and any other docs/stages/stage-*.md present)
+     — context for what's locked, what was decided
+  5. shared/ to learn the contract surface (don't modify it)
+
+  SETUP
+  - This is a fresh worktree off main. Run `uv sync --dev` to install deps.
+  - Branch: `feat/stage-<NN>-<short-name>`. Pick a short slug from the
+    stage's goal (e.g. stage-08-fastapi-shell, stage-11-frontend-scaffold).
+
+  DISCIPLINE (mandatory)
+  - TDD per §8.5:
+      1. Write the interface skeletons (types, function signatures, empty
+         bodies that raise NotImplementedError).
+      2. Write FAILING tests against those interfaces. Commit:
+           test(stage-<NN>): failing tests for <feature>
+      3. Write impl until tests pass. Commit:
+           feat(stage-<NN>): impl that makes tests pass
+      4. Add edge / property / integration tests as needed. Commit:
+           test(stage-<NN>): edge + property coverage   (optional)
+  - For Stages 4, 7, 13, 15 ONLY: consider escalating to a T2||T3 sub-agent
+    split per §8.5. For all other stages, single-agent tests-first is fine.
+
+  VERIFY BEFORE PUSHING (must all pass)
+      uv run ruff check .
+      uv run ruff format --check .
+      uv run pyright shared/ dashboard/
+      uv run pytest tests/ -q
+      uv run python scripts/manual-smoke-stage<NN>.py     # if applicable
+
+  SHIP
+  - Before opening the PR, write docs/stages/stage-<NN>.md (mirroring the
+    structure of docs/stages/stage-01.md) and add its row to
+    docs/stages/README.md. Commit both on the feature branch:
+        docs(stage-<NN>): stage summary + README row
+    The stage summary is part of the PR — not a post-merge step.
+  - gh pr create with title `feat(stage-<NN>): <stage name>`.
+  - PR body must include: design-doc sections relied on, impl-plan stage
+    reference, "verify" subsection with smoke output, test plan checklist.
+  - Wait for CI green on both py3.12 and py3.13. Don't merge — the human does
+    that.
+
+  REBASE / CONFLICTS (per §8.4)
+  - If your PR shows merge conflict on GitHub, run:
+      git fetch origin
+      git rebase origin/main
+      # Mechanical conflicts (pyproject.toml, uv.lock, docs/stages/README.md):
+      # union the additions, then `uv sync` and rerun verify.
+      git push --force-with-lease
+  - For SEMANTIC conflicts (interface incompatibilities, behavioural overlap),
+    HALT. Post a PR comment explaining the conflict and ping the human. Do
+    not ship a guessed fix.
+
+  AFTER MERGE
+  - git checkout main && git pull
+  - No docs work needed — the stage summary was already merged with the PR.
+
+  THEN (if your stage chain continues): pick up the next stage in your group
   per the dependency DAG in §6. Same recipe.
-                                                                                                                                                                                              
-  OPERATING NOTES                                                                                                                                                                             
-  - You have full autonomy within the stage scope. Don't ask the human to                                                                                                                     
-    confirm intermediate decisions; ship and iterate.                                                                                                                                         
-  - If the stage spec is genuinely ambiguous and your decision could be wrong                                                                                                                 
-    in either direction, halt and ask. Otherwise, decide and document the                                                                                                                     
-    decision in the stage summary.                                                                                                                                                            
-  - If a stage's `Files changed` list grows beyond the §7 hard scope mid-                                                                                                                     
-    stage, stop, surface it (PR comment), and let the orchestrator decide                                                                                                                     
-    whether to split (12a/12b) or push the extra to v1+.                                                                                                                                      
-                                                                                                                                                                                              
+
+  OPERATING NOTES
+  - You have full autonomy within the stage scope. Don't ask the human to
+    confirm intermediate decisions; ship and iterate.
+  - If the stage spec is genuinely ambiguous and your decision could be wrong
+    in either direction, halt and ask. Otherwise, decide and document the
+    decision in the stage summary.
+  - If a stage's `Files changed` list grows beyond the §7 hard scope mid-
+    stage, stop, surface it (PR comment), and let the orchestrator decide
+    whether to split (12a/12b) or push the extra to v1+.
+
   Begin Stage <NN> now.
