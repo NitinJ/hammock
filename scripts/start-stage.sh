@@ -13,9 +13,11 @@
 #   2. Creates the worktree off origin/main if it doesn't already exist.
 #      Re-running with the same N is safe — it just enters the existing worktree.
 #   3. Runs `uv sync --dev` in the worktree.
-#   4. Substitutes <NN> in docs/prompts/stage-prompt.txt to produce the initial
-#      prompt, then `exec`s `claude` with that prompt as the first user message.
-#      The current terminal becomes the Claude Code session (interactive).
+#   4. Substitutes <NN> in docs/prompts/stage-prompt.txt, prepends the worktree
+#      path so the agent knows where to operate, then `exec`s `claude` from
+#      ~/workspace (the user's main work dir) with that prompt as the first
+#      user message. The current terminal becomes the Claude Code session
+#      (interactive).
 #
 # Exits non-zero before launching Claude on any setup error.
 
@@ -78,16 +80,32 @@ else
     git -C "$HAMMOCK_DIR" worktree add "$WORKTREE_DIR" origin/main
 fi
 
-cd "$WORKTREE_DIR"
-
 # --------------------------------------------------------------- uv sync ----
-echo "Syncing dependencies (uv sync --dev)..."
-uv sync --dev
+echo "Syncing dependencies in $WORKTREE_DIR (uv sync --dev)..."
+( cd "$WORKTREE_DIR" && uv sync --dev )
 
 # --------------------------------------------------------------- prompt -----
-# Substitute <NN> in the prompt template; pass the result as Claude's first
-# user message.
-PROMPT="$(sed "s/<NN>/$NN/g" "$PROMPT_TEMPLATE")"
+# Substitute <NN> and prepend the worktree path so the agent knows to operate
+# inside the worktree even though Claude's cwd will be ~/workspace.
+TEMPLATE_BODY="$(sed "s/<NN>/$NN/g" "$PROMPT_TEMPLATE")"
+
+PROMPT="$(cat <<HEADER
+WORKING DIRECTORY FOR THIS STAGE: $WORKTREE_DIR
+
+Your shell cwd is ~/workspace (the user's main work directory). The hammock
+stage worktree lives at the path above. For every command and file operation
+in this session, use absolute paths under that worktree, or prefix bash
+calls with \`cd $WORKTREE_DIR && <cmd>\`. Do NOT touch the sibling
+\`hammock\` checkout at \$HOME/workspace/hammock — that is the human's
+main worktree.
+
+The deps have already been synced via \`uv sync --dev\` inside the worktree.
+
+────────────────────────────────────────────────────────────────────────────
+
+$TEMPLATE_BODY
+HEADER
+)"
 
 cat <<EOF
 
@@ -95,12 +113,13 @@ cat <<EOF
   Stage $NN ready.
   Worktree:    $WORKTREE_DIR
   Branch:      will be created by the agent (feat/stage-$NN-<short-name>)
-  Prompt:      $PROMPT_TEMPLATE (with <NN>=$NN substituted)
+  Prompt:      $PROMPT_TEMPLATE (with <NN>=$NN substituted, +worktree header)
+  Claude cwd:  $HOME/workspace
   Launching:   claude  (interactive)
 ────────────────────────────────────────────────────────────────────────────
 
 EOF
 
-# `exec` replaces the shell with claude so Ctrl-C, signals, and the user's
-# interactive session all behave naturally.
+# Drop into ~/workspace and replace the shell with claude.
+cd "$HOME/workspace"
 exec claude "$PROMPT"
