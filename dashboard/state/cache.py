@@ -209,6 +209,14 @@ class Cache:
     def get_hil(self, item_id: str) -> HilItem | None:
         return self._hil.get(item_id)
 
+    def hil_job_slug(self, item_id: str) -> str | None:
+        """Return the job slug that owns *item_id*, or ``None`` if unknown.
+
+        HIL items are addressable by id alone (per design doc), but the
+        owning job is needed for routing, projections, and SSE scoping.
+        """
+        return self._hil_job.get(item_id)
+
     def list_hil(
         self,
         *,
