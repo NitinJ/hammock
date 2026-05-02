@@ -23,4 +23,5 @@ router = APIRouter()
 @router.get("/api/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
     """Return server liveness and aggregate cache entry count."""
-    raise NotImplementedError
+    cache = request.app.state.cache  # type: ignore[attr-defined]
+    return HealthResponse(ok=True, cache_size=sum(cache.size().values()))

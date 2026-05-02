@@ -9,21 +9,17 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-from datetime import datetime, timezone
 
 from dashboard.api import HealthResponse
 from dashboard.app import create_app
 from dashboard.settings import Settings
 from shared.atomic import atomic_write_json
 from shared.models import ProjectConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +68,7 @@ class TestHealthEndpoint:
             name="Alpha",
             repo_path="/tmp/alpha",
             default_branch="main",
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=datetime.now().astimezone().tzinfo),
         )
         atomic_write_json(project_dir / "project.json", project)
 
@@ -93,17 +89,19 @@ class TestHealthEndpoint:
 
 class TestLifespan:
     def test_cache_on_app_state(self, tmp_path: Path) -> None:
+        from dashboard.state.cache import Cache
+
         settings = Settings(root=tmp_path)
         app = create_app(settings)
-        with TestClient(app) as client:
-            from dashboard.state.cache import Cache
+        with TestClient(app):
             assert isinstance(app.state.cache, Cache)
 
     def test_pubsub_on_app_state(self, tmp_path: Path) -> None:
+        from dashboard.state.pubsub import InProcessPubSub
+
         settings = Settings(root=tmp_path)
         app = create_app(settings)
-        with TestClient(app) as client:
-            from dashboard.state.pubsub import InProcessPubSub
+        with TestClient(app):
             assert isinstance(app.state.pubsub, InProcessPubSub)
 
     def test_lifespan_clean_shutdown_no_exception(self, tmp_path: Path) -> None:

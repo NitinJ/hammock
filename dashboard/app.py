@@ -15,12 +15,10 @@ land in Stages 4/6 and will be wired here then.
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from rich.logging import RichHandler
 
 from dashboard.api import router
 from dashboard.settings import Settings
@@ -30,17 +28,8 @@ from dashboard.watcher import tailer
 from dashboard.watcher.tailer import CacheChange
 
 
-def _configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True)],
-    )
-
-
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings: Settings = app.state.settings  # type: ignore[attr-defined]
 
     cache = await Cache.bootstrap(settings.root)

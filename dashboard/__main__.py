@@ -6,10 +6,22 @@ single worker is locked — multiple workers would split the cache).
 
 from __future__ import annotations
 
-import uvicorn
+import logging
 
-from dashboard.app import _configure_logging, create_app
+import uvicorn
+from rich.logging import RichHandler
+
+from dashboard.app import create_app
 from dashboard.settings import Settings
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True)],
+    )
 
 
 def main() -> None:
