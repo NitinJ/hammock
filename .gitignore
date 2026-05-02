@@ -75,4 +75,5 @@ Thumbs.db
 
 # Local scratch
 scratch/
+.scratch/
 *.local
