@@ -1,0 +1,60 @@
+name: frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/frontend/**"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "dashboard/frontend/**"
+      - ".github/workflows/frontend.yml"
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-type-test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: dashboard/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: dashboard/frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (ESLint)
+        run: pnpm lint
+        continue-on-error: true  # ESLint not configured yet — Stage 12 wires flat config
+
+      - name: Format check (Prettier)
+        run: pnpm format
+        continue-on-error: true  # Prettier not configured yet
+
+      - name: Type check (vue-tsc)
+        run: pnpm type-check
+
+      - name: Unit tests (vitest)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
