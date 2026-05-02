@@ -17,7 +17,7 @@ until then). Item 12 — Job Driver liveness — is also stubbed (``info``,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -85,7 +85,7 @@ def run_light(project: ProjectConfig) -> DoctorReport:
         slug=project.slug,
         tier="light",
         checks=checks,
-        ran_at=datetime.now(timezone.utc),
+        ran_at=datetime.now(UTC),
     )
 
 
@@ -121,7 +121,7 @@ def run_full(
         slug=project.slug,
         tier="full",
         checks=checks,
-        ran_at=datetime.now(timezone.utc),
+        ran_at=datetime.now(UTC),
     )
 
 
@@ -169,7 +169,9 @@ def _check_remote_url_matches(n: int, project: ProjectConfig, repo: Path) -> Che
     if expected is None:
         return CheckResult(n, "warn", "remote_url matches", True, "(no remote configured)")
     if actual is None:
-        return CheckResult(n, "warn", "remote_url matches", False, "git remote get-url origin failed")
+        return CheckResult(
+            n, "warn", "remote_url matches", False, "git remote get-url origin failed"
+        )
     return CheckResult(
         number=n,
         severity="warn",
@@ -280,9 +282,7 @@ def _check_gitignore_excludes_hammock(n: int, repo: Path, *, auto_fix: bool) -> 
             "appended '.hammock/' to .gitignore",
             auto_fixed=True,
         )
-    return CheckResult(
-        n, "warn", ".gitignore excludes .hammock/", False, "missing entry .hammock/"
-    )
+    return CheckResult(n, "warn", ".gitignore excludes .hammock/", False, "missing entry .hammock/")
 
 
 def _check_no_orphaned_worktrees(
@@ -323,9 +323,7 @@ def _check_no_stale_skill_symlinks(n: int, project: ProjectConfig) -> CheckResul
     )
 
 
-def _check_job_driver_liveness(
-    n: int, project: ProjectConfig, *, root: Path | None
-) -> CheckResult:
+def _check_job_driver_liveness(n: int, project: ProjectConfig, *, root: Path | None) -> CheckResult:
     # Stage 4 is when this becomes meaningful. Stage 2: count active jobs in
     # the project; if any have a stale heartbeat, surface it. v0 stub: count.
     jobs_dir = paths.jobs_dir(root)

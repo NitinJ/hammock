@@ -9,6 +9,7 @@ distinct from the mutable display name. Registration creates the directory
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -30,6 +31,12 @@ class ProjectConfig(BaseModel):
     remote_url: str | None = Field(default=None, description="GitHub remote URL")
     default_branch: str = Field(min_length=1, description="default branch name")
     created_at: datetime
+
+    # Health — set by ``hammock project doctor``; advisory only. Per design doc
+    # § Project Registry § `project.json` schema. Both default to None on a
+    # never-doctor'd project.
+    last_health_check_at: datetime | None = None
+    last_health_check_status: Literal["pass", "warn", "fail"] | None = None
 
     @field_validator("slug")
     @classmethod

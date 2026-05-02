@@ -12,8 +12,10 @@ import subprocess
 from pathlib import Path
 
 
-def _run(cmd: list[str], *, cwd: Path | None = None, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 — args are constructed from typed inputs
+def _run(
+    cmd: list[str], *, cwd: Path | None = None, timeout: float = 5.0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         cmd,
         capture_output=True,
         text=True,

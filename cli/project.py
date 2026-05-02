@@ -24,8 +24,7 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -33,7 +32,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from cli import _external, doctor as _doctor
+from cli import _external
+from cli import doctor as _doctor
 from shared import paths
 from shared.atomic import atomic_write_json
 from shared.models import ProjectConfig
@@ -41,11 +41,15 @@ from shared.slug import (
     SlugDerivationError,
     derive_slug,
     is_valid_slug,
-    validate_slug,
 )
 
-console = Console()
-err_console = Console(stderr=True)
+# ``highlight=False`` keeps Rich's ANSI markup we explicitly request (e.g.
+# ``[red]...[/red]``) while disabling automatic colorisation of paths /
+# numbers, which interpolates ANSI codes into substrings that tests want to
+# match against ("myrepo-2026" otherwise renders with the trailing digits
+# split into a separate color span).
+console = Console(highlight=False)
+err_console = Console(stderr=True, highlight=False)
 
 
 project_app = typer.Typer(
@@ -93,7 +97,7 @@ def _list_projects(root: Path) -> list[ProjectConfig]:
         if cfg.exists():
             try:
                 out.append(ProjectConfig.model_validate_json(cfg.read_text()))
-            except Exception as e:  # noqa: BLE001 — surface broken entries, don't crash
+            except Exception as e:
                 err_console.print(f"[yellow]warn:[/yellow] could not load {cfg}: {e}")
     return out
 
@@ -165,9 +169,7 @@ def register(
     # 3. detect default branch
     detected_branch = default_branch or _external.git_default_branch(path)
     if detected_branch is None:
-        err_console.print(
-            "[red]Could not detect default branch; pass --default-branch[/red]"
-        )
+        err_console.print("[red]Could not detect default branch; pass --default-branch[/red]")
         raise typer.Exit(code=1)
 
     # 4. slug
@@ -198,7 +200,7 @@ def register(
         repo_path=str(path),
         remote_url=remote_url,
         default_branch=detected_branch,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     project_dir = paths.project_dir(slug_value, root=root)
@@ -274,8 +276,14 @@ def list_projects(
     projects = _list_projects(root)
 
     if json_out:
-        console.print_json(
-            data=[p.model_dump(mode="json") for p in projects]
+        # Use stdlib json so ``--json`` output is parseable (no highlight,
+        # no Rich wrapping). ``default=str`` handles datetime + Path.
+        typer.echo(
+            json.dumps(
+                [p.model_dump(mode="json") for p in projects],
+                indent=2,
+                default=str,
+            )
         )
         return
 
@@ -310,7 +318,7 @@ def show(
     project = _load_project(slug, root)
 
     if json_out:
-        console.print_json(data=project.model_dump(mode="json"))
+        typer.echo(json.dumps(project.model_dump(mode="json"), indent=2, default=str))
         return
 
     console.print(f"[bold]{project.slug}[/bold]   [dim]({project.name})[/dim]")
@@ -335,7 +343,9 @@ def show(
 @project_app.command("doctor")
 def doctor_cmd(
     slug: Annotated[str, typer.Argument(help="Project slug.")],
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Apply auto-fixes without confirm.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Apply auto-fixes without confirm.")
+    ] = False,
     json_out: Annotated[bool, typer.Option("--json", help="Emit JSON instead of pretty.")] = False,
 ) -> None:
     """Run the full health check for *slug*."""
@@ -363,7 +373,7 @@ def doctor_cmd(
                 for c in report.checks
             ],
         }
-        console.print_json(data=payload)
+        typer.echo(json.dumps(payload, indent=2, default=str))
         return
 
     console.print(f"[bold]doctor:[/bold] {project.slug} → [bold]{report.status}[/bold]")
@@ -488,7 +498,7 @@ def deregister(
     if not keep_overrides and overrides.exists():
         console.print(f"  remove overrides:    [yellow]rm -rf {overrides}[/yellow]")
     elif keep_overrides:
-        console.print(f"  remove overrides:    [dim]skipped (--keep-overrides)[/dim]")
+        console.print("  remove overrides:    [dim]skipped (--keep-overrides)[/dim]")
     console.print(f"  remove registry:     rm -rf {paths.project_dir(slug, root=root)}")
     console.print("\n[red bold]This is irreversible.[/red bold]")
 
