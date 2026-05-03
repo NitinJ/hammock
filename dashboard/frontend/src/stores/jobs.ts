@@ -19,7 +19,7 @@ export const useJobsStore = defineStore("jobs", () => {
   function patchJobCost(jobSlug: string, costUsd: number): void {
     const job = items.value.find((j) => j.job_slug === jobSlug);
     if (job) {
-      job.cost_usd = costUsd;
+      job.total_cost_usd = costUsd;
     }
   }
 

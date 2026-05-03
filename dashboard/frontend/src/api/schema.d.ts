@@ -1,7 +1,7 @@
 /**
- * Hand-mocked OpenAPI types for Stage 11.
- * Generated from FastAPI's /openapi.json once Stage 9 lands.
- * Run: pnpm schema:sync
+ * API types for the Hammock dashboard.
+ * Hand-authored to match FastAPI's /openapi.json (run `pnpm schema:sync` to regenerate).
+ * Updated in Stage 12 to fix divergences from backend projections.py.
  */
 
 // ── State enums ────────────────────────────────────────────────────────────
@@ -16,12 +16,15 @@ export type JobState =
 
 export type StageState =
   | "PENDING"
+  | "READY"
   | "RUNNING"
+  | "PARTIALLY_BLOCKED"
+  | "BLOCKED_ON_HUMAN"
   | "ATTENTION_NEEDED"
-  | "COMPLETED"
+  | "WRAPPING_UP"
+  | "SUCCEEDED"
   | "FAILED"
-  | "CANCELLED"
-  | "SKIPPED";
+  | "CANCELLED";
 
 export type TaskState = "OPEN" | "IN_PROGRESS" | "DONE" | "FAILED" | "CANCELLED";
 
@@ -29,26 +32,32 @@ export type HilState = "AWAITING" | "ANSWERED" | "CANCELLED";
 
 export type HilKind = "ask" | "review" | "manual-step";
 
-// ── Core models ────────────────────────────────────────────────────────────
+export type DoctorStatus = "pass" | "warn" | "fail" | "unknown";
 
-export interface Project {
+// ── Core / persisted models ────────────────────────────────────────────────
+
+export interface ProjectConfig {
   slug: string;
   name: string;
   repo_path: string;
-  github_remote: string | null;
+  remote_url: string | null;
+  default_branch: string;
   created_at: string;
+  last_health_check_at: string | null;
+  last_health_check_status: "pass" | "warn" | "fail" | null;
 }
 
-export interface Job {
+/** v0 alias — ProjectConfig and Project are the same shape. */
+export type Project = ProjectConfig;
+
+export interface JobConfig {
+  job_id: string;
   job_slug: string;
   project_slug: string;
-  title: string;
-  job_type: "build-feature" | "fix-bug";
-  state: JobState;
+  job_type: "build-feature" | "fix-bug" | string;
   created_at: string;
-  completed_at: string | null;
-  budget_cap_usd: number | null;
-  cost_usd: number;
+  created_by: string;
+  state: JobState;
 }
 
 export interface StageRun {
@@ -60,6 +69,8 @@ export interface StageRun {
   cost_usd: number;
   restart_count: number;
 }
+
+// ── HIL models (full, for Stage 13 form renderer) ─────────────────────────
 
 export interface HilItem {
   item_id: string;
@@ -109,45 +120,97 @@ export interface ManualStepAnswer {
   notes: string | null;
 }
 
-// ── API response shapes ────────────────────────────────────────────────────
-
-export interface HealthResponse {
-  ok: boolean;
-  cache_size: number;
-}
+// ── Projection types (matching dashboard/state/projections.py) ─────────────
 
 export interface ProjectListItem {
   slug: string;
   name: string;
   repo_path: string;
-  last_job_at: string | null;
-  active_job_count: number;
+  default_branch: string;
+  total_jobs: number;
   open_hil_count: number;
-  doctor_status: "green" | "yellow" | "red";
-  cost_30d_usd: number;
+  last_job_at: string | null;
+  doctor_status: DoctorStatus;
+}
+
+export interface ProjectDetail {
+  project: ProjectConfig;
+  total_jobs: number;
+  open_hil_count: number;
+  jobs_by_state: Record<string, number>;
 }
 
 export interface JobListItem {
+  job_id: string;
   job_slug: string;
   project_slug: string;
-  title: string;
   job_type: string;
   state: JobState;
   created_at: string;
-  cost_usd: number;
-  budget_cap_usd: number | null;
+  total_cost_usd: number;
+  current_stage_id: string | null;
+}
+
+export interface StageListEntry {
+  stage_id: string;
+  state: StageState;
+  attempt: number;
+  started_at: string | null;
+  ended_at: string | null;
+  cost_accrued: number;
+}
+
+export interface JobDetail {
+  job: JobConfig;
+  stages: StageListEntry[];
+  total_cost_usd: number;
+}
+
+export interface ActiveStageStripItem {
+  project_slug: string;
+  job_slug: string;
+  stage_id: string;
+  state: StageState;
+  cost_accrued: number;
+  started_at: string | null;
+}
+
+export interface HilQueueItem {
+  item_id: string;
+  kind: "ask" | "review" | "manual-step";
+  status: "awaiting" | "answered" | "cancelled";
+  stage_id: string;
+  job_slug: string;
+  project_slug: string | null;
+  created_at: string;
+  age_seconds: number;
 }
 
 export interface CostRollup {
   scope: "project" | "job" | "stage";
   id: string;
   total_usd: number;
-  breakdown: CostBreakdownEntry[];
+  total_tokens: number;
+  by_stage: Record<string, number>;
+  by_agent: Record<string, number>;
 }
 
-export interface CostBreakdownEntry {
-  label: string;
-  cost_usd: number;
+export interface SystemHealth {
+  cache_size: Record<string, number>;
+  watcher_alive: boolean;
+  mcp_server_count: number;
+  drivers_alive: number;
+}
+
+export interface ObservatoryMetrics {
+  [key: string]: unknown;
+}
+
+// ── API responses ──────────────────────────────────────────────────────────
+
+export interface HealthResponse {
+  ok: boolean;
+  cache_size: number;
 }
 
 // ── SSE event ──────────────────────────────────────────────────────────────

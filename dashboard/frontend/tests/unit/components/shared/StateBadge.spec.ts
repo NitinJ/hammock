@@ -14,12 +14,15 @@ describe("StateBadge", () => {
   ];
   const stageStates: StageState[] = [
     "PENDING",
+    "READY",
     "RUNNING",
+    "PARTIALLY_BLOCKED",
+    "BLOCKED_ON_HUMAN",
     "ATTENTION_NEEDED",
-    "COMPLETED",
+    "WRAPPING_UP",
+    "SUCCEEDED",
     "FAILED",
     "CANCELLED",
-    "SKIPPED",
   ];
   const taskStates: TaskState[] = ["OPEN", "IN_PROGRESS", "DONE", "FAILED", "CANCELLED"];
   const hilStates: HilState[] = ["AWAITING", "ANSWERED", "CANCELLED"];
