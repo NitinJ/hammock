@@ -361,6 +361,39 @@ async def test_sse_global_replay_delivers_all_job_events(populated_root: Path) -
     assert "id:" not in full
 
 
+async def test_sse_global_replay_with_high_last_event_id_does_not_drop_low_seq_jobs(
+    populated_root: Path,
+) -> None:
+    """Stage 12.5 (A8): on global scope, Last-Event-ID must not filter per-job
+    events — seq is per-job monotonic, not globally monotonic, so applying a
+    high Last-Event-ID as a per-file ``seq > N`` filter would silently drop
+    every event from any job whose local seq is below N.  Pre-12.5 this was
+    exactly the bug: a client that sent ``Last-Event-ID: 100`` (perhaps from
+    confusion with another scope) would receive nothing from a job whose seq
+    only went up to 3.
+
+    Fix: global scope ignores any Last-Event-ID and replays every event from
+    every job's events.jsonl.  The fixture has events with seq 1..3 across
+    multiple jobs; passing Last-Event-ID:100 must still deliver them.
+    """
+    pubsub: InProcessPubSub[CacheChange] = InProcessPubSub()
+    chunks = await _collect_stream(
+        "global",
+        pubsub,
+        populated_root,
+        last_event_id=100,
+    )
+    full = "".join(chunks)
+    # The populated_root fixture has cost_accrued events with seq 1..3 on
+    # alpha-job-1.  All of these must be delivered despite the high
+    # Last-Event-ID — otherwise the bug fires and we get nothing.
+    assert "cost_accrued" in full, (
+        "global replay must deliver low-seq events even when Last-Event-ID is high"
+    )
+    # Global suppresses id: regardless
+    assert "id:" not in full
+
+
 async def test_sse_no_last_event_id_skips_replay(tmp_path: Path) -> None:
     """No Last-Event-ID (None) → replay phase skipped; no id: lines emitted."""
     from shared import paths
