@@ -22,12 +22,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-import yaml
+import yaml  # noqa: E402
 
-from shared import paths
-from shared.atomic import atomic_write_json
-from shared.models.job import JobConfig, JobState
-from shared.models.stage import (
+from shared import paths  # noqa: E402
+from shared.atomic import atomic_write_json  # noqa: E402
+from shared.models.job import JobConfig, JobState  # noqa: E402
+from shared.models.stage import (  # noqa: E402
     Budget,
     ExitCondition,
     InputSpec,
@@ -44,7 +44,9 @@ _FIXTURES = {
 }
 
 
-def _make_stage(stage_id: str, required_inputs: list[str], required_outputs: list[str]) -> StageDefinition:
+def _make_stage(
+    stage_id: str, required_inputs: list[str], required_outputs: list[str]
+) -> StageDefinition:
     return StageDefinition(
         id=stage_id,
         worker="agent",
