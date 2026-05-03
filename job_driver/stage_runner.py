@@ -89,4 +89,32 @@ class FakeStageRunner:
         job_dir: Path,
         stage_run_dir: Path,
     ) -> StageResult:
-        raise NotImplementedError
+        fixture_path = self._fixtures_dir / f"{stage_def.id}.yaml"
+
+        if not fixture_path.exists():
+            return StageResult(succeeded=True)
+
+        spec = yaml.safe_load(fixture_path.read_text()) or {}
+        delay = float(spec.get("delay_seconds", 0.0))
+        outcome = spec.get("outcome", "succeeded")
+        reason: str | None = spec.get("reason")
+        cost_usd = float(spec.get("cost_usd", 0.0))
+        artifacts: dict[str, str] = spec.get("artifacts") or {}
+
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+        outputs_produced: list[str] = []
+        if outcome == "succeeded":
+            for filename, content in artifacts.items():
+                dest = job_dir / filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(str(content))
+                outputs_produced.append(filename)
+
+        return StageResult(
+            succeeded=(outcome == "succeeded"),
+            reason=reason,
+            outputs_produced=outputs_produced,
+            cost_usd=cost_usd,
+        )

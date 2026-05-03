@@ -17,17 +17,11 @@ import asyncio
 import json
 import os
 import signal
-import time
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
-import pytest
 import yaml
 
-from dashboard.compiler.compile import compile_job
 from job_driver.runner import JobDriver
 from job_driver.stage_runner import FakeStageRunner, StageResult
 from shared import paths
@@ -45,7 +39,6 @@ from shared.models.stage import (
     StageState,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -59,11 +52,7 @@ def _make_stage(
     runs_if: str | None = None,
     loop_back: LoopBack | None = None,
 ) -> StageDefinition:
-    ro = (
-        [RequiredOutput(path=p) for p in required_outputs]
-        if required_outputs
-        else None
-    )
+    ro = [RequiredOutput(path=p) for p in required_outputs] if required_outputs else None
     return StageDefinition(
         id=stage_id,
         worker=worker,  # type: ignore[arg-type]
@@ -93,6 +82,7 @@ def _write_job_config(job_dir: Path, state: JobState = JobState.SUBMITTED) -> Jo
         state=state,
     )
     from shared.atomic import atomic_write_json
+
     job_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_json(job_dir / "job.json", config)
     return config
@@ -146,7 +136,9 @@ async def test_submitted_transitions_to_stages_running(tmp_path: Path) -> None:
 
     _write_job_config(job_dir)
     _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["out-a.txt"])])
-    _write_fixture(fixtures_dir, "stage-a", {"outcome": "succeeded", "artifacts": {"out-a.txt": "done"}})
+    _write_fixture(
+        fixtures_dir, "stage-a", {"outcome": "succeeded", "artifacts": {"out-a.txt": "done"}}
+    )
 
     driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
     await driver.run()
@@ -223,7 +215,9 @@ async def test_resume_skips_completed_stages(tmp_path: Path) -> None:
     # stage-a already completed: output exists on disk
     (job_dir / "a.txt").write_text("already done")
     # stage-b needs to run
-    _write_fixture(fixtures_dir, "stage-b", {"outcome": "succeeded", "artifacts": {"b.txt": "b out"}})
+    _write_fixture(
+        fixtures_dir, "stage-b", {"outcome": "succeeded", "artifacts": {"b.txt": "b out"}}
+    )
 
     # Track which stages actually ran
     ran_stages: list[str] = []

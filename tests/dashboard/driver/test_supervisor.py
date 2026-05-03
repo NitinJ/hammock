@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -31,7 +31,7 @@ def test_heartbeat_not_stale_when_fresh(tmp_path: Path) -> None:
 
 
 def test_heartbeat_stale_when_old(tmp_path: Path) -> None:
-    """Heartbeat last-modified > 3× interval ago → stale."""
+    """Heartbeat last-modified > 3x interval ago → stale."""
     hb = tmp_path / "heartbeat"
     hb.write_text("")
 
@@ -63,7 +63,7 @@ def test_heartbeat_stale_when_missing(tmp_path: Path) -> None:
 
 
 def test_stale_threshold_calculation() -> None:
-    """stale_threshold_seconds = heartbeat_interval × stale_factor."""
+    """stale_threshold_seconds = heartbeat_interval x stale_factor."""
     sup = Supervisor(heartbeat_interval=30.0, stale_factor=3)
     assert sup.stale_threshold_seconds() == pytest.approx(90.0)
 

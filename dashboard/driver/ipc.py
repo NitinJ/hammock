@@ -9,12 +9,14 @@ Per design doc § Communication patterns:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import signal
 from pathlib import Path
 
 from shared import paths
-
+from shared.atomic import atomic_write_text
 
 # ---------------------------------------------------------------------------
 # Command-file writes
@@ -32,7 +34,9 @@ def write_cancel_command(
     The Job Driver polls this file every ``COMMAND_POLL_INTERVAL`` seconds and
     raises a cancellation on discovery.
     """
-    raise NotImplementedError
+    action_path = paths.job_human_action(job_slug, root=root)
+    payload = json.dumps({"command": "cancel", "reason": reason})
+    atomic_write_text(action_path, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +49,7 @@ def send_sigterm(pid: int) -> None:
 
     Raises ``ProcessLookupError`` if the process no longer exists.
     """
-    raise NotImplementedError
+    os.kill(pid, signal.SIGTERM)
 
 
 async def cancel_job(
@@ -57,7 +61,7 @@ async def cancel_job(
     """Cancel a running Job Driver.
 
     Writes the cancel command file *and* sends SIGTERM to the PID recorded in
-    ``job-driver.pid``.  Waits up to *timeout* seconds for the process to exit.
+    ``job-driver.pid``. Waits up to *timeout* seconds for the process to exit.
 
     Parameters
     ----------
@@ -68,4 +72,28 @@ async def cancel_job(
     timeout:
         Seconds to wait for graceful exit before giving up.
     """
-    raise NotImplementedError
+    write_cancel_command(job_slug, root=root)
+
+    pid_path = paths.job_driver_pid(job_slug, root=root)
+    if not pid_path.exists():
+        return
+
+    try:
+        raw = pid_path.read_text().strip()
+        pid = int(raw)
+    except (ValueError, OSError):
+        return
+
+    try:
+        send_sigterm(pid)
+    except (ProcessLookupError, PermissionError):
+        return
+
+    # Poll until the process exits or timeout
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            os.kill(pid, 0)  # check if process is alive
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.1)

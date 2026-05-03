@@ -2,24 +2,24 @@
 
 Per design doc § Process structure § Fault tolerance and recovery:
 - Heartbeat written every 30 s by Job Driver.
-- Stale at 3× the interval (90 s by default).
+- Stale at 3x the interval (90 s by default).
 - Dashboard's recovery policy: respawn if state is recoverable; mark FAILED
   if it isn't.
 """
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Stale detection
 # ---------------------------------------------------------------------------
 
 HEARTBEAT_INTERVAL: float = 30.0
-STALE_FACTOR: int = 3  # heartbeat considered stale after 3× interval
+STALE_FACTOR: int = 3  # heartbeat considered stale after 3x interval
 
 
 class Supervisor:
@@ -50,7 +50,20 @@ class Supervisor:
         return self.heartbeat_interval * self.stale_factor
 
     def is_stale(self, heartbeat_path: Path) -> bool:
-        raise NotImplementedError
+        """Return True if the heartbeat file is absent or older than the stale threshold."""
+        if not heartbeat_path.exists():
+            return True
+        try:
+            mtime = heartbeat_path.stat().st_mtime
+            age_seconds = time.time() - mtime
+            return age_seconds > self.stale_threshold_seconds()
+        except OSError:
+            return True
 
     def get_pid(self, pid_path: Path) -> int | None:
-        raise NotImplementedError
+        """Read and return the PID from *pid_path*, or None on error."""
+        try:
+            raw = pid_path.read_text().strip()
+            return int(raw)
+        except (FileNotFoundError, ValueError, OSError):
+            return None

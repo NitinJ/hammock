@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import signal
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -44,49 +42,38 @@ def test_write_cancel_command_custom_reason(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM not available on Windows")
-def test_send_sigterm_to_self() -> None:
-    """send_sigterm can send SIGTERM; handler converts it to a no-op here."""
-    # Install a handler that records the signal was received
-    received: list[int] = []
+def test_send_sigterm_calls_os_kill(monkeypatch: pytest.MonkeyPatch) -> None:
+    """send_sigterm calls os.kill with the given PID and SIGTERM."""
+    calls: list[tuple[int, int]] = []
 
-    def _handler(sig: int, frame: object) -> None:
-        received.append(sig)
+    def _fake_kill(pid: int, sig: int) -> None:
+        calls.append((pid, sig))
 
-    old = signal.signal(signal.SIGTERM, _handler)
-    try:
-        send_sigterm(os.getpid())
-        # Give the signal a moment to be processed
-        time.sleep(0.05)
-    finally:
-        signal.signal(signal.SIGTERM, old)
+    monkeypatch.setattr(os, "kill", _fake_kill)
+    send_sigterm(12345)
 
-    assert signal.SIGTERM in received
+    assert calls == [(12345, signal.SIGTERM)]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM not available on Windows")
-def test_send_sigterm_nonexistent_pid() -> None:
+def test_send_sigterm_nonexistent_pid(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sending SIGTERM to a non-existent PID raises ProcessLookupError."""
-    # PID 0 and negative PIDs are special; use a large number unlikely to be running
+
+    def _fake_kill(pid: int, sig: int) -> None:
+        raise ProcessLookupError(f"No process with pid {pid}")
+
+    monkeypatch.setattr(os, "kill", _fake_kill)
     with pytest.raises(ProcessLookupError):
-        send_sigterm(999_999_999)
+        send_sigterm(999_999)
 
 
 async def test_cancel_job_writes_command_file(tmp_path: Path) -> None:
-    """cancel_job writes the cancel command file."""
+    """cancel_job writes the cancel command file even when no PID file exists."""
     job_dir = tmp_path / "jobs" / "test-job"
     job_dir.mkdir(parents=True)
 
-    # Write a fake PID file pointing to ourselves so SIGTERM doesn't error
-    pid_path = paths.job_driver_pid("test-job", root=tmp_path)
-    # Use an invalid PID so signal delivery silently no-ops
-    # (we mainly want to test command-file write here)
-    pid_path.write_text("0\n")
-
-    # cancel_job should not raise even if signal fails
-    try:
-        await cancel_job("test-job", root=tmp_path, timeout=0.1)
-    except Exception:
-        pass  # signal errors are acceptable in this unit test
+    # No PID file — cancel_job should write the command file and return early
+    await cancel_job("test-job", root=tmp_path, timeout=0.1)
 
     action_path = paths.job_human_action("test-job", root=tmp_path)
     assert action_path.exists()

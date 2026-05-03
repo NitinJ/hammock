@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
 
 from job_driver.runner import JobDriver

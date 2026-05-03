@@ -8,8 +8,6 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from dashboard.driver.lifecycle import spawn_driver
 from shared import paths
 from shared.atomic import atomic_write_json

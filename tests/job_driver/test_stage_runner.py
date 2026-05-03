@@ -5,15 +5,13 @@ All tests run against stubs first (NotImplementedError), then pass after impl.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
 import yaml
 
-from job_driver.stage_runner import FakeStageRunner, StageResult
+from job_driver.stage_runner import FakeStageRunner
 from shared.models.stage import Budget, ExitCondition, InputSpec, OutputSpec, StageDefinition
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -25,9 +25,9 @@ implementation.md § Stage 4.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-import os
 import signal
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -36,14 +36,13 @@ from typing import Any
 
 import yaml
 
+from job_driver.stage_runner import StageResult, StageRunner
 from shared import paths
-from shared.atomic import atomic_append_jsonl, atomic_write_json, atomic_write_text
+from shared.atomic import atomic_append_jsonl, atomic_write_json
 from shared.models.events import Event
 from shared.models.job import JobConfig, JobState
 from shared.models.stage import StageDefinition, StageRun, StageState
 from shared.predicate import PredicateError, evaluate_predicate
-
-from job_driver.stage_runner import StageResult, StageRunner
 
 log = logging.getLogger(__name__)
 
@@ -57,12 +56,11 @@ class JobDriver:
     Parameters
     ----------
     job_slug:
-        Identifies the job dir under ``~/.hammock/jobs/<slug>/``.
+        Identifies the job dir under ``<root>/jobs/<slug>/``.
     root:
         Override for the hammock root (``~/.hammock/`` by default).
     stage_runner:
-        Stage execution backend. Defaults to ``FakeStageRunner`` if *not*
-        supplied and ``HAMMOCK_FAKE_FIXTURES`` env var points at a dir.
+        Stage execution backend. Must be supplied.
     heartbeat_interval:
         Seconds between heartbeat touches (default 30).
     now_fn:
@@ -91,35 +89,330 @@ class JobDriver:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
-        raise NotImplementedError
+        """Main loop: run until terminal state or cancellation."""
+        loop = asyncio.get_event_loop()
+
+        # Install SIGTERM handler to trigger graceful shutdown
+        def _sigterm_handler() -> None:
+            log.info("SIGTERM received — initiating cancellation")
+            self._cancel_event.set()
+
+        loop.add_signal_handler(signal.SIGTERM, _sigterm_handler)
+
+        try:
+            # Transition SUBMITTED → STAGES_RUNNING
+            job_cfg = self._read_job_config()
+            if job_cfg.state == JobState.SUBMITTED:
+                self._write_job_state(JobState.STAGES_RUNNING)
+
+            # Touch heartbeat at startup
+            self._touch_heartbeat()
+
+            # Start background tasks
+            hb_task = asyncio.create_task(self._heartbeat_loop())
+            poll_task = asyncio.create_task(self._command_poll_loop())
+
+            try:
+                await self._execute_stages()
+            finally:
+                hb_task.cancel()
+                poll_task.cancel()
+                await asyncio.gather(hb_task, poll_task, return_exceptions=True)
+
+        finally:
+            with contextlib.suppress(Exception):
+                loop.remove_signal_handler(signal.SIGTERM)
 
     # ------------------------------------------------------------------
-    # Internal helpers (interface for tests)
+    # Stage execution loop
+    # ------------------------------------------------------------------
+
+    async def _execute_stages(self) -> None:
+        stages = self._read_stages()
+        # loop_back iteration counters: keyed by (review_stage_id, target_stage_id)
+        loop_counters: dict[tuple[str, str], int] = {}
+
+        i = 0
+        while i < len(stages):
+            if self._cancel_event.is_set():
+                self._write_job_state(JobState.ABANDONED)
+                return
+
+            stage_def = stages[i]
+
+            # Check runs_if predicate
+            if stage_def.runs_if is not None:
+                try:
+                    ctx = self._build_predicate_context()
+                    should_run = evaluate_predicate(stage_def.runs_if, ctx)
+                except PredicateError as exc:
+                    log.warning(
+                        "runs_if eval error for %s: %s — defaulting to True", stage_def.id, exc
+                    )
+                    should_run = True
+                if not should_run:
+                    log.info("Skipping stage %s (runs_if=false)", stage_def.id)
+                    i += 1
+                    continue
+
+            # Skip if all required outputs already exist (resume / already succeeded)
+            if self._stage_already_succeeded(stage_def):
+                log.info("Skipping stage %s (outputs already present)", stage_def.id)
+                i += 1
+                continue
+
+            # Run the stage
+            result = await self._run_single_stage(stage_def)
+
+            if result is None:
+                # Cancelled mid-stage
+                self._write_job_state(JobState.ABANDONED)
+                return
+
+            if not result.succeeded:
+                self._write_job_state(JobState.FAILED)
+                return
+
+            # Handle loop_back
+            if stage_def.loop_back is not None:
+                lb = stage_def.loop_back
+                key = (stage_def.id, lb.to)
+                try:
+                    ctx = self._build_predicate_context()
+                    condition_holds = evaluate_predicate(lb.condition, ctx)
+                except PredicateError as exc:
+                    log.warning("loop_back condition eval error: %s — not looping", exc)
+                    condition_holds = False
+
+                if condition_holds:
+                    current_count = loop_counters.get(key, 0)
+                    if current_count < lb.max_iterations:
+                        loop_counters[key] = current_count + 1
+                        log.info(
+                            "loop_back: %s → %s (iteration %d/%d)",
+                            stage_def.id,
+                            lb.to,
+                            loop_counters[key],
+                            lb.max_iterations,
+                        )
+                        # Find target stage index and resume from there
+                        target_idx = next((j for j, s in enumerate(stages) if s.id == lb.to), None)
+                        if target_idx is not None:
+                            # Clear outputs of stages from target_idx to current i
+                            # so they will re-run
+                            self._clear_stage_outputs(stages[target_idx : i + 1])
+                            i = target_idx
+                            continue
+                    else:
+                        log.warning(
+                            "loop_back max_iterations=%d exhausted for %s → %s",
+                            lb.max_iterations,
+                            stage_def.id,
+                            lb.to,
+                        )
+                        # Per spec: on_exhaustion(hil-manual-step) — Stage 7 handles HIL
+                        # For Stage 4, treat as success and move on
+            i += 1
+
+        # All stages done
+        if not self._cancel_event.is_set():
+            self._write_job_state(JobState.COMPLETED)
+
+    async def _run_single_stage(self, stage_def: StageDefinition) -> StageResult | None:
+        """Execute one stage: create stage dir, run, persist state.
+
+        Returns ``None`` if the run was interrupted by a cancellation request.
+        """
+        assert self._stage_runner is not None, "stage_runner must be set"
+
+        job_dir = self._job_dir()
+        attempt = self._next_attempt(stage_def.id)
+
+        stage_run_dir = paths.stage_run_dir(self.job_slug, stage_def.id, attempt, root=self.root)
+        stage_run_dir.mkdir(parents=True, exist_ok=True)
+
+        # Update latest symlink
+        latest = paths.stage_run_latest(self.job_slug, stage_def.id, root=self.root)
+        if latest.is_symlink():
+            latest.unlink()
+        latest.symlink_to(stage_run_dir.name)
+
+        # Persist RUNNING state
+        stage_run = StageRun(
+            stage_id=stage_def.id,
+            attempt=attempt,
+            state=StageState.RUNNING,
+            started_at=self._now(),
+        )
+        self._write_stage_run(stage_def.id, stage_run)
+        self._emit_event(
+            "stage_state_transition",
+            stage_id=stage_def.id,
+            payload={"from": "PENDING", "to": "RUNNING", "attempt": attempt},
+        )
+
+        log.info("Running stage %s (attempt %d)", stage_def.id, attempt)
+
+        # Race the stage runner against the cancel event
+        stage_task = asyncio.create_task(self._stage_runner.run(stage_def, job_dir, stage_run_dir))
+        cancel_task = asyncio.create_task(self._cancel_event.wait())
+
+        done, pending = await asyncio.wait(
+            {stage_task, cancel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        if cancel_task in done:
+            # Cancellation won — clean up stage state
+            stage_run = stage_run.model_copy(
+                update={"state": StageState.CANCELLED, "ended_at": self._now()}
+            )
+            self._write_stage_run(stage_def.id, stage_run)
+            self._emit_event(
+                "stage_state_transition",
+                stage_id=stage_def.id,
+                payload={"from": "RUNNING", "to": "CANCELLED"},
+            )
+            return None
+
+        result: StageResult = stage_task.result()
+
+        final_state = StageState.SUCCEEDED if result.succeeded else StageState.FAILED
+        stage_run = stage_run.model_copy(
+            update={
+                "state": final_state,
+                "ended_at": self._now(),
+                "outputs_produced": result.outputs_produced,
+                "cost_accrued": result.cost_usd,
+                "restart_count": attempt - 1,
+            }
+        )
+        self._write_stage_run(stage_def.id, stage_run)
+        self._emit_event(
+            "stage_state_transition",
+            stage_id=stage_def.id,
+            payload={"from": "RUNNING", "to": final_state, "cost_usd": result.cost_usd},
+        )
+
+        if result.cost_usd > 0:
+            self._emit_event(
+                "cost_accrued",
+                stage_id=stage_def.id,
+                payload={"amount_usd": result.cost_usd},
+            )
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Background coroutines
+    # ------------------------------------------------------------------
+
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            try:
+                self._touch_heartbeat()
+                await asyncio.sleep(self.heartbeat_interval)
+            except asyncio.CancelledError:
+                break
+
+    async def _command_poll_loop(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(COMMAND_POLL_INTERVAL)
+                if self._check_cancel_command():
+                    self._cancel_event.set()
+                    return
+            except asyncio.CancelledError:
+                break
+
+    # ------------------------------------------------------------------
+    # Helpers
     # ------------------------------------------------------------------
 
     def _job_dir(self) -> Path:
         return paths.job_dir(self.job_slug, root=self.root)
 
     def _read_job_config(self) -> JobConfig:
-        raise NotImplementedError
+        return JobConfig.model_validate_json(
+            paths.job_json(self.job_slug, root=self.root).read_text()
+        )
 
     def _write_job_state(self, state: JobState) -> None:
-        raise NotImplementedError
+        cfg = self._read_job_config()
+        old_state = cfg.state
+        updated = cfg.model_copy(update={"state": state})
+        atomic_write_json(paths.job_json(self.job_slug, root=self.root), updated)
+        self._emit_event(
+            "job_state_transition",
+            payload={"from": str(old_state), "to": str(state)},
+        )
 
     def _read_stages(self) -> list[StageDefinition]:
-        raise NotImplementedError
+        stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
+        data = yaml.safe_load(stage_list_path.read_text()) or {}
+        return [StageDefinition.model_validate(s) for s in data.get("stages", [])]
 
     def _stage_already_succeeded(self, stage_def: StageDefinition) -> bool:
-        raise NotImplementedError
+        """True if all required outputs exist in the job dir."""
+        job_dir = self._job_dir()
+        if not stage_def.exit_condition.required_outputs:
+            # No outputs required — stage was considered atomic; check stage.json
+            sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
+            if sj.exists():
+                try:
+                    sr = StageRun.model_validate_json(sj.read_text())
+                    return sr.state == StageState.SUCCEEDED
+                except Exception:
+                    return False
+            return False
+
+        return all((job_dir / ro.path).exists() for ro in stage_def.exit_condition.required_outputs)
 
     def _inputs_ready(self, stage_def: StageDefinition) -> bool:
-        raise NotImplementedError
+        job_dir = self._job_dir()
+        return all((job_dir / inp).exists() for inp in stage_def.inputs.required)
+
+    def _build_predicate_context(self) -> dict[str, Any]:
+        """Build a context dict for predicate evaluation from job dir files."""
+        job_dir = self._job_dir()
+        ctx: dict[str, Any] = {}
+        for f in job_dir.iterdir():
+            if f.is_file() and f.suffix == ".json":
+                try:
+                    parsed = json.loads(f.read_text())
+                    # e.g. "design-spec-review-agent.json" → stem="design-spec-review-agent"
+                    # predicate "design-spec-review-agent.json.verdict" splits to
+                    # ("design-spec-review-agent", "json", "verdict")
+                    stem = f.stem
+                    ext = f.suffix.lstrip(".")  # "json"
+                    ctx.setdefault(stem, {})[ext] = parsed
+                except (json.JSONDecodeError, OSError):
+                    pass
+        return ctx
 
     def _evaluate_runs_if(self, stage_def: StageDefinition) -> bool:
-        raise NotImplementedError
+        if stage_def.runs_if is None:
+            return True
+        try:
+            ctx = self._build_predicate_context()
+            return evaluate_predicate(stage_def.runs_if, ctx)
+        except PredicateError:
+            return True
 
     def _check_cancel_command(self) -> bool:
-        raise NotImplementedError
+        """Return True if human-action.json contains a cancel command."""
+        action_path = paths.job_human_action(self.job_slug, root=self.root)
+        if not action_path.exists():
+            return False
+        try:
+            payload = json.loads(action_path.read_text())
+            return payload.get("command") == "cancel"
+        except (json.JSONDecodeError, OSError):
+            return False
 
     def _emit_event(
         self,
@@ -127,7 +420,47 @@ class JobDriver:
         stage_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        raise NotImplementedError
+        cfg = self._read_job_config()
+        event = Event(
+            seq=self._seq,
+            timestamp=self._now(),
+            event_type=event_type,
+            source="job_driver",
+            job_id=cfg.job_id,
+            stage_id=stage_id,
+            payload=payload or {},
+        )
+        self._seq += 1
+        events_path = paths.job_events_jsonl(self.job_slug, root=self.root)
+        atomic_append_jsonl(events_path, event)
 
     def _touch_heartbeat(self) -> None:
-        raise NotImplementedError
+        hb_path = paths.job_heartbeat(self.job_slug, root=self.root)
+        hb_path.parent.mkdir(parents=True, exist_ok=True)
+        hb_path.touch()
+
+    def _write_stage_run(self, stage_id: str, stage_run: StageRun) -> None:
+        p = paths.stage_json(self.job_slug, stage_id, root=self.root)
+        atomic_write_json(p, stage_run)
+
+    def _next_attempt(self, stage_id: str) -> int:
+        """Return the next attempt number (1-based) for this stage."""
+        stages_dir = paths.stage_dir(self.job_slug, stage_id, root=self.root)
+        if not stages_dir.exists():
+            return 1
+        existing = [
+            int(d.name.split("-")[1])
+            for d in stages_dir.iterdir()
+            if d.is_dir() and d.name.startswith("run-") and d.name[4:].isdigit()
+        ]
+        return (max(existing) + 1) if existing else 1
+
+    def _clear_stage_outputs(self, stage_defs: list[StageDefinition]) -> None:
+        """Remove required output files for the given stages (to force re-run)."""
+        job_dir = self._job_dir()
+        for stage_def in stage_defs:
+            if stage_def.exit_condition.required_outputs:
+                for ro in stage_def.exit_condition.required_outputs:
+                    p = job_dir / ro.path
+                    if p.exists():
+                        p.unlink()

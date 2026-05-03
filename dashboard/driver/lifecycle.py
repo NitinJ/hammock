@@ -11,11 +11,12 @@ On success, the PID is written to ``jobs/<slug>/job-driver.pid`` and returned.
 
 from __future__ import annotations
 
-import asyncio
+import subprocess
 import sys
 from pathlib import Path
 
 from shared import paths
+from shared.atomic import atomic_write_text
 
 
 async def spawn_driver(
@@ -25,7 +26,10 @@ async def spawn_driver(
     fake_fixtures_dir: Path | None = None,
     python: str | None = None,
 ) -> int:
-    """Spawn ``job_driver`` as a subprocess; return its PID.
+    """Spawn ``job_driver`` as a detached subprocess; return its PID.
+
+    Uses ``subprocess.Popen`` (not asyncio) for fire-and-forget semantics.
+    The Job Driver survives dashboard restarts.
 
     Parameters
     ----------
@@ -38,4 +42,29 @@ async def spawn_driver(
     python:
         Python interpreter path (defaults to ``sys.executable``).
     """
-    raise NotImplementedError
+    py = python or sys.executable
+    cmd = [py, "-m", "job_driver", job_slug]
+
+    if root is not None:
+        cmd += ["--root", str(root)]
+    if fake_fixtures_dir is not None:
+        cmd += ["--fake-fixtures", str(fake_fixtures_dir)]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+    pid = proc.pid
+
+    # Detach — we don't own the process lifecycle
+    proc.returncode = 0  # prevent ResourceWarning from Popen.__del__
+
+    # Write PID file
+    pid_path = paths.job_driver_pid(job_slug, root=root)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(pid_path, f"{pid}\n")
+
+    return pid
