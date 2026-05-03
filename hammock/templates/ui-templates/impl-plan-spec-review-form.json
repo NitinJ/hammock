@@ -1,0 +1,15 @@
+{
+  "name": "impl-plan-spec-review-form",
+  "description": "Review form for the implementation plan specification stage.",
+  "hil_kinds": ["review"],
+  "instructions": "Review the implementation plan. Approve to launch the parallel implementation tasks, or reject to send back for revision.",
+  "fields": {
+    "title": "Implementation Plan Review",
+    "context_artifacts": [
+      {"path": "impl-plan-spec.md", "render": "markdown", "label": "Implementation Plan"},
+      {"path": "impl-plan-spec-review-agent.json", "render": "verdict", "label": "Agent Reviewer Verdict"}
+    ],
+    "submit_label": "Record Verdict",
+    "extra_help": "Look for: task breakdown is granular and parallelisable, dependencies are correctly ordered, no task is underspecified."
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "impl-spec-review-form",
+  "description": "Review form for the implementation specification stage.",
+  "hil_kinds": ["review"],
+  "instructions": "Review the implementation spec. Approve to proceed to implementation planning, or reject with feedback for the spec writer.",
+  "fields": {
+    "title": "Implementation Spec Review",
+    "context_artifacts": [
+      {"path": "impl-spec.md", "render": "markdown", "label": "Implementation Spec"},
+      {"path": "impl-spec-review-agent.json", "render": "verdict", "label": "Agent Reviewer Verdict"}
+    ],
+    "submit_label": "Record Verdict",
+    "extra_help": "Look for: feasibility of the approach, complete component breakdown, interface contracts defined, edge cases addressed."
+  }
+}

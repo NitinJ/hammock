@@ -1,0 +1,9 @@
+{
+  "name": "manual-step-default-form",
+  "description": "Default form for manual-step HIL items (e.g. loop-exhaustion gates).",
+  "hil_kinds": ["manual-step"],
+  "instructions": "Perform the steps listed below, then record what you did.",
+  "fields": {
+    "submit_label": "Mark Done"
+  }
+}

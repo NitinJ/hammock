@@ -1,0 +1,15 @@
+{
+  "name": "design-spec-review-form",
+  "description": "Review form for the design specification stage.",
+  "hil_kinds": ["review"],
+  "instructions": "Review the design spec for this job. Approve to proceed to implementation planning, or reject with specific feedback for the spec writer.",
+  "fields": {
+    "title": "Design Spec Review",
+    "context_artifacts": [
+      {"path": "design-spec.md", "render": "markdown", "label": "Design Spec"},
+      {"path": "design-spec-review-agent.json", "render": "verdict", "label": "Agent Reviewer Verdict"}
+    ],
+    "submit_label": "Record Verdict",
+    "extra_help": "Look for: clear problem statement, testability, NFRs covered, security considerations, open questions surfaced."
+  }
+}
