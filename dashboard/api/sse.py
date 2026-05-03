@@ -69,19 +69,37 @@ def _format_change(change: CacheChange, scope: str) -> str:
 def _format_replay_event(event: object, scope: str) -> str:
     """Format a shared.models.Event (from JSONL replay) as an SSE message.
 
-    Includes ``id: <seq>`` so the browser updates Last-Event-ID — enabling
-    the next reconnect to replay only events *after* this one.
+    Unnamed events (no ``event:`` line) fire ``EventSource.onmessage``, which
+    is how the frontend wires up its handler.  Named events only reach
+    ``addEventListener(type, handler)`` listeners — the frontend does not use
+    those for log replay.
+
+    Data payload matches the SseEvent TypeScript interface exactly so the
+    frontend can parse the raw ``event.data`` without field mapping.
+
+    ``id: <seq>`` is included for scoped channels (job, stage) so the browser
+    updates Last-Event-ID, enabling reconnect replay.  Global scope omits
+    ``id:`` because seq is per-job monotonic (not globally unique) — emitting
+    it would corrupt Last-Event-ID across reconnects.
     """
     from shared.models import Event as _Event
 
     e: _Event = event  # type: ignore[assignment]
     data = {
+        "seq": e.seq,
         "timestamp": e.timestamp.isoformat(),
+        "event_type": e.event_type,
         "source": e.source,
-        "scope": scope,
+        "job_id": e.job_id,
+        "stage_id": e.stage_id,
+        "task_id": e.task_id,
+        "subagent_id": e.subagent_id,
+        "parent_event_seq": e.parent_event_seq,
         "payload": e.payload,
     }
-    return f"id: {e.seq}\nevent: {e.event_type}\ndata: {json.dumps(data)}\n\n"
+    # Global scope: suppress id: — seq is per-job, not globally monotonic.
+    id_line = "" if scope == "global" else f"id: {e.seq}\n"
+    return f"{id_line}data: {json.dumps(data)}\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +144,10 @@ async def _event_stream(
             yield _format_replay_event(event, scope)
 
     # Phase 2 — live stream
+    # NOTE: The live pubsub carries CacheChange (state-file mutations), not
+    # Event log entries from events.jsonl.  The watcher classifies events.jsonl
+    # appends as "unknown" and does not publish them here.  Live delivery of
+    # log events (tailing) is deferred to Stage 11.
     sub = pubsub.subscribe(scope)
     try:
         while True:

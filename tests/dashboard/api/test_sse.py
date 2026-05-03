@@ -195,9 +195,15 @@ def test_format_replay_event_includes_id() -> None:
         payload={"usd": 0.5},
     )
     result = _format_replay_event(event, "stage:job:s1")
+    # Scoped channels include id: for reconnect replay
     assert result.startswith("id: 42\n")
-    assert "event: cost_accrued\n" in result
-    assert "stage:job:s1" in result
+    # Unnamed event (no event: line) — fires EventSource.onmessage in the browser
+    assert "event:" not in result
+    # Data must include SseEvent fields
+    data_line = next(line for line in result.splitlines() if line.startswith("data:"))
+    data = json.loads(data_line[len("data: "):])
+    assert data["seq"] == 42
+    assert data["event_type"] == "cost_accrued"
     assert result.endswith("\n\n")
 
 
@@ -214,10 +220,19 @@ def test_format_replay_event_data_fields() -> None:
     )
     result = _format_replay_event(event, "job:my-job")
     data_line = next(line for line in result.splitlines() if line.startswith("data:"))
-    data = json.loads(data_line[len("data: ") :])
+    data = json.loads(data_line[len("data: "):])
+    # Full SseEvent contract
+    assert data["seq"] == 1
+    assert data["event_type"] == "stage_state_transition"
     assert data["source"] == "job_driver"
+    assert data["job_id"] == "jid"
+    assert data["stage_id"] is None
+    assert data["task_id"] is None
+    assert data["subagent_id"] is None
+    assert data["parent_event_seq"] is None
     assert data["payload"] == {"from": "READY", "to": "RUNNING"}
-    assert data["scope"] == "job:my-job"
+    # No scope field — not part of SseEvent interface
+    assert "scope" not in data
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +297,8 @@ async def test_sse_stage_replay_delivers_events(populated_root: Path) -> None:
     full = "".join(chunks)
     assert "id: 1" in full
     assert "id: 2" in full
-    assert "event: cost_accrued" in full
+    # event_type in data payload (unnamed SSE event — no event: line)
+    assert "cost_accrued" in full
 
 
 async def test_sse_stage_replay_filters_by_seq(populated_root: Path) -> None:
@@ -327,7 +343,11 @@ async def test_sse_job_replay_delivers_job_events(populated_root: Path) -> None:
 
 
 async def test_sse_global_replay_delivers_all_job_events(populated_root: Path) -> None:
-    """Global scope replay reads events from all job directories."""
+    """Global scope replay reads events from all job directories.
+
+    Global scope omits ``id:`` because seq is per-job monotonic — emitting it
+    would corrupt Last-Event-ID across reconnects.  Data is still delivered.
+    """
     pubsub: InProcessPubSub[CacheChange] = InProcessPubSub()
     chunks = await _collect_stream(
         "global",
@@ -336,7 +356,9 @@ async def test_sse_global_replay_delivers_all_job_events(populated_root: Path) -
         last_event_id=-1,
     )
     full = "".join(chunks)
-    assert "id:" in full
+    # Data delivered but no id: lines (global scope suppresses id:)
+    assert "data:" in full
+    assert "id:" not in full
 
 
 async def test_sse_no_last_event_id_skips_replay(tmp_path: Path) -> None:
