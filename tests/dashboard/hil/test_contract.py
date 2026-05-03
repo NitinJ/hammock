@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,7 +54,7 @@ def _review_item(item_id: str, *, stage_id: str = "s1", status: str = "awaiting"
     )
 
 
-def _setup(
+async def _setup(
     tmp_path: Path,
     *,
     job_slug: str,
@@ -65,7 +64,7 @@ def _setup(
     for item in items:
         path = hil_item_path(job_slug, item.id, root=tmp_path)
         atomic_write_json(path, item)
-    cache = asyncio.run(Cache.bootstrap(tmp_path))
+    cache = await Cache.bootstrap(tmp_path)
     return cache, tmp_path
 
 
@@ -74,8 +73,8 @@ def _setup(
 # ---------------------------------------------------------------------------
 
 
-def test_get_open_items_default_returns_awaiting(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_get_open_items_default_returns_awaiting(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[
@@ -90,8 +89,8 @@ def test_get_open_items_default_returns_awaiting(tmp_path: Path) -> None:
     assert items[0].id == "h1"
 
 
-def test_get_open_items_filter_by_kind(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_get_open_items_filter_by_kind(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[
@@ -105,8 +104,8 @@ def test_get_open_items_filter_by_kind(tmp_path: Path) -> None:
     assert items[0].id == "h2"
 
 
-def test_get_open_items_filter_by_stage_id(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_get_open_items_filter_by_stage_id(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[
@@ -120,8 +119,8 @@ def test_get_open_items_filter_by_stage_id(tmp_path: Path) -> None:
     assert items[0].id == "h1"
 
 
-def test_get_open_items_filter_by_job_slug(tmp_path: Path) -> None:
-    cache, _root = _setup(
+async def test_get_open_items_filter_by_job_slug(tmp_path: Path) -> None:
+    _cache, _root = await _setup(
         tmp_path,
         job_slug="job-a",
         items=[_ask_item("h1")],
@@ -129,7 +128,7 @@ def test_get_open_items_filter_by_job_slug(tmp_path: Path) -> None:
     # Write a second job's item
     h2 = _ask_item("h2")
     atomic_write_json(hil_item_path("job-b", "h2", root=tmp_path), h2)
-    cache = asyncio.run(Cache.bootstrap(tmp_path))
+    cache = await Cache.bootstrap(tmp_path)
 
     contract = HilContract(cache=cache, root=tmp_path)
     items = contract.get_open_items(HilFilter(job_slug="job-a"))
@@ -137,8 +136,8 @@ def test_get_open_items_filter_by_job_slug(tmp_path: Path) -> None:
     assert items[0].id == "h1"
 
 
-def test_get_open_items_filter_by_status_answered(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_get_open_items_filter_by_status_answered(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[
@@ -152,8 +151,8 @@ def test_get_open_items_filter_by_status_answered(tmp_path: Path) -> None:
     assert items[0].id == "h2"
 
 
-def test_get_open_items_empty_when_none(tmp_path: Path) -> None:
-    cache = asyncio.run(Cache.bootstrap(tmp_path))
+async def test_get_open_items_empty_when_none(tmp_path: Path) -> None:
+    cache = await Cache.bootstrap(tmp_path)
     contract = HilContract(cache=cache, root=tmp_path)
     assert contract.get_open_items() == []
 
@@ -163,8 +162,8 @@ def test_get_open_items_empty_when_none(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_submit_answer_transitions_to_answered(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_transitions_to_answered(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="awaiting")],
@@ -176,8 +175,8 @@ def test_submit_answer_transitions_to_answered(tmp_path: Path) -> None:
     assert updated.answer == answer
 
 
-def test_submit_answer_sets_answered_at(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_sets_answered_at(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="awaiting")],
@@ -187,8 +186,8 @@ def test_submit_answer_sets_answered_at(tmp_path: Path) -> None:
     assert updated.answered_at is not None
 
 
-def test_submit_answer_persists_to_disk(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_persists_to_disk(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="awaiting")],
@@ -204,8 +203,8 @@ def test_submit_answer_persists_to_disk(tmp_path: Path) -> None:
     assert from_disk.answer is not None
 
 
-def test_submit_answer_updates_cache(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_updates_cache(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="awaiting")],
@@ -217,8 +216,8 @@ def test_submit_answer_updates_cache(tmp_path: Path) -> None:
     assert cached.status == "answered"
 
 
-def test_submit_answer_idempotent_same_answer(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_idempotent_same_answer(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="awaiting")],
@@ -231,8 +230,8 @@ def test_submit_answer_idempotent_same_answer(tmp_path: Path) -> None:
     assert second.answer == first.answer
 
 
-def test_submit_answer_conflict_different_answer(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_conflict_different_answer(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="awaiting")],
@@ -243,15 +242,15 @@ def test_submit_answer_conflict_different_answer(tmp_path: Path) -> None:
         contract.submit_answer("h1", AskAnswer(text="no", choice=None))
 
 
-def test_submit_answer_not_found_raises(tmp_path: Path) -> None:
-    cache = asyncio.run(Cache.bootstrap(tmp_path))
+async def test_submit_answer_not_found_raises(tmp_path: Path) -> None:
+    cache = await Cache.bootstrap(tmp_path)
     contract = HilContract(cache=cache, root=tmp_path)
     with pytest.raises(NotFoundError):
         contract.submit_answer("nonexistent", AskAnswer(text="yes", choice=None))
 
 
-def test_submit_answer_cancelled_item_raises(tmp_path: Path) -> None:
-    cache, root = _setup(
+async def test_submit_answer_cancelled_item_raises(tmp_path: Path) -> None:
+    cache, root = await _setup(
         tmp_path,
         job_slug="proj-job",
         items=[_ask_item("h1", status="cancelled")],
