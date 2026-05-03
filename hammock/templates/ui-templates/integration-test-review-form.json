@@ -1,0 +1,15 @@
+{
+  "name": "integration-test-review-form",
+  "description": "Review form for integration test results before PR creation.",
+  "hil_kinds": ["review"],
+  "instructions": "Review the integration test results. Approve to proceed to PR creation, or reject to send back for fixes.",
+  "fields": {
+    "title": "Integration Test Review",
+    "context_artifacts": [
+      {"path": "integration-test-report.json", "render": "verdict", "label": "Integration Test Report"},
+      {"path": "integration-test-review-agent.json", "render": "verdict", "label": "Agent Reviewer Verdict"}
+    ],
+    "submit_label": "Record Verdict",
+    "extra_help": "Look for: all required tests passing, no regressions, edge cases covered, test quality (not just coverage)."
+  }
+}
