@@ -9,6 +9,7 @@ authors = [{ name = "Nitin Jaglan", email = "nitin.jaglan@gmail.com" }]
 
 dependencies = [
     "fastapi>=0.110",
+    "mcp>=1.27,<2",
     "pydantic>=2.6,<3",
     "pydantic-settings>=2.2",
     "pyyaml>=6",
