@@ -201,7 +201,7 @@ def test_format_replay_event_includes_id() -> None:
     assert "event:" not in result
     # Data must include SseEvent fields
     data_line = next(line for line in result.splitlines() if line.startswith("data:"))
-    data = json.loads(data_line[len("data: "):])
+    data = json.loads(data_line[len("data: ") :])
     assert data["seq"] == 42
     assert data["event_type"] == "cost_accrued"
     assert result.endswith("\n\n")
@@ -220,7 +220,7 @@ def test_format_replay_event_data_fields() -> None:
     )
     result = _format_replay_event(event, "job:my-job")
     data_line = next(line for line in result.splitlines() if line.startswith("data:"))
-    data = json.loads(data_line[len("data: "):])
+    data = json.loads(data_line[len("data: ") :])
     # Full SseEvent contract
     assert data["seq"] == 1
     assert data["event_type"] == "stage_state_transition"
