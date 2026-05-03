@@ -1,11 +1,12 @@
-"""In-process scoped pub/sub.
+"""In-process scoped pub/sub + on-disk replay.
 
 Subscribers consume an :class:`PubSubSubscription` (an async iterator) for a
 named scope; publishers fan out to all live subscribers on that scope.
 
 Per design doc § Real-time delivery and § Process structure: scoped pub/sub
 is the bridge between the watcher (writes) and the SSE handlers (reads).
-Stage 1 ships the mechanism; SSE wiring is Stage 10.
+Stage 1 ships the mechanism; Stage 10 adds :func:`replay_since` for
+Last-Event-ID reconnect replay from on-disk JSONL files.
 
 Generic over the message type — Stage 1 uses :class:`CacheChange`, future
 stages use ``shared.models.Event`` (e.g. for tailing ``events.jsonl``).
@@ -16,8 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Callable
+import json
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from pathlib import Path
 from weakref import WeakSet
+
+from shared.models import Event
 
 
 class PubSubSubscription[T]:
@@ -114,3 +119,71 @@ class InProcessPubSub[T]:
             subs.discard(sub)
             if not subs:
                 self._scopes.pop(sub.scope, None)
+
+
+# ---------------------------------------------------------------------------
+# On-disk replay (Stage 10)
+# ---------------------------------------------------------------------------
+
+
+async def replay_since(
+    scope: str,
+    last_event_id: int,
+    *,
+    root: Path,
+) -> AsyncGenerator[Event, None]:
+    """Yield :class:`~shared.models.Event` objects from on-disk JSONL files.
+
+    Reads the JSONL file(s) matching *scope*, yields every ``Event`` whose
+    ``seq > last_event_id`` in file order.  Malformed or partially-written
+    lines are silently skipped.
+
+    Per design doc § Real-time delivery § Reconnect and replay: the SSE
+    handler calls this on reconnect *before* joining the live pub/sub stream,
+    so the client receives exactly the missed events with no gaps or
+    duplicates.
+
+    Scope strings:
+
+    - ``"global"``  — all ``jobs/<slug>/events.jsonl`` files under *root*.
+    - ``"job:<slug>"``  — ``jobs/<slug>/events.jsonl``.
+    - ``"stage:<job>:<sid>"``  — ``jobs/<job>/stages/<sid>/events.jsonl``.
+    """
+    for jsonl_path in _jsonl_paths_for_scope(scope, root=root):
+        if not jsonl_path.exists():
+            continue
+        for raw_line in jsonl_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                event = Event.model_validate(data)
+            except Exception:
+                continue
+            if event.seq > last_event_id:
+                yield event
+
+
+def _jsonl_paths_for_scope(scope: str, *, root: Path) -> list[Path]:
+    """Return the on-disk JSONL path(s) that back the given *scope*."""
+    from shared import paths as _paths  # local import avoids dashboard→shared→dashboard cycle
+
+    if scope == "global":
+        jdir = _paths.jobs_dir(root=root)
+        if not jdir.exists():
+            return []
+        return [
+            _paths.job_events_jsonl(job_dir.name, root=root)
+            for job_dir in sorted(jdir.iterdir())
+            if job_dir.is_dir()
+        ]
+    if scope.startswith("job:"):
+        return [_paths.job_events_jsonl(scope[4:], root=root)]
+    if scope.startswith("stage:"):
+        rest = scope[6:]
+        sep = rest.find(":")
+        if sep == -1:
+            return []
+        return [_paths.stage_events_jsonl(rest[:sep], rest[sep + 1 :], root=root)]
+    return []
