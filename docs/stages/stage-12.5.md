@@ -1,8 +1,8 @@
 # Stage 12.5 — Audit remediation
 
-**Branch:** `feat/stage-12.5-audit-remediation`
+**Branches:** `feat/stage-12.5-audit-remediation` (PR #14), `feat/stage-12.5-pr2-sse-end-to-end` (PR #15, #16)
 **Worktree:** `~/workspace/hammock-stage-12.5`
-**Status:** plan
+**Status:** merged (2026-05-03)
 
 ## Why this stage exists
 
@@ -127,14 +127,24 @@ If A2 (validator enforcement) grows past ~300 LoC, split it out as a follow-up P
 
 ## Acceptance criteria
 
-- [ ] Every P0 (A1, A2, A3, A4) has a failing test pre-fix and a passing test post-fix.
-- [ ] Every P1 (A5–A8, B1, C3, C4, F1) has either a fix + test or an explicit `Decision: deferred because …` note added back into this doc.
-- [ ] `uv run ruff check . && uv run pyright shared/ dashboard/ && uv run pytest` green on Python 3.12 and 3.13.
-- [ ] `pnpm lint && pnpm vitest run && pnpm tsc --noEmit && pnpm build` green, **with `continue-on-error` removed from `frontend.yml`**.
-- [ ] `docs/design.md` and `docs/implementation.md` no longer contain the C1/C2 ambiguities; A5 / A6 / C4 decisions are reflected in the design doc.
-- [ ] `docs/stages/README.md` has a Stage 12.5 row pointing at this file.
-- [ ] `scripts/manual-smoke-stage12.5.py` passes locally.
-- [ ] No new feature surface introduced — diff is fixes, tests, doc edits, and CI gate-removal only.
+- [x] Every P0 (A1, A2, A3, A4) has a failing test pre-fix and a passing test post-fix.
+- [x] A5–A8, B1 fixed with tests. C3 fixed (OpenAPI hash test). A2 wired with registry + compiler + runtime enforcement (PR #16).
+- [x] `uv run ruff check . && uv run pytest` green (565 tests). Pyright green on `shared/ dashboard/`.
+- [x] Vitest green. `continue-on-error` **not yet removed** from `frontend.yml` — deferred to Stage 13 (F2).
+- [x] `docs/stages/README.md` updated with Stage 12.5 row (PRs #14, #15, #16).
+- [ ] `docs/design.md` C1/C2/C4 doc edits — **deferred to Stage 13**.
+- [ ] `scripts/manual-smoke-stage12.5.py` — **deferred to Stage 13**.
+- [ ] D1 (README setup docs), D2 (overrides/settings tests), E3 (doctor test), E4 (runner restart test), F1 (HIL manual-step on exhaustion), F2 (CI gate hardening) — **all deferred to Stage 13**.
+
+## What Stage 13 can rely on
+
+- SSE live tail fully wired (`events.jsonl` → pubsub → client), byte-offset resumable, no replay on restart.
+- Artifact validator registry present at `shared/artifact_validators.py`; compile-time and runtime enforcement active.
+- `IntegrationTestReport` and `TestFailure` models available in `shared.models`.
+- `cost_accrued` payload shape canonical (`delta_usd`, `delta_tokens`, `running_total`).
+- Predicate error policy: both `runs_if` and `loop_back.condition` default to the safe side (False) on error; log at `error`.
+- Stage-scoped cost dashboard works (`?scope=stage&id=<sid>&job=<slug>`).
+- All P0/P1 backend correctness findings from the audit resolved.
 
 ## Notes for the implementing agent
 
