@@ -20,6 +20,13 @@
     "@tanstack/vue-query": "^5.28.0",
     "@vueuse/core": "^10.9.0",
     "pinia": "^2.1.7",
+    "rehype-highlight": "^7.0.2",
+    "rehype-sanitize": "^6.0.0",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "unified": "^11.0.5",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"
   },

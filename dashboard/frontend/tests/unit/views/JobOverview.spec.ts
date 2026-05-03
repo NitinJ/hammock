@@ -115,6 +115,7 @@ describe("JobOverview", () => {
       },
     });
     await nextTick();
-    expect(wrapper.text()).toContain("STAGES_RUNNING");
+    // StateBadge renders STAGES_RUNNING as "Running"
+    expect(wrapper.text()).toContain("Running");
   });
 });

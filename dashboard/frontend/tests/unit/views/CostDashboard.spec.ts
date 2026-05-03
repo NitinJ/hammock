@@ -93,6 +93,7 @@ describe("CostDashboard", () => {
       },
     });
     await nextTick();
-    expect(wrapper.text()).toContain("12500");
+    // toLocaleString formats 12500 as "12,500" in en-US
+    expect(wrapper.text()).toMatch(/12[,.]?500/);
   });
 });

@@ -55,8 +55,9 @@ describe("StageTimeline", () => {
         stubs: { RouterLink: { template: "<a><slot /></a>" } },
       },
     });
-    expect(wrapper.text()).toContain("COMPLETED");
-    expect(wrapper.text()).toContain("RUNNING");
+    // StateBadge renders COMPLETED as "Completed", RUNNING as "Running"
+    expect(wrapper.text()).toContain("Completed");
+    expect(wrapper.text()).toContain("Running");
   });
 
   it("renders cost accrued per stage", () => {
