@@ -24,7 +24,7 @@ describe("StateBadge", () => {
     "FAILED",
     "CANCELLED",
   ];
-  const taskStates: TaskState[] = ["OPEN", "IN_PROGRESS", "DONE", "FAILED", "CANCELLED"];
+  const taskStates: TaskState[] = ["RUNNING", "BLOCKED_ON_HUMAN", "STUCK", "DONE", "FAILED", "CANCELLED"];
   const hilStates: HilState[] = ["AWAITING", "ANSWERED", "CANCELLED"];
 
   it("renders a badge for each job state", () => {

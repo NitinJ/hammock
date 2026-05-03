@@ -30,8 +30,7 @@ const STATE_CONFIG: Record<string, { label: string; classes: string }> = {
   SUCCEEDED: { label: "Succeeded", classes: "bg-green-500/20 text-green-300 ring-green-500/30" },
   CANCELLED: { label: "Cancelled", classes: "bg-gray-500/20 text-gray-400 ring-gray-500/30" },
   // Task states
-  OPEN: { label: "Open", classes: "bg-violet-500/20 text-violet-300 ring-violet-500/30" },
-  IN_PROGRESS: { label: "In Progress", classes: "bg-blue-500/20 text-blue-300 ring-blue-500/30" },
+  STUCK: { label: "Stuck", classes: "bg-amber-500/20 text-amber-300 ring-amber-500/30" },
   DONE: { label: "Done", classes: "bg-green-500/20 text-green-300 ring-green-500/30" },
   // HIL states
   AWAITING: { label: "Awaiting", classes: "bg-amber-500/20 text-amber-300 ring-amber-500/30" },

@@ -3,9 +3,7 @@
 Stage 8 added ``/api/health``. Stage 9 adds the read endpoints for
 projects, jobs, stages, HIL, artifacts, costs, and the observatory stub.
 Stage 10 adds SSE endpoints under ``/sse/``.
-
-Subsequent stages (13 HIL POST, 14 jobs POST, 15 stage POST) add their own
-routers here.
+Stage 15 adds stage action endpoints (chat, cancel, restart).
 """
 
 from __future__ import annotations
@@ -14,6 +12,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from dashboard.api.artifacts import router as artifacts_router
+from dashboard.api.chat import router as chat_router
 from dashboard.api.costs import router as costs_router
 from dashboard.api.hil import router as hil_router
 from dashboard.api.jobs import router as jobs_router
@@ -45,6 +44,7 @@ async def health(request: Request) -> HealthResponse:
 router.include_router(projects_router)
 router.include_router(jobs_router)
 router.include_router(stages_router)
+router.include_router(chat_router)
 router.include_router(hil_router)
 router.include_router(artifacts_router)
 router.include_router(costs_router)

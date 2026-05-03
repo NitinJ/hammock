@@ -24,3 +24,7 @@ class Settings(BaseSettings):
     root: Path = paths.HAMMOCK_ROOT
     host: str = "127.0.0.1"
     port: int = 8765
+    # Optional path to FakeStageRunner fixture directory; passed to
+    # spawn_driver when set. Required in Stage 4/5 before RealStageRunner
+    # is the default. Set via HAMMOCK_FAKE_FIXTURES_DIR env var.
+    fake_fixtures_dir: Path | None = None
