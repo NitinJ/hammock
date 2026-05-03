@@ -66,6 +66,11 @@
       </p>
     </div>
 
+    <!-- Chat error banner -->
+    <p v-if="chatError" class="px-2 py-1 text-xs text-red-600 bg-red-50 border-t border-red-200">
+      {{ chatError }}
+    </p>
+
     <!-- Chat input -->
     <ChatInput
       class="px-2 py-2"
@@ -95,6 +100,7 @@ const props = defineProps<{ jobSlug: string; stageId: string }>();
 const stream = useAgent0Stream(props.jobSlug, props.stageId);
 const filters = ref<Filters>({});
 const scrollEl = ref<HTMLElement | null>(null);
+const chatError = ref<string | null>(null);
 
 watch(filters, (f) => stream.setFilters(f), { deep: true });
 
@@ -119,10 +125,15 @@ function scrollToBottom(): void {
 }
 
 async function sendChat(text: string): Promise<void> {
-  await fetch(`/api/jobs/${props.jobSlug}/stages/${props.stageId}/chat`, {
+  chatError.value = null;
+  const res = await fetch(`/api/jobs/${props.jobSlug}/stages/${props.stageId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    chatError.value = `Send failed (${res.status})${body ? `: ${body}` : ""}`;
+  }
 }
 </script>

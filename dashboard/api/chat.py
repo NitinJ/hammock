@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dashboard.mcp.channel import Channel, NudgeMessage
 from dashboard.state.cache import Cache
+from shared.models import StageState
 
 router = APIRouter(tags=["stage-actions"])
 
@@ -28,6 +29,9 @@ class ChatResponse(BaseModel):
     text: str
 
 
+_TERMINAL_STATES = {StageState.SUCCEEDED, StageState.FAILED, StageState.CANCELLED}
+
+
 def _assert_stage_exists(cache: Cache, job_slug: str, stage_id: str) -> None:
     """Raise 404 if the job or stage is not found in cache."""
     if cache.get_job(job_slug) is None:
@@ -35,6 +39,16 @@ def _assert_stage_exists(cache: Cache, job_slug: str, stage_id: str) -> None:
     if cache.get_stage(job_slug, stage_id) is None:
         raise HTTPException(
             status_code=404, detail=f"stage {stage_id!r} not found in job {job_slug!r}"
+        )
+
+
+def _assert_stage_active(cache: Cache, job_slug: str, stage_id: str) -> None:
+    """Raise 409 if the stage is in a terminal state."""
+    stage = cache.get_stage(job_slug, stage_id)
+    if stage is not None and stage.state in _TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"stage {stage_id!r} is in terminal state {stage.state!r}",
         )
 
 
@@ -49,6 +63,7 @@ async def post_chat(
     cache: Cache = request.app.state.cache  # type: ignore[attr-defined]
     root = request.app.state.settings.root  # type: ignore[attr-defined]
     _assert_stage_exists(cache, job_slug, stage_id)
+    _assert_stage_active(cache, job_slug, stage_id)
 
     channel = Channel(job_slug=job_slug, stage_id=stage_id, root=root)
     msg: NudgeMessage = await channel.push(kind="chat", text=body.text, source="human")

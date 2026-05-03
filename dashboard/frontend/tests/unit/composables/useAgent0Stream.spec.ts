@@ -109,21 +109,21 @@ describe("useAgent0Stream — merge algorithm", () => {
     unmount();
   });
 
-  it("orders entries chronologically by timestamp", () => {
+  it("orders entries chronologically by timestamp when within 500ms window", () => {
     const [stream, unmount] = withSetup(() =>
       useAgent0Stream("my-job", "implement"),
     );
     const src = MockEventSource.instances[0]!;
-    // Send later timestamp first, then earlier
+    // Send later timestamp first, then earlier — within 500ms window so bisect-insert applies
     src.triggerMessage(
-      makeReplayEvent({ seq: 2, timestamp: "2026-05-01T12:00:02.000Z" }),
+      makeReplayEvent({ seq: 2, timestamp: "2026-05-01T12:00:01.400Z" }),
     );
     src.triggerMessage(
       makeReplayEvent({ seq: 1, timestamp: "2026-05-01T12:00:01.000Z" }),
     );
     const times = stream.entries.value.map((e: StreamEntry) => e.timestamp);
     expect(times[0]).toBe("2026-05-01T12:00:01.000Z");
-    expect(times[1]).toBe("2026-05-01T12:00:02.000Z");
+    expect(times[1]).toBe("2026-05-01T12:00:01.400Z");
     unmount();
   });
 
@@ -146,7 +146,7 @@ describe("useAgent0Stream — merge algorithm", () => {
     unmount();
   });
 
-  it("handles out-of-order events outside 500ms window — still inserted at correct position", () => {
+  it("handles out-of-order events outside 500ms window — appended at tail, not reordered", () => {
     const [stream, unmount] = withSetup(() =>
       useAgent0Stream("my-job", "implement"),
     );
@@ -154,14 +154,15 @@ describe("useAgent0Stream — merge algorithm", () => {
     src.triggerMessage(
       makeReplayEvent({ seq: 10, timestamp: "2026-05-01T12:00:10.000Z" }),
     );
-    // t=9s — 1000ms behind latest, outside window
+    // t=9s — 1000ms behind latest, outside 500ms tolerance window
     src.triggerMessage(
       makeReplayEvent({ seq: 9, timestamp: "2026-05-01T12:00:09.000Z" }),
     );
     const times = stream.entries.value.map((e: StreamEntry) => e.timestamp);
-    // Still inserted at correct position
-    expect(times[0]).toBe("2026-05-01T12:00:09.000Z");
-    expect(times[1]).toBe("2026-05-01T12:00:10.000Z");
+    // Late event appended at tail rather than inserted at correct position
+    // to avoid visual churn on already-rendered rows.
+    expect(times[0]).toBe("2026-05-01T12:00:10.000Z");
+    expect(times[1]).toBe("2026-05-01T12:00:09.000Z");
     unmount();
   });
 

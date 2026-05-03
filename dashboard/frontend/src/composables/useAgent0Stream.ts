@@ -49,14 +49,21 @@ function bisectByTimestamp(arr: StreamEntry[], ts: string): number {
   return lo;
 }
 
+/** Events more than this many milliseconds behind the current tail are appended
+ *  rather than inserted at their correct chronological position, to avoid
+ *  re-rendering already-rendered rows during a live tail. */
+const OUT_OF_ORDER_TOLERANCE_MS = 500;
+
 /**
  * Subscribes to /sse/stage/{jobSlug}/{stageId} and maintains a sorted,
  * deduplicated transcript of stream events.
  *
  * Merge algorithm per design doc § Agent0 stream pane:
- * - Events sorted by timestamp (binary-search insert, O(log n)).
  * - Deduplication by (source, seq) key.
- * - Out-of-order events always inserted at correct timestamp position.
+ * - Events within 500ms of the current tail are binary-search-inserted at
+ *   the correct chronological position (handles minor SSE jitter).
+ * - Events more than 500ms behind the tail are appended (avoids visual
+ *   churn from late-arriving replay events after a live tail has advanced).
  * - Auto-scroll-with-anchor state (stickToBottom / newCount).
  */
 export function useAgent0Stream(jobSlug: string, stageId: string) {
@@ -72,8 +79,19 @@ export function useAgent0Stream(jobSlug: string, stageId: string) {
     if (seen.has(key)) return;
     seen.add(key);
 
-    const idx = bisectByTimestamp(entries.value, entry.timestamp);
-    entries.value.splice(idx, 0, entry);
+    const tail = entries.value[entries.value.length - 1];
+    if (tail) {
+      const lagMs = new Date(tail.timestamp).getTime() - new Date(entry.timestamp).getTime();
+      if (lagMs > OUT_OF_ORDER_TOLERANCE_MS) {
+        // Event is too far behind the current tail — append to avoid visual churn.
+        entries.value.push(entry);
+      } else {
+        const idx = bisectByTimestamp(entries.value, entry.timestamp);
+        entries.value.splice(idx, 0, entry);
+      }
+    } else {
+      entries.value.push(entry);
+    }
 
     if (!stickToBottom.value) {
       newCount.value += 1;

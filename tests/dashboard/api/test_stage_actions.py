@@ -145,6 +145,21 @@ class TestStageChat:
             )
         assert r.status_code == 404
 
+    def test_terminal_stage_returns_409(self, tmp_path: Path) -> None:
+        job = _job("test-job-term")
+        atomic_write_json(paths.job_json(job.job_slug, root=tmp_path), job)
+        stage = StageRun(
+            stage_id="implement",
+            attempt=1,
+            state=StageState.SUCCEEDED,
+            started_at=_ts(1),
+            restart_count=0,
+        )
+        atomic_write_json(paths.stage_json(job.job_slug, stage.stage_id, root=tmp_path), stage)
+        with TestClient(create_app(Settings(root=tmp_path))) as c:
+            r = c.post("/api/jobs/test-job-term/stages/implement/chat", json={"text": "hi"})
+        assert r.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # POST /cancel
@@ -175,6 +190,21 @@ class TestStageCancel:
         with client:
             r = client.post("/api/jobs/test-job-1/stages/no-such-stage/cancel")
         assert r.status_code == 404
+
+    def test_terminal_stage_returns_409(self, tmp_path: Path) -> None:
+        job = _job("test-job-term2")
+        atomic_write_json(paths.job_json(job.job_slug, root=tmp_path), job)
+        stage = StageRun(
+            stage_id="implement",
+            attempt=1,
+            state=StageState.FAILED,
+            started_at=_ts(1),
+            restart_count=0,
+        )
+        atomic_write_json(paths.stage_json(job.job_slug, stage.stage_id, root=tmp_path), stage)
+        with TestClient(create_app(Settings(root=tmp_path))) as c:
+            r = c.post("/api/jobs/test-job-term2/stages/implement/cancel")
+        assert r.status_code == 409
 
 
 # ---------------------------------------------------------------------------
