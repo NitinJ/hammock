@@ -234,7 +234,9 @@ class TestStageRestart:
         atomic_write_json(paths.job_json(job.job_slug, root=tmp_path), job)
         # Stage with restart_count at the max (3)
         exhausted = _stage("implement", restart_count=3)
-        atomic_write_json(paths.stage_json(job.job_slug, exhausted.stage_id, root=tmp_path), exhausted)
+        atomic_write_json(
+            paths.stage_json(job.job_slug, exhausted.stage_id, root=tmp_path), exhausted
+        )
         client = TestClient(create_app(Settings(root=tmp_path)))
         with client:
             r = client.post("/api/jobs/test-job-2/stages/implement/restart")

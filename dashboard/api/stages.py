@@ -125,8 +125,7 @@ async def restart_stage(request: Request, job_slug: str, stage_id: str) -> Resta
         raise HTTPException(
             status_code=409,
             detail=(
-                f"stage {stage_id!r} has reached the maximum restart limit "
-                f"({MAX_STAGE_RESTARTS})"
+                f"stage {stage_id!r} has reached the maximum restart limit ({MAX_STAGE_RESTARTS})"
             ),
         )
 
@@ -146,7 +145,5 @@ async def restart_stage(request: Request, job_slug: str, stage_id: str) -> Resta
             pass  # pid file stale or process dead — proceed with restart
 
     fake_fixtures_dir = settings.fake_fixtures_dir
-    pid = await lifecycle.spawn_driver(
-        job_slug, root=root, fake_fixtures_dir=fake_fixtures_dir
-    )
+    pid = await lifecycle.spawn_driver(job_slug, root=root, fake_fixtures_dir=fake_fixtures_dir)
     return RestartResponse(job_driver_pid=pid)
