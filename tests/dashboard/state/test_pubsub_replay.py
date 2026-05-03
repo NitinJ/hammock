@@ -150,17 +150,61 @@ async def test_replay_global_scope_missing_events_files_skipped(tmp_path: Path) 
 
 # ---------------------------------------------------------------------------
 # Unknown / malformed scope
+#
+# Stage 12.5 (A1): scope validation moved to fail-fast.  The previous
+# behaviour — silently yielding nothing on unknown / malformed scope —
+# masked routing bugs and made deep-linked URLs look like "no events yet"
+# rather than "you asked for the wrong thing."  ``replay_since`` now
+# raises ``ValueError`` and the SSE route layer maps that to 422.
 # ---------------------------------------------------------------------------
 
 
-async def test_replay_unknown_scope_yields_nothing(tmp_path: Path) -> None:
-    results = [e async for e in replay_since("project:some-project", -1, root=tmp_path)]
-    assert results == []
+async def test_replay_unknown_scope_raises(tmp_path: Path) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown scope"):
+        async for _ in replay_since("project:some-project", -1, root=tmp_path):
+            pass
 
 
-async def test_replay_stage_scope_malformed_stage_part_yields_nothing(tmp_path: Path) -> None:
-    results = [e async for e in replay_since("stage:no-colon-here", -1, root=tmp_path)]
-    assert results == []
+async def test_replay_stage_scope_malformed_raises(tmp_path: Path) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="malformed 'stage:' scope"):
+        async for _ in replay_since("stage:no-colon-here", -1, root=tmp_path):
+            pass
+
+
+async def test_replay_stage_scope_empty_job_part_raises(tmp_path: Path) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="malformed 'stage:' scope"):
+        async for _ in replay_since("stage::sid", -1, root=tmp_path):
+            pass
+
+
+async def test_replay_stage_scope_empty_stage_part_raises(tmp_path: Path) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="malformed 'stage:' scope"):
+        async for _ in replay_since("stage:job:", -1, root=tmp_path):
+            pass
+
+
+async def test_replay_empty_scope_raises(tmp_path: Path) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown scope"):
+        async for _ in replay_since("", -1, root=tmp_path):
+            pass
+
+
+async def test_replay_job_scope_empty_slug_raises(tmp_path: Path) -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="malformed 'job:' scope"):
+        async for _ in replay_since("job:", -1, root=tmp_path):
+            pass
 
 
 # ---------------------------------------------------------------------------

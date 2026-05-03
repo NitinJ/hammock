@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from job_driver.stage_runner import StageResult, StageRunner
 from shared import paths
@@ -162,6 +163,11 @@ class JobDriver:
         stages = self._read_stages()
         # loop_back iteration counters: keyed by (review_stage_id, target_stage_id)
         loop_counters: dict[tuple[str, str], int] = {}
+        # Stage 12.5 (A6 follow-up): track stages skipped at dispatch so the
+        # final-outputs check can exempt only those (and not silently exempt
+        # a stage that actually ran but whose predicate artifact later
+        # disappeared — that would mask a real integrity failure).
+        dispatch_skipped: set[str] = set()
 
         i = 0
         while i < len(stages):
@@ -171,18 +177,27 @@ class JobDriver:
 
             stage_def = stages[i]
 
-            # Check runs_if predicate
+            # Check runs_if predicate.  Stage 12.5 (A6): unified policy —
+            # PredicateError defaults to False (skip-on-uncertainty) for both
+            # runs_if and loop_back.condition.  A predicate that compiled but
+            # failed at evaluation is a real bug somewhere upstream; logging
+            # at error makes it visible.  Skipping is the safer default: the
+            # next stage's missing-input check will surface the issue, rather
+            # than running a stage with stale or wrong context.
             if stage_def.runs_if is not None:
                 try:
                     ctx = self._build_predicate_context()
                     should_run = evaluate_predicate(stage_def.runs_if, ctx)
                 except PredicateError as exc:
-                    log.warning(
-                        "runs_if eval error for %s: %s — defaulting to True", stage_def.id, exc
+                    log.error(
+                        "runs_if eval error for %s: %s — defaulting to False (skip)",
+                        stage_def.id,
+                        exc,
                     )
-                    should_run = True
+                    should_run = False
                 if not should_run:
                     log.info("Skipping stage %s (runs_if=false)", stage_def.id)
+                    dispatch_skipped.add(stage_def.id)
                     i += 1
                     continue
 
@@ -266,7 +281,10 @@ class JobDriver:
                     ctx = self._build_predicate_context()
                     condition_holds = evaluate_predicate(lb.condition, ctx)
                 except PredicateError as exc:
-                    log.warning("loop_back condition eval error: %s — not looping", exc)
+                    # Stage 12.5 (A6): unified default-False policy.  Same
+                    # rationale as runs_if above — terminate progress on
+                    # uncertainty rather than loop forever on broken context.
+                    log.error("loop_back condition eval error: %s — not looping", exc)
                     condition_holds = False
 
                 if condition_holds:
@@ -311,7 +329,7 @@ class JobDriver:
 
         # All stages done — verify final-stage outputs exist before COMPLETED.
         if not self._cancel_event.is_set():
-            final_missing = self._missing_final_outputs(stages)
+            final_missing = self._missing_final_outputs(stages, skipped=dispatch_skipped)
             if final_missing:
                 log.error("Cannot COMPLETE: final outputs missing: %s", final_missing)
                 self._write_job_state(JobState.FAILED)
@@ -399,10 +417,17 @@ class JobDriver:
         )
 
         if result.cost_usd > 0:
+            # Per design doc § Observability § Event taxonomy: cost_accrued
+            # payload uses ``delta_usd`` / ``delta_tokens`` / ``running_total``.
+            # v0 driver only knows the per-stage USD delta; tokens and the
+            # accumulator are reserved for v1+.  Stage 12.5 (A3) aligned this
+            # key with both the spec and the projection reader, which had
+            # silently been folding to 0 because driver, projection, and spec
+            # all named the field differently.
             self._emit_event(
                 "cost_accrued",
                 stage_id=stage_def.id,
-                payload={"amount_usd": result.cost_usd},
+                payload={"delta_usd": result.cost_usd},
             )
 
         return result
@@ -467,7 +492,12 @@ class JobDriver:
             return False
         try:
             sr = StageRun.model_validate_json(sj.read_text())
-        except Exception:
+        except (json.JSONDecodeError, ValidationError, OSError) as exc:
+            # Stage 12.5 (A7): narrow + log.  An unreadable stage.json is
+            # treated as not-yet-succeeded so the driver re-runs the stage —
+            # but we now log the cause so corruption / schema drift is
+            # visible rather than silently swallowed.
+            log.warning("stage.json unreadable for %s, treating as not-yet-succeeded: %s", sj, exc)
             return False
         if sr.state != StageState.SUCCEEDED:
             return False
@@ -488,21 +518,30 @@ class JobDriver:
             if not (job_dir / ro.path).exists()
         ]
 
-    def _missing_final_outputs(self, stages: list[StageDefinition]) -> list[str]:
+    def _missing_final_outputs(
+        self,
+        stages: list[StageDefinition],
+        *,
+        skipped: set[str] | None = None,
+    ) -> list[str]:
         """Validate every stage's required_outputs are on disk before COMPLETED.
 
-        Skips stages whose ``runs_if`` evaluated false (their outputs are
-        legitimately absent).
+        Stage 12.5 (A6): exempts stages that were *actually skipped at
+        dispatch time*, not stages whose predicate happens to be false now.
+        ``skipped`` is the set of stage ids the dispatch loop skipped via
+        ``runs_if`` (false or PredicateError).  Re-evaluating the predicate
+        here would mis-classify a stage that ran successfully but whose
+        predicate-referenced artifact was later deleted: the dispatch path
+        ran the stage, so its outputs are required, but a re-evaluation of
+        ``runs_if`` would now fail, silently exempting the missing outputs
+        and letting the job COMPLETE with a real integrity violation.
+        Tracking the dispatch decision is the correct gate.
         """
+        skipped = skipped or set()
         missing: list[str] = []
-        ctx = self._build_predicate_context()
         for s in stages:
-            if s.runs_if is not None:
-                try:
-                    if not evaluate_predicate(s.runs_if, ctx):
-                        continue
-                except PredicateError:
-                    pass  # err on the side of validating
+            if s.id in skipped:
+                continue
             missing.extend(self._missing_required_outputs(s))
         return missing
 
@@ -656,7 +695,11 @@ class JobDriver:
         attempt = self._next_attempt(stage_def.id) if not sj.exists() else 1
         try:
             existing = StageRun.model_validate_json(sj.read_text()) if sj.exists() else None
-        except Exception:
+        except (json.JSONDecodeError, ValidationError, OSError) as exc:
+            # Stage 12.5 (A7): narrow + log.  An unreadable existing stage.json
+            # falls back to a fresh PENDING — same behaviour as before, but the
+            # cause is now visible.
+            log.warning("existing stage.json unreadable for %s, starting fresh: %s", sj, exc)
             existing = None
         stage_run = (
             existing
@@ -683,7 +726,10 @@ class JobDriver:
         sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
         try:
             existing = StageRun.model_validate_json(sj.read_text()) if sj.exists() else None
-        except Exception:
+        except (json.JSONDecodeError, ValidationError, OSError) as exc:
+            # Stage 12.5 (A7): narrow + log.  Same treatment as
+            # ``_block_on_human`` — fall back to fresh state, log the cause.
+            log.warning("existing stage.json unreadable for %s, starting fresh: %s", sj, exc)
             existing = None
         attempt = existing.attempt if existing is not None else self._next_attempt(stage_def.id)
         stage_run = (

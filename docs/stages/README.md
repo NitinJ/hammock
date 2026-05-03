@@ -27,3 +27,4 @@ The intent is to give future agents (and humans) enough context that reading `de
 | 10 | [stage-10.md](stage-10.md) | merged | [#9](https://github.com/NitinJ/hammock/pull/9) |
 | 11 | [stage-11.md](stage-11.md) | merged | [#5](https://github.com/NitinJ/hammock/pull/5) |
 | 12 | [stage-12.md](stage-12.md) | merged | [#10](https://github.com/NitinJ/hammock/pull/10) |
+| 12.5 | [stage-12.5.md](stage-12.5.md) | in plan | — |

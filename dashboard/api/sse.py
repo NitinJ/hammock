@@ -137,10 +137,19 @@ async def _event_stream(
     Disconnect detection races against both the message queue and the
     keepalive timer so the generator exits within ~50 ms of client close
     rather than waiting up to KEEPALIVE_INTERVAL seconds.
+
+    Stage 12.5 (A8): on global scope the server never emits ``id:`` (seq is
+    per-job, not globally monotonic), so any Last-Event-ID a client sends
+    on global is meaningless.  Pre-12.5 we still applied that header as a
+    per-job ``seq > N`` filter, which silently dropped every event from any
+    job whose local seq was below N.  Now: on global, replay everything
+    regardless (force ``last_event_id=-1``), so a client cannot lose data
+    by misconfiguration.
     """
     # Phase 1 — replay
     if last_event_id is not None:
-        async for event in replay_since(scope, last_event_id, root=root):
+        replay_floor = -1 if scope == "global" else last_event_id
+        async for event in replay_since(scope, replay_floor, root=root):
             yield _format_replay_event(event, scope)
 
     # Phase 2 — live stream

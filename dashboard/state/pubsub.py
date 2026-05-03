@@ -166,7 +166,25 @@ async def replay_since(
 
 
 def _jsonl_paths_for_scope(scope: str, *, root: Path) -> list[Path]:
-    """Return the on-disk JSONL path(s) that back the given *scope*."""
+    """Return the on-disk JSONL path(s) that back the given *scope*.
+
+    Raises
+    ------
+    ValueError
+        If *scope* is empty, has an unrecognised prefix, or is one of the
+        recognised prefixes but missing required parts (e.g. ``"stage:"``
+        with no second colon, or ``"job:"`` with no slug).  Stage 12.5 (A1)
+        moved this from a silent empty-list return to fail-fast — the old
+        behaviour masked routing bugs because clients couldn't tell "no
+        events yet" from "you asked the wrong thing."
+
+    Replay surface in v0 supports only ``"global"``, ``"job:<slug>"``, and
+    ``"stage:<job>:<sid>"``.  ``"project:<slug>"`` is a live pub/sub scope
+    used by the watcher (see ``dashboard/watcher/tailer.py``) but has no
+    on-disk events.jsonl, so it is not replayable.  Public SSE routes
+    constrain the scope shape via path parameters; an internal caller
+    that constructs an unsupported scope string will see this exception.
+    """
     from shared import paths as _paths  # local import avoids dashboard→shared→dashboard cycle
 
     if scope == "global":
@@ -179,11 +197,17 @@ def _jsonl_paths_for_scope(scope: str, *, root: Path) -> list[Path]:
             if job_dir.is_dir()
         ]
     if scope.startswith("job:"):
-        return [_paths.job_events_jsonl(scope[4:], root=root)]
+        slug = scope[4:]
+        if not slug:
+            raise ValueError(f"malformed 'job:' scope: missing slug ({scope!r})")
+        return [_paths.job_events_jsonl(slug, root=root)]
     if scope.startswith("stage:"):
         rest = scope[6:]
         sep = rest.find(":")
         if sep == -1:
-            return []
-        return [_paths.stage_events_jsonl(rest[:sep], rest[sep + 1 :], root=root)]
-    return []
+            raise ValueError(f"malformed 'stage:' scope: expected 'stage:<job>:<sid>' ({scope!r})")
+        job_slug, stage_id = rest[:sep], rest[sep + 1 :]
+        if not job_slug or not stage_id:
+            raise ValueError(f"malformed 'stage:' scope: empty job or stage part ({scope!r})")
+        return [_paths.stage_events_jsonl(job_slug, stage_id, root=root)]
+    raise ValueError(f"unknown scope: {scope!r}")

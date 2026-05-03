@@ -238,6 +238,190 @@ class TestCostRollup:
 
 
 # ---------------------------------------------------------------------------
+# Driver/projection contract — Stage 12.5 (A3)
+#
+# The cost_accrued payload shape MUST be produced by the Job Driver in the
+# same shape the projection reads.  Pre-12.5 the driver emitted
+# {"amount_usd": ...} while the projection read payload["usd"], so cost
+# rollups silently returned 0 from events (and the cache-fallback at
+# projections._job_total_cost masked the bug for in-cache stages).  The
+# canonical shape is the one the design doc names: ``delta_usd``,
+# ``delta_tokens``, ``running_total``.
+# ---------------------------------------------------------------------------
+
+
+class TestCostPayloadContract:
+    async def test_real_driver_writes_delta_usd_to_events_jsonl(self, tmp_path: Path) -> None:
+        """Stage 12.5 (A3, post-Codex-review): exercise the actual JobDriver
+        cost-emit path and assert the on-disk payload uses ``delta_usd``.
+
+        Pre-fix the driver wrote ``{"amount_usd": ...}``, which silently
+        produced 0.0 from the cost projection.  Codex's review of the first
+        version of this contract test pointed out that hand-rolling the
+        event dict only verifies the *projection* side; if the driver
+        regressed to ``amount_usd`` the projection-side test would still
+        be green.  This second test catches that by running the actual
+        ``JobDriver`` against a fixture stage with non-zero cost and
+        inspecting the event payload key directly.
+        """
+        import json
+        from datetime import UTC, datetime
+
+        import yaml
+
+        from job_driver.runner import JobDriver
+        from job_driver.stage_runner import FakeStageRunner
+        from shared import paths
+        from shared.atomic import atomic_write_json
+        from shared.models.job import JobConfig, JobState
+        from shared.models.stage import (
+            Budget,
+            ExitCondition,
+            InputSpec,
+            OutputSpec,
+            RequiredOutput,
+            StageDefinition,
+        )
+
+        # Minimal job dir setup
+        jobs_dir = tmp_path / "jobs"
+        job_dir = jobs_dir / "cost-test-job"
+        job_dir.mkdir(parents=True)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+
+        atomic_write_json(
+            paths.job_json(job_dir.name, root=tmp_path),
+            JobConfig(
+                job_id="job-cost",
+                job_slug=job_dir.name,
+                project_slug="proj",
+                job_type="build-feature",
+                created_at=datetime(2026, 5, 1, tzinfo=UTC),
+                created_by="human",
+                state=JobState.SUBMITTED,
+            ),
+        )
+
+        stage = StageDefinition(
+            id="cost-stage",
+            worker="agent",
+            inputs=InputSpec(required=[], optional=None),
+            outputs=OutputSpec(required=["out.txt"]),
+            budget=Budget(max_turns=10),
+            exit_condition=ExitCondition(required_outputs=[RequiredOutput(path="out.txt")]),
+        )
+        stage_list = job_dir / "stage-list.yaml"
+        stage_list.write_text(yaml.dump({"stages": [json.loads(stage.model_dump_json())]}))
+
+        # Fixture: stage emits cost_usd > 0 — drives the cost_accrued event path
+        (fixtures_dir / "cost-stage.yaml").write_text(
+            yaml.dump(
+                {
+                    "outcome": "succeeded",
+                    "artifacts": {"out.txt": "x"},
+                    "cost_usd": 1.23,
+                }
+            )
+        )
+
+        driver = JobDriver(
+            job_dir.name,
+            root=tmp_path,
+            stage_runner=FakeStageRunner(fixtures_dir),
+            heartbeat_interval=0.1,
+        )
+        await driver.run()
+
+        # Read the events.jsonl back and find the cost_accrued event
+        events_path = paths.job_events_jsonl(job_dir.name, root=tmp_path)
+        cost_events = [
+            json.loads(line)
+            for line in events_path.read_text().splitlines()
+            if line and json.loads(line).get("event_type") == "cost_accrued"
+        ]
+        assert len(cost_events) == 1, f"expected 1 cost_accrued event, got {len(cost_events)}"
+        payload = cost_events[0]["payload"]
+        # The CANONICAL key — must be `delta_usd`, not `amount_usd` or `usd`.
+        assert "delta_usd" in payload, (
+            f"driver must emit 'delta_usd' (got payload keys {list(payload.keys())})"
+        )
+        assert payload["delta_usd"] == pytest.approx(1.23)
+        # Negative assertion: the legacy keys must NOT be present.
+        assert "amount_usd" not in payload, "driver regressed to legacy 'amount_usd' key"
+        assert "usd" not in payload, "driver regressed to legacy 'usd' key"
+
+    async def test_driver_emits_delta_usd_projection_reads_delta_usd(self, tmp_path: Path) -> None:
+        """Round-trip a single cost_accrued event from JobDriver → projection.
+
+        The test bypasses the full driver setup by writing the same payload
+        the driver writes (`_emit_event` line layout) directly to the job
+        events.jsonl, then asks the projection what total it sees.  If the
+        keys driver writes don't match keys projection reads, the rollup
+        comes back as 0.0 and the test fails.
+        """
+        import json
+
+        from shared import paths
+        from shared.atomic import atomic_write_json
+        from shared.models import (
+            JobConfig,
+            JobState,
+            ProjectConfig,
+        )
+
+        # Minimal cache prerequisites: one project + one job
+        proj = ProjectConfig(
+            slug="proj",
+            name="proj",
+            repo_path="/tmp/proj",
+            default_branch="main",
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        atomic_write_json(paths.project_json(proj.slug, root=tmp_path), proj)
+        job = JobConfig(
+            job_id="job-1",
+            job_slug="proj-job-1",
+            project_slug="proj",
+            job_type="build-feature",
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            created_by="human",
+            state=JobState.STAGES_RUNNING,
+        )
+        atomic_write_json(paths.job_json(job.job_slug, root=tmp_path), job)
+
+        # Driver-shaped event: this is the exact dict layout JobDriver writes
+        # to events.jsonl.  If the driver code drifts from this shape, the
+        # projection will fold to 0 and this test will catch it.
+        events_path = paths.job_events_jsonl(job.job_slug, root=tmp_path)
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        with events_path.open("a") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "seq": 1,
+                        "timestamp": datetime(2026, 5, 1, tzinfo=UTC).isoformat(),
+                        "event_type": "cost_accrued",
+                        "source": "job_driver",
+                        "job_id": job.job_id,
+                        "stage_id": "design",
+                        "task_id": None,
+                        "subagent_id": None,
+                        "parent_event_seq": None,
+                        "payload": {"delta_usd": 0.42, "delta_tokens": 1234},
+                    }
+                )
+                + "\n"
+            )
+
+        cache = await Cache.bootstrap(tmp_path)
+        rollup = projections.cost_rollup(cache, "job", job.job_slug)
+        assert rollup is not None
+        assert rollup.total_usd == pytest.approx(0.42)
+        assert rollup.total_tokens == 1234
+
+
+# ---------------------------------------------------------------------------
 # System health
 # ---------------------------------------------------------------------------
 

@@ -217,7 +217,9 @@ def _fold_cost_events(events_jsonl: Path) -> tuple[float, int]:
 
     Reads the file line-by-line, ignoring malformed lines (they log a
     warning at the cache level; here we just skip). The payload convention
-    for ``cost_accrued`` events is ``{"usd": <float>, "tokens": <int>}``.
+    for ``cost_accrued`` events is ``{"delta_usd": <float>, "delta_tokens": <int>}``
+    per design doc § Observability § Event taxonomy.  Older payload shapes
+    (``usd`` / ``amount_usd``) are not read.
     """
     if not events_jsonl.is_file():
         return 0.0, 0
@@ -235,10 +237,14 @@ def _fold_cost_events(events_jsonl: Path) -> tuple[float, int]:
             if obj.get("event_type") != "cost_accrued":
                 continue
             payload = obj.get("payload") or {}
-            usd = payload.get("usd")
+            # Stage 12.5 (A3): canonical payload shape is ``delta_usd`` /
+            # ``delta_tokens`` (per design doc § Observability).  Pre-12.5 the
+            # projection read ``usd`` / ``tokens`` while the driver wrote
+            # ``amount_usd``, so rollups silently folded to 0.
+            usd = payload.get("delta_usd")
             if isinstance(usd, int | float):
                 total_usd += float(usd)
-            tokens = payload.get("tokens")
+            tokens = payload.get("delta_tokens")
             if isinstance(tokens, int):
                 total_tokens += tokens
     return total_usd, total_tokens
@@ -266,12 +272,13 @@ def _fold_cost_breakdown(
             if obj.get("event_type") != "cost_accrued":
                 continue
             payload = obj.get("payload") or {}
-            usd_raw = payload.get("usd")
+            # Stage 12.5 (A3): canonical keys are ``delta_usd`` / ``delta_tokens``.
+            usd_raw = payload.get("delta_usd")
             if not isinstance(usd_raw, int | float):
                 continue
             usd = float(usd_raw)
             total_usd += usd
-            tokens = payload.get("tokens")
+            tokens = payload.get("delta_tokens")
             if isinstance(tokens, int):
                 total_tokens += tokens
             stage_id = obj.get("stage_id")

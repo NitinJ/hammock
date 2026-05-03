@@ -192,7 +192,7 @@ def test_format_replay_event_includes_id() -> None:
         event_type="cost_accrued",
         source="agent0",
         job_id="job-id-1",
-        payload={"usd": 0.5},
+        payload={"delta_usd": 0.5},
     )
     result = _format_replay_event(event, "stage:job:s1")
     # Scoped channels include id: for reconnect replay
@@ -358,6 +358,65 @@ async def test_sse_global_replay_delivers_all_job_events(populated_root: Path) -
     full = "".join(chunks)
     # Data delivered but no id: lines (global scope suppresses id:)
     assert "data:" in full
+    assert "id:" not in full
+
+
+async def test_sse_global_replay_with_high_last_event_id_does_not_drop_low_seq_jobs(
+    populated_root: Path,
+) -> None:
+    """Stage 12.5 (A8): on global scope, Last-Event-ID must not filter per-job
+    events — seq is per-job monotonic, not globally monotonic, so applying a
+    high Last-Event-ID as a per-file ``seq > N`` filter would silently drop
+    every event from any job whose local seq is below N.  Pre-12.5 this was
+    exactly the bug: a client that sent ``Last-Event-ID: 100`` (perhaps from
+    confusion with another scope) would receive nothing from a job whose seq
+    only went up to 3.
+
+    Fix: global scope ignores any Last-Event-ID and replays every event from
+    every job's events.jsonl.  The fixture has events with seq 1..3 across
+    multiple jobs; passing Last-Event-ID:100 must still deliver them.
+    """
+    # Augment the fixture with a SECOND job that also has a low-seq event,
+    # so we prove cross-job behaviour: a high Last-Event-ID must not drop
+    # events from the second job either.  Without this, the test would
+    # only cover one job and could pass for the wrong reason.
+    from shared import paths
+
+    second_events = paths.job_events_jsonl("alpha-job-2", root=populated_root)
+    second_events.parent.mkdir(parents=True, exist_ok=True)
+    second_events.write_text(
+        json.dumps(
+            {
+                "seq": 1,
+                "timestamp": _ts(),
+                "event_type": "cost_accrued",
+                "source": "agent0",
+                "job_id": "id-alpha-job-2",
+                "stage_id": "second-job-stage",
+                "payload": {"delta_usd": 0.99, "delta_tokens": 7},
+            }
+        )
+        + "\n"
+    )
+
+    pubsub: InProcessPubSub[CacheChange] = InProcessPubSub()
+    chunks = await _collect_stream(
+        "global",
+        pubsub,
+        populated_root,
+        last_event_id=100,
+    )
+    full = "".join(chunks)
+    # alpha-job-1 has seq 1..4; alpha-job-2 has seq 1.  All must be delivered
+    # despite Last-Event-ID:100 — the per-job seq filter must not drop low-seq
+    # events from any job.
+    assert "cost_accrued" in full, (
+        "global replay must deliver low-seq events even when Last-Event-ID is high"
+    )
+    # Both jobs' events must appear — proves cross-job behaviour, not just
+    # that one job's events leaked through.
+    assert "second-job-stage" in full, "second job's low-seq event was silently dropped"
+    # Global suppresses id: regardless
     assert "id:" not in full
 
 
