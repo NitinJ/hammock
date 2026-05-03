@@ -92,6 +92,36 @@ async def _wait_for(root: Path, slug: str, accept: set[JobState], timeout: float
     raise TimeoutError(f"job {slug} stuck at {last} after {timeout}s")
 
 
+async def _wait_for_block_on(root: Path, slug: str, stage_id: str, timeout: float) -> None:
+    """Poll the *expected* stage's stage.json until BLOCKED_ON_HUMAN.
+
+    Mirrors the e2e test's _wait_for_block_on_stage; polling job.json
+    alone races across re-spawns because job.json stays BLOCKED_ON_HUMAN
+    from the previous block until the re-spawned driver writes
+    STAGES_RUNNING.
+    """
+    sj_path = paths.stage_json(slug, stage_id, root=root)
+    deadline = asyncio.get_event_loop().time() + timeout
+    last: StageState | None = None
+    while asyncio.get_event_loop().time() < deadline:
+        if sj_path.exists():
+            try:
+                sj = StageRun.model_validate_json(sj_path.read_text())
+                last = sj.state
+                if last == StageState.BLOCKED_ON_HUMAN:
+                    return
+                if last in (StageState.FAILED, StageState.CANCELLED):
+                    raise RuntimeError(
+                        f"stage {stage_id} reached terminal {last.value} not BLOCKED_ON_HUMAN"
+                    )
+            except ValueError:
+                pass
+        await asyncio.sleep(0.1)
+    raise TimeoutError(
+        f"stage {stage_id} did not reach BLOCKED_ON_HUMAN within {timeout}s (last: {last})"
+    )
+
+
 def _resolve_human(root: Path, slug: str, stage_id: str, output_filename: str) -> None:
     job_dir = paths.job_dir(slug, root=root)
     (job_dir / output_filename).write_text(json.dumps(_APPROVED_VERDICT))
@@ -140,13 +170,9 @@ async def main() -> int:
         print(f"[smoke] submitted: {job_slug}")
 
     terminal = {JobState.COMPLETED, JobState.FAILED, JobState.ABANDONED}
-    block_or_terminal = {JobState.BLOCKED_ON_HUMAN, *terminal}
     for stage_id, output_filename in _HUMAN_GATES:
-        state = await _wait_for(root, job_slug, block_or_terminal, timeout=30.0)
-        print(f"[smoke] reached {state.value} (human stage: {stage_id})")
-        if state != JobState.BLOCKED_ON_HUMAN:
-            print(f"[smoke] FAIL: expected BLOCKED_ON_HUMAN at {stage_id}")
-            return 1
+        await _wait_for_block_on(root, job_slug, stage_id, timeout=30.0)
+        print(f"[smoke] BLOCKED_ON_HUMAN at {stage_id}")
         _resolve_human(root, job_slug, stage_id, output_filename)
         await spawn_driver(job_slug, root=root, fake_fixtures_dir=fakes)
         print(f"[smoke] resolved {stage_id} + re-spawned driver")

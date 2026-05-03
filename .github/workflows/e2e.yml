@@ -67,4 +67,27 @@ jobs:
         run: uv sync --dev --python ${{ matrix.python-version }}
 
       - name: Run e2e suite
-        run: uv run pytest tests/e2e/ -q
+        run: |
+          mkdir -p test-results
+          uv run pytest tests/e2e/ -q \
+            --junitxml=test-results/e2e-${{ matrix.python-version }}.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-py${{ matrix.python-version }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Upload tmp hammock-root on failure
+        # Detached driver e2e failures are hard to diagnose from logs alone;
+        # the per-run tmp roots under /tmp/pytest-of-* hold the job dirs,
+        # event logs, stage state, and PID files we need to triage.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tmp-roots-py${{ matrix.python-version }}
+          path: /tmp/pytest-of-*/
+          retention-days: 7
+          if-no-files-found: ignore

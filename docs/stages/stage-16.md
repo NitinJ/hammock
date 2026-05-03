@@ -138,13 +138,13 @@ None. The e2e test reuses `pytest`, `pytest-asyncio`, `fastapi`,
 manual smoke script reuses the same. The CI workflow adds no new
 toolchain (uv + python only).
 
-## Acceptance criteria — met
+## Acceptance criteria — status
 
 - [x] **Full lifecycle test runs in CI and passes.** `tests/e2e/test_full_lifecycle.py` runs in ~1 s on a workstation; wired into `e2e.yml` on PR + nightly across Python 3.12 + 3.13.
-- [x] **Manual dogfood produces a merge-ready PR.** Procedure documented in `docs/runbook.md § 9`; fixture at `tests/fixtures/dogfood-bug/`; ground-truth fix recorded in the fixture's `expected-fix.md` so the dogfood walk has an objective pass criterion.
-- [x] **Runbook covers install, first-run, register-project, submit-job, common operations, troubleshooting.** All ten sections in `docs/runbook.md` (1 install, 2 first run, 3 register a project, 4 submit a job, 5 watching live, 6 HIL queue, 7 common ops, 8 troubleshooting, 9 manual dogfood, 10 cross-references).
-- [x] **README quickstart works on a fresh machine.** Four-step walk (clone → uv sync → start dashboard → register + submit) verified by following it from a clean clone.
-- [x] **v1+ backlog updated.** Two items surfaced and called out for v1+ in this stage's notes: (1) frontend Playwright e2e; (2) HIL → artifact → driver-resume bridge in the form pipeline. Both fit the existing `implementation.md § 9` deferred-by-design list and need no schema changes.
+- [~] **Manual dogfood produces a merge-ready PR — partial.** Procedure documented in `docs/runbook.md § 9`; fixture at `tests/fixtures/dogfood-bug/`; ground-truth fix recorded in the fixture's `expected-fix.md`. **However**, the real-Claude lifecycle blocks on a v1+ wiring gap: `job_driver/__main__.py` requires `--fake-fixtures` and exits 2 without it, and `RealStageRunner` (Stage 5) is not wired into the entry point or `spawn_driver`. The dogfood walk-through demonstrates the operator flow but cannot drive a real fix in v0; it becomes runnable end-to-end once the v1+ runner-selection item ships (now in `implementation.md § 9`).
+- [x] **Runbook covers install, first-run, register-project, submit-job, common operations, troubleshooting.** All ten sections in `docs/runbook.md` (1 install, 2 first run, 3 register a project, 4 submit a job, 5 watching live, 6 HIL queue, 7 common ops, 8 troubleshooting, 9 manual dogfood, 10 cross-references). § 4 explicitly calls out the CLI-vs-dashboard distinction (CLI submit does not spawn a driver) and § 4 + § 8 document the real-Claude wiring gap.
+- [x] **README quickstart works on a fresh machine.** Quickstart points at the bundled fake-fixture smoke (`scripts/manual-smoke-stage16.py` — verified end-to-end) for the fastest demo, then describes the dashboard-side submit flow for an interactive walk. The previous CLI-submit version of the quickstart was incorrect (CLI submit does not spawn a driver) and was corrected during the Codex review pass.
+- [x] **v1+ backlog updated.** Four items added to `docs/implementation.md § 9` and called out as Stage-16-surfaced: (1) closed-loop HIL → artifact bridge in the form pipeline, (2) `RealStageRunner` wired into `job_driver.__main__` + `spawn_driver`, (3) CLI `hammock job submit` optionally spawning the driver, (4) frontend Playwright e2e smoke.
 
 ## Notes for downstream stages
 

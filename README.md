@@ -2,7 +2,12 @@
 
 > Agentic development harness — a single local system that orchestrates safe, observable, human-gated edits to source repositories, driven by a Claude session as the orchestrator and background agents as the workers.
 
-**Status:** v0 (Stages 0–16 complete). See [`docs/implementation.md`](docs/implementation.md) for the stage-by-stage plan and [`docs/design.md`](docs/design.md) for the canonical design. See [`docs/runbook.md`](docs/runbook.md) for the operator-facing reference.
+**Status:** v0 (Stages 0–16 complete). The end-to-end lifecycle works
+today against the **fake-fixture** stage runner used by tests and the
+local smoke. Wiring the real `claude`-spawning runner into the driver
+entry point is a v1+ item — see `docs/implementation.md § 9`.
+
+See [`docs/implementation.md`](docs/implementation.md) for the stage-by-stage plan and [`docs/design.md`](docs/design.md) for the canonical design. See [`docs/runbook.md`](docs/runbook.md) for the operator-facing reference.
 
 ## What it is
 
@@ -13,7 +18,6 @@ Hammock orchestrates safe, observable, human-gated edits to source repositories.
 ### Prerequisites
 
 - macOS or Linux, Python ≥ 3.12, `git` ≥ 2.40, [`gh`](https://cli.github.com/) ≥ 2.40, [`uv`](https://docs.astral.sh/uv/).
-- A `claude` CLI in `$PATH` for real (non-fake) job runs.
 
 ### Install
 
@@ -23,30 +27,43 @@ cd hammock
 uv sync --dev
 ```
 
-### First run
+### First run (fake-fixture lifecycle)
+
+The fastest way to see the whole pipeline end-to-end is the bundled smoke,
+which uses fake stage fixtures (no real Claude, no network):
 
 ```bash
-# 1. Start the dashboard (long-lived, keep this terminal open).
+uv run python scripts/manual-smoke-stage16.py
+```
+
+It registers a synthetic project, submits a `fix-bug` job, walks the
+driver through every agent stage, resolves three human gates, and prints
+the path to the resulting job dir for inspection.
+
+### First run with the dashboard
+
+For an interactive walk:
+
+```bash
+# 1. Start the dashboard (long-lived; keep this terminal open).
+#    Set HAMMOCK_FAKE_FIXTURES_DIR to a fixtures dir if you want jobs
+#    spawned through the dashboard to use FakeStageRunner.
 uv run python -m dashboard
 #    → http://127.0.0.1:8765/
 
 # 2. In another terminal, register a project.
 uv run hammock project register /path/to/your/repo
 
-# 3. Submit a job.
-uv run hammock job submit \
-    --project <slug> \
-    --type fix-bug \
-    --title "Short title" \
-    --request-text "Paragraph describing the goal."
-
-# 4. Open the dashboard, click into the job, watch the live stage view,
-#    answer HIL prompts as they appear.
+# 3. In the dashboard, open `/jobs/new`, fill the form, submit.
+#    The dashboard's POST /api/jobs spawns the Job Driver as a side
+#    effect and the Stage Live view will start streaming events.
+#    (CLI `hammock job submit` only compiles + writes the job dir; it
+#    does not spawn a driver. Use the dashboard for the watching flow.)
 ```
 
 For everything else — health-check verbs, troubleshooting, the manual
-dogfood walk-through, and how to operate hammock in production —
-see [`docs/runbook.md`](docs/runbook.md).
+dogfood walk-through, and the v1+ items required for a real `claude`
+end-to-end run — see [`docs/runbook.md`](docs/runbook.md).
 
 ## Layout
 

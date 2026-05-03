@@ -230,6 +230,49 @@ async def _wait_for_state(
     )
 
 
+async def _wait_for_block_on_stage(
+    root: Path,
+    job_slug: str,
+    stage_id: str,
+    *,
+    timeout: float = 30.0,
+    poll: float = 0.1,
+) -> None:
+    """Poll until the *named* stage's stage.json is BLOCKED_ON_HUMAN.
+
+    Polling job.json alone is racy across re-spawns: after the test
+    resolves a human gate, job.json is still BLOCKED_ON_HUMAN from the
+    previous block until the re-spawned driver flips it to STAGES_RUNNING.
+    A poll of job.json that hits in the gap returns the stale value and
+    the test would proceed before the new gate exists. Polling the
+    expected stage's stage.json is unambiguous: the stage either reached
+    BLOCKED_ON_HUMAN (good) or it didn't (keep waiting), and a stage
+    transition to FAILED/CANCELLED surfaces immediately.
+    """
+    sj_path = paths.stage_json(job_slug, stage_id, root=root)
+    deadline = asyncio.get_event_loop().time() + timeout
+    last_state: StageState | None = None
+    while asyncio.get_event_loop().time() < deadline:
+        if sj_path.exists():
+            try:
+                sj = StageRun.model_validate_json(sj_path.read_text())
+                last_state = sj.state
+                if last_state == StageState.BLOCKED_ON_HUMAN:
+                    return
+                if last_state in (StageState.FAILED, StageState.CANCELLED):
+                    raise AssertionError(
+                        f"stage {stage_id!r} reached terminal {last_state.value} "
+                        f"instead of BLOCKED_ON_HUMAN"
+                    )
+            except ValueError:
+                pass
+        await asyncio.sleep(poll)
+    raise AssertionError(
+        f"stage {stage_id!r} did not reach BLOCKED_ON_HUMAN within {timeout}s "
+        f"(last seen stage.state: {last_state})"
+    )
+
+
 def _resolve_human_gate(
     root: Path,
     job_slug: str,
@@ -302,15 +345,20 @@ async def test_fix_bug_full_lifecycle(tmp_path: Path) -> None:
         job_slug = resp.json()["job_slug"]
 
     # Walk through human gates one by one. Each iteration: the driver runs
-    # to the next BLOCKED_ON_HUMAN, the test resolves that gate by writing
-    # its output + flipping stage.json to SUCCEEDED, then re-spawns the
-    # driver. After the last gate the driver should reach COMPLETED.
+    # to the next BLOCKED_ON_HUMAN at the expected stage, the test
+    # resolves that gate by writing its output + flipping stage.json to
+    # SUCCEEDED, then re-spawns the driver. After the last gate the
+    # driver should reach COMPLETED.
     terminal = {JobState.COMPLETED, JobState.FAILED, JobState.ABANDONED}
-    block_or_terminal = {JobState.BLOCKED_ON_HUMAN, *terminal}
 
     for stage_id, output_filename in _HUMAN_GATES:
-        state = await _wait_for_state(root, job_slug, block_or_terminal, timeout=30.0)
-        assert state == JobState.BLOCKED_ON_HUMAN, f"expected to block on {stage_id!r}, got {state}"
+        # Wait for the *expected* stage to be the one blocked. Polling
+        # job.json alone races across re-spawns (job.json stays
+        # BLOCKED_ON_HUMAN from the previous block until the new driver
+        # writes STAGES_RUNNING). Per-stage polling is unambiguous and
+        # also catches "driver blocked on the wrong human stage" as a
+        # timeout instead of a silent false-pass.
+        await _wait_for_block_on_stage(root, job_slug, stage_id, timeout=30.0)
         _resolve_human_gate(root, job_slug, stage_id, output_filename)
         await spawn_driver(job_slug, root=root, fake_fixtures_dir=fixtures_dir)
 

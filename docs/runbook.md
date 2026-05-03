@@ -119,42 +119,60 @@ in `hammock project --help`.
 ## 4. Submit a job
 
 A job is one human request + the compiled stage list that fulfils it.
-Submit via CLI or via the dashboard's `POST /api/jobs`.
+**Submit through the dashboard's `POST /api/jobs`** (or its UI form at
+<http://127.0.0.1:8765/jobs/new>) so the Job Driver is spawned as a side
+effect — that is the path the watching flow expects.
 
 ```bash
+curl -s -X POST http://127.0.0.1:8765/api/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "project_slug": "<project-slug>",
+        "job_type": "fix-bug",
+        "title": "<short title>",
+        "request_text": "<paragraph describing the goal>"
+      }'
+```
+
+The CLI also exposes `hammock job submit`, but it only invokes the Plan
+Compiler synchronously and writes the job dir — **it does not spawn a
+Job Driver**. That makes it useful for offline plan validation
+(`--dry-run`) and for scripting compile-then-spawn-later workflows, but
+not for the standard "submit and watch" flow. For the watching flow,
+prefer the dashboard.
+
+```bash
+# Compile-and-validate-only (no driver spawn)
 uv run hammock job submit \
     --project <project-slug> \
     --type fix-bug \
     --title "<short title>" \
-    --request-text "<paragraph describing the goal>"
+    --request-text "<paragraph describing the goal>" \
+    --dry-run
 ```
 
-Or, for longer prompts:
-
-```bash
-uv run hammock job submit \
-    --project <project-slug> \
-    --type fix-bug \
-    --title "<short title>" \
-    --request-file path/to/prompt.md
-```
-
-`hammock job submit` runs the Plan Compiler synchronously. On success it
-prints the new `job_slug`. On failure it prints structured compile errors
-and exits non-zero — nothing is written.
-
-`--dry-run` returns the would-be plan without writing the job dir or
-spawning a driver. Useful for validating a template change before
-committing to a real run.
-
-After submit, the dashboard spawns the Job Driver as a fully detached
-subprocess. Watch the job either via `GET /api/jobs/<slug>` or, more
-usefully, in the dashboard UI under
-<http://127.0.0.1:8765/jobs/`<slug>`>.
+After a dashboard submit, watch the job in the dashboard UI at
+<http://127.0.0.1:8765/jobs/`<slug>`>. The Stage Live view (Section 5)
+streams Agent0 events in real time.
 
 The bundled job templates ship in `hammock/templates/job-templates/`.
 v0 ships `fix-bug` and `build-feature`; the other four (`refactor`,
 `migration`, `chore`, `research-spike`) are deferred to v1+.
+
+### Real Claude vs. fake fixtures
+
+In v0 the Job Driver requires `--fake-fixtures <dir>` at startup
+(`job_driver/__main__.py` exits 2 without it). Wiring the
+`RealStageRunner` (which exists from Stage 5) into the driver entry
+point is a v1+ item. Until then:
+
+- For **automated tests + the bundled smoke**: pass
+  `Settings.fake_fixtures_dir` (env: `HAMMOCK_FAKE_FIXTURES_DIR`); the
+  dashboard forwards it on every spawn.
+- For **real-Claude runs**: the runner must be selected manually by
+  invoking `python -m job_driver` with a real-runner flag (not yet
+  implemented). Do not expect a fresh-machine real dogfood to work in
+  v0 without that wiring.
 
 ---
 
@@ -364,9 +382,18 @@ Steps:
 1. Initialise the fixture as a real git repo (`git init`, commit, set
    remote, push to a throwaway GitHub repo). Run from the fixture dir.
 2. `uv run hammock project register <abs-path-to-fixture>` (use
-   `--skip-remote-checks` if you skipped the GitHub push).
-3. `uv run hammock job submit --project dogfood-widget --type fix-bug
-   --title "parse_range off-by-one" --request-file prompt.md`.
+   `--skip-remote-checks` if you skipped the GitHub push). The CLI
+   derives the slug from the directory basename, which is `dogfood-bug`
+   for this fixture; pass `--slug dogfood-widget` if you want the slug
+   to match the Python package name in `pyproject.toml`.
+3. Submit the job from the dashboard form at
+   <http://127.0.0.1:8765/jobs/new> using project slug `dogfood-bug`
+   (or whatever slug `register` printed), job type `fix-bug`, title
+   `parse_range off-by-one`, and the contents of the fixture's
+   `prompt.md` as the request text. **Note:** real-Claude submission
+   requires the v1+ RealStageRunner wiring described in § 4 — until it
+   ships, this walk-through demonstrates the flow but cannot drive a
+   real fix.
 4. Open the dashboard, walk through the live view + HIL queue.
 5. Once `summary.md` lands in the job dir, compare the resulting commit
    diff against `expected-fix.md` in the fixture.
