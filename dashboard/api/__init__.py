@@ -2,9 +2,10 @@
 
 Stage 8 added ``/api/health``. Stage 9 adds the read endpoints for
 projects, jobs, stages, HIL, artifacts, costs, and the observatory stub.
+Stage 10 adds SSE endpoints under ``/sse/``.
 
-Subsequent stages (10 SSE, 13 HIL POST, 14 jobs POST, 15 stage POST) add
-their own routers here.
+Subsequent stages (13 HIL POST, 14 jobs POST, 15 stage POST) add their own
+routers here.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dashboard.api.hil import router as hil_router
 from dashboard.api.jobs import router as jobs_router
 from dashboard.api.observatory import router as observatory_router
 from dashboard.api.projects import router as projects_router
+from dashboard.api.sse import router as sse_router
 from dashboard.api.stages import router as stages_router
 
 
@@ -47,3 +49,4 @@ router.include_router(hil_router)
 router.include_router(artifacts_router)
 router.include_router(costs_router)
 router.include_router(observatory_router)
+router.include_router(sse_router)
