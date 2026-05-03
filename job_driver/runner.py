@@ -273,6 +273,21 @@ class JobDriver:
                 self._write_job_state(JobState.FAILED)
                 return
 
+            # Stage 12.5 (A2): run named validators on outputs after existence check.
+            validator_errors = self._run_output_validators(stage_def)
+            if validator_errors:
+                log.error(
+                    "Stage %s failed artifact validation: %s",
+                    stage_def.id,
+                    validator_errors,
+                )
+                self._fail_stage(
+                    stage_def,
+                    reason=f"artifact validation failed: {validator_errors}",
+                )
+                self._write_job_state(JobState.FAILED)
+                return
+
             # Handle loop_back
             if stage_def.loop_back is not None:
                 lb = stage_def.loop_back
@@ -504,8 +519,16 @@ class JobDriver:
 
         # Outputs must also exist — guards against an orphaned stage.json
         # whose declared outputs were deleted out from under us.
-        if stage_def.exit_condition.required_outputs:
-            return not self._missing_required_outputs(stage_def)
+        if stage_def.exit_condition.required_outputs and self._missing_required_outputs(stage_def):
+            return False
+        validator_errors = self._run_output_validators(stage_def)
+        if validator_errors:
+            log.warning(
+                "stage %s is SUCCEEDED but validators fail on resume; will re-run: %s",
+                stage_def.id,
+                validator_errors,
+            )
+            return False
         return True
 
     def _missing_required_outputs(self, stage_def: StageDefinition) -> list[str]:
@@ -517,6 +540,37 @@ class JobDriver:
             for ro in stage_def.exit_condition.required_outputs
             if not (job_dir / ro.path).exists()
         ]
+
+    def _run_output_validators(self, stage_def: StageDefinition) -> list[str]:
+        """Run named validators on required_outputs and artifact_validators.
+
+        Returns a list of error messages; empty means all pass.
+        Fail-closed: unknown validator names are treated as errors so a
+        misconfigured plan doesn't silently skip validation.
+        """
+        from shared.artifact_validators import REGISTRY
+
+        job_dir = self._job_dir()
+        errors: list[str] = []
+        ec = stage_def.exit_condition
+        for ro in ec.required_outputs or []:
+            for name in ro.validators or []:
+                fn = REGISTRY.get(name)
+                if fn is None:
+                    errors.append(f"{ro.path}: [{name}] unknown validator (not in registry)")
+                    continue
+                result = fn(job_dir / ro.path)
+                if result is not None:
+                    errors.append(f"{ro.path}: [{name}] {result}")
+        for av in ec.artifact_validators or []:
+            fn = REGISTRY.get(av.schema_)
+            if fn is None:
+                errors.append(f"{av.path}: [{av.schema_}] unknown validator (not in registry)")
+                continue
+            result = fn(job_dir / av.path)
+            if result is not None:
+                errors.append(f"{av.path}: [{av.schema_}] {result}")
+        return errors
 
     def _missing_final_outputs(
         self,

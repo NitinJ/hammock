@@ -288,6 +288,28 @@ def _validated_answer(
 # ---------------------------------------------------------------------------
 
 
+def _check_validator_names_in_new_stages(stages: list[dict[str, Any]]) -> None:
+    """Fail-closed check: reject any unknown validator names in the new stages."""
+    from shared.artifact_validators import REGISTRY
+
+    for spec in stages:
+        ec = spec.get("exit_condition") or {}
+        for ro in ec.get("required_outputs") or []:
+            for name in ro.get("validators") or []:
+                if name not in REGISTRY:
+                    raise MCPToolError(
+                        f"stage {spec.get('id')!r}: unknown validator {name!r}; "
+                        f"registered names: {sorted(REGISTRY)}"
+                    )
+        for av in ec.get("artifact_validators") or []:
+            schema = av.get("schema")
+            if schema and schema not in REGISTRY:
+                raise MCPToolError(
+                    f"stage {spec.get('id')!r}: unknown artifact_validator schema {schema!r}; "
+                    f"registered names: {sorted(REGISTRY)}"
+                )
+
+
 async def append_stages(
     *,
     job_slug: str,
@@ -321,6 +343,8 @@ async def append_stages(
         existing_ids.add(spec["id"])
         data["stages"].append(spec)
         appended += 1
+
+    _check_validator_names_in_new_stages(stages)
 
     atomic_write_text(path, yaml.safe_dump(data, sort_keys=False))
     return {"ok": True, "count": appended}

@@ -26,6 +26,7 @@ from shared.models.hil import (
     ReviewAnswer,
     ReviewQuestion,
 )
+from shared.models.integration_test_report import IntegrationTestReport, TestFailure
 from shared.models.job import (
     AgentCostSummary,
     JobConfig,
@@ -72,6 +73,7 @@ __all__ = [
     "ExitCondition",
     "HilItem",
     "InputSpec",
+    "IntegrationTestReport",
     "JobConfig",
     "JobCostSummary",
     "JobState",
@@ -100,5 +102,6 @@ __all__ = [
     "StageState",
     "TaskRecord",
     "TaskState",
+    "TestFailure",
     "UiTemplate",
 ]

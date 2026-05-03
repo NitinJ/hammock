@@ -41,6 +41,7 @@ def validate_plan(stages: list[StageDefinition]) -> list[ValidationFailure]:
     failures.extend(validate_predicates(stages))
     failures.extend(validate_human_stages_have_presentation(stages))
     failures.extend(validate_no_path_traversal(stages))
+    failures.extend(validate_known_validators(stages))
     return failures
 
 
@@ -197,6 +198,26 @@ def validate_no_path_traversal(stages: list[StageDefinition]) -> list[Validation
                             f"{kind} path {p!r} is unsafe (absolute or contains '..')",
                         )
                     )
+        for ro in s.exit_condition.required_outputs or []:
+            if _path_unsafe(ro.path):
+                failures.append(
+                    ValidationFailure(
+                        "path_traversal",
+                        s.id,
+                        f"exit_condition.required_outputs path {ro.path!r} is unsafe "
+                        "(absolute or contains '..')",
+                    )
+                )
+        for av in s.exit_condition.artifact_validators or []:
+            if _path_unsafe(av.path):
+                failures.append(
+                    ValidationFailure(
+                        "path_traversal",
+                        s.id,
+                        f"exit_condition.artifact_validators path {av.path!r} is unsafe "
+                        "(absolute or contains '..')",
+                    )
+                )
     return failures
 
 
@@ -205,3 +226,36 @@ def _path_unsafe(p: str) -> bool:
         return True
     parts = PurePosixPath(p).parts
     return ".." in parts
+
+
+def validate_known_validators(stages: list[StageDefinition]) -> list[ValidationFailure]:
+    """Every validator name in ``required_outputs[*].validators`` and
+    ``artifact_validators[*].schema`` must be registered in the artifact
+    validator registry.  Fail-closed: unknown names are a compile-time error.
+    """
+    from shared.artifact_validators import REGISTRY
+
+    failures: list[ValidationFailure] = []
+    for s in stages:
+        ec = s.exit_condition
+        for ro in ec.required_outputs or []:
+            for name in ro.validators or []:
+                if name not in REGISTRY:
+                    failures.append(
+                        ValidationFailure(
+                            "known_validators",
+                            s.id,
+                            f"unknown validator {name!r}; registered names: {sorted(REGISTRY)}",
+                        )
+                    )
+        for av in ec.artifact_validators or []:
+            if av.schema_ not in REGISTRY:
+                failures.append(
+                    ValidationFailure(
+                        "known_validators",
+                        s.id,
+                        f"unknown artifact_validator schema {av.schema_!r}; "
+                        f"registered names: {sorted(REGISTRY)}",
+                    )
+                )
+    return failures

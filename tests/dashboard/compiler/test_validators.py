@@ -6,13 +6,16 @@ from dashboard.compiler.validators import (
     JOB_LEVEL_INPUTS,
     validate_dag_closure,
     validate_human_stages_have_presentation,
+    validate_known_validators,
     validate_loop_back_targets,
     validate_no_path_traversal,
     validate_parallel_with,
+    validate_plan,
     validate_predicates,
     validate_unique_ids,
 )
 from shared.models import (
+    ArtifactValidator,
     Budget,
     ExitCondition,
     InputSpec,
@@ -20,6 +23,7 @@ from shared.models import (
     OnExhaustion,
     OutputSpec,
     PresentationBlock,
+    RequiredOutput,
     StageDefinition,
 )
 
@@ -247,3 +251,98 @@ def test_nested_relative_path_passes() -> None:
         [_stage("a", inputs=["sub/dir/file.md"], outputs=["out/file.json"])]
     )
     assert fs == []
+
+
+# ---------------------------------------------------------------------------
+# validate_known_validators (A2)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_known_validators_passes_for_stage_with_no_validators() -> None:
+    assert validate_known_validators([_stage("s1")]) == []
+
+
+def test_validate_known_validators_passes_for_known_name() -> None:
+    s = StageDefinition(
+        id="s1",
+        worker="agent",  # type: ignore[arg-type]
+        agent_ref="x",
+        inputs=InputSpec(),
+        outputs=OutputSpec(),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            required_outputs=[RequiredOutput(path="out.txt", validators=["non-empty"])]
+        ),
+    )
+    assert validate_known_validators([s]) == []
+
+
+def test_validate_known_validators_rejects_unknown_name() -> None:
+    s = StageDefinition(
+        id="s1",
+        worker="agent",  # type: ignore[arg-type]
+        agent_ref="x",
+        inputs=InputSpec(),
+        outputs=OutputSpec(),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            required_outputs=[RequiredOutput(path="out.txt", validators=["totally-bogus"])]
+        ),
+    )
+    failures = validate_known_validators([s])
+    assert len(failures) == 1
+    assert failures[0].rule == "known_validators"
+    assert failures[0].stage_id == "s1"
+    assert "totally-bogus" in failures[0].message
+
+
+def test_validate_known_validators_rejects_unknown_artifact_validator_schema() -> None:
+    s = StageDefinition(
+        id="review",
+        worker="agent",  # type: ignore[arg-type]
+        agent_ref="x",
+        inputs=InputSpec(),
+        outputs=OutputSpec(),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            artifact_validators=[
+                ArtifactValidator(**{"path": "review.json", "schema": "no-such-schema"})
+            ]
+        ),
+    )
+    failures = validate_known_validators([s])
+    assert len(failures) == 1
+    assert "no-such-schema" in failures[0].message
+
+
+def test_validate_known_validators_passes_review_verdict_schema() -> None:
+    s = StageDefinition(
+        id="review",
+        worker="agent",  # type: ignore[arg-type]
+        agent_ref="x",
+        inputs=InputSpec(),
+        outputs=OutputSpec(),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            artifact_validators=[
+                ArtifactValidator(**{"path": "review.json", "schema": "review-verdict-schema"})
+            ]
+        ),
+    )
+    assert validate_known_validators([s]) == []
+
+
+def test_validate_plan_includes_known_validators_check() -> None:
+    s = StageDefinition(
+        id="s1",
+        worker="agent",  # type: ignore[arg-type]
+        agent_ref="x",
+        inputs=InputSpec(),
+        outputs=OutputSpec(),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            required_outputs=[RequiredOutput(path="out.txt", validators=["ghost-validator"])]
+        ),
+    )
+    failures = validate_plan([s])
+    assert any(f.rule == "known_validators" for f in failures)

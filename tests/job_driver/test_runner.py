@@ -27,6 +27,7 @@ from job_driver.stage_runner import FakeStageRunner, StageResult
 from shared import paths
 from shared.models.job import JobConfig, JobState
 from shared.models.stage import (
+    ArtifactValidator,
     Budget,
     ExitCondition,
     InputSpec,
@@ -1077,3 +1078,125 @@ async def test_completion_does_not_silently_exempt_actually_run_stage(tmp_path: 
     assert _read_job_config(job_dir).state == JobState.FAILED, (
         "stage that actually ran must not be exempted from final-outputs check"
     )
+
+
+# ---------------------------------------------------------------------------
+# Stage 12.5 (A2) — artifact validator enforcement
+# ---------------------------------------------------------------------------
+
+
+async def test_stage_fails_when_non_empty_validator_rejects_empty_output(
+    tmp_path: Path,
+) -> None:
+    """A stage that reports success but writes an empty file must FAIL when
+    the output declares ``validators: ["non-empty"]``.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    stage = StageDefinition(
+        id="write-doc",
+        worker="agent",  # type: ignore[arg-type]
+        inputs=InputSpec(),
+        outputs=OutputSpec(required=["doc.md"]),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            required_outputs=[RequiredOutput(path="doc.md", validators=["non-empty"])]
+        ),
+    )
+    _write_stage_list(job_dir, [stage])
+    # Fixture reports success but writes an empty file.
+    _write_fixture(fixtures_dir, "write-doc", {"outcome": "succeeded", "artifacts": {"doc.md": ""}})
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+    await driver.run()
+
+    assert _read_job_config(job_dir).state == JobState.FAILED
+
+
+async def test_stage_succeeds_when_non_empty_validator_passes(tmp_path: Path) -> None:
+    """A stage that writes non-empty content must SUCCEED when the output
+    declares ``validators: ["non-empty"]``.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    stage = StageDefinition(
+        id="write-doc",
+        worker="agent",  # type: ignore[arg-type]
+        inputs=InputSpec(),
+        outputs=OutputSpec(required=["doc.md"]),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            required_outputs=[RequiredOutput(path="doc.md", validators=["non-empty"])]
+        ),
+    )
+    _write_stage_list(job_dir, [stage])
+    _write_fixture(
+        fixtures_dir, "write-doc", {"outcome": "succeeded", "artifacts": {"doc.md": "The design."}}
+    )
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+    await driver.run()
+
+    assert _read_job_config(job_dir).state == JobState.COMPLETED
+
+
+async def test_artifact_validator_rejects_invalid_review_verdict(tmp_path: Path) -> None:
+    """A stage with ``artifact_validators: [{path: ..., schema: review-verdict-schema}]``
+    must FAIL when the file does not conform to the ReviewVerdict schema.
+    """
+    import json as _json
+
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    stage = StageDefinition(
+        id="review",
+        worker="agent",  # type: ignore[arg-type]
+        inputs=InputSpec(),
+        outputs=OutputSpec(required=["review.json"]),
+        budget=Budget(max_turns=10),
+        exit_condition=ExitCondition(
+            required_outputs=[RequiredOutput(path="review.json")],
+            artifact_validators=[
+                ArtifactValidator(**{"path": "review.json", "schema": "review-verdict-schema"})
+            ],
+        ),
+    )
+    _write_stage_list(job_dir, [stage])
+    # The file exists but has wrong shape — verdict value is not in the allowed set.
+    _write_fixture(
+        fixtures_dir,
+        "review",
+        {
+            "outcome": "succeeded",
+            "artifacts": {
+                "review.json": _json.dumps(
+                    {
+                        "verdict": "maybe",
+                        "summary": "x",
+                        "unresolved_concerns": [],
+                        "addressed_in_this_iteration": [],
+                    }
+                )
+            },
+        },
+    )
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+    await driver.run()
+
+    assert _read_job_config(job_dir).state == JobState.FAILED
