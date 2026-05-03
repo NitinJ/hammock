@@ -12,10 +12,7 @@
         class="mt-0.5 accent-blue-500"
         @change="$emit('update:modelValue', option.value)"
       />
-      <div>
-        <span class="font-medium text-text-primary">{{ option.label }}</span>
-        <p v-if="option.disabled" class="text-xs text-text-secondary">Coming in v1+</p>
-      </div>
+      <span class="font-medium text-text-primary">{{ option.label }}</span>
     </label>
   </div>
 </template>
