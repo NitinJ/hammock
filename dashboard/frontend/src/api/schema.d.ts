@@ -26,7 +26,7 @@ export type StageState =
   | "FAILED"
   | "CANCELLED";
 
-export type TaskState = "OPEN" | "IN_PROGRESS" | "DONE" | "FAILED" | "CANCELLED";
+export type TaskState = "RUNNING" | "BLOCKED_ON_HUMAN" | "STUCK" | "DONE" | "FAILED" | "CANCELLED";
 
 export type HilState = "AWAITING" | "ANSWERED" | "CANCELLED";
 
@@ -120,6 +120,18 @@ export interface ManualStepAnswer {
   notes: string | null;
 }
 
+export interface TaskRecord {
+  task_id: string;
+  stage_id: string;
+  state: TaskState;
+  created_at: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  subagent_id?: string | null;
+  cost_accrued?: number;
+  restart_count?: number;
+}
+
 // ── Projection types (matching dashboard/state/projections.py) ─────────────
 
 export interface ProjectListItem {
@@ -164,6 +176,22 @@ export interface JobDetail {
   job: JobConfig;
   stages: StageListEntry[];
   total_cost_usd: number;
+}
+
+export interface StageDetail {
+  job_slug: string;
+  stage: StageRun;
+  tasks: TaskRecord[];
+}
+
+export interface StageRun {
+  stage_id: string;
+  attempt: number;
+  state: StageState;
+  started_at: string | null;
+  ended_at: string | null;
+  cost_accrued: number;
+  restart_count: number;
 }
 
 export interface ActiveStageStripItem {
