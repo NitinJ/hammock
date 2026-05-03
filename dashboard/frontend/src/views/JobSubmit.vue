@@ -2,6 +2,8 @@
   <div class="p-6 max-w-2xl mx-auto space-y-8">
     <h1 class="text-2xl font-bold text-text-primary">New Job</h1>
 
+    <div v-if="projectsError" class="text-sm text-red-400 font-mono">{{ projectsError }}</div>
+
     <form class="space-y-6" @submit.prevent="handleSubmit">
       <!-- Project selector -->
       <div class="space-y-1">
@@ -127,6 +129,7 @@ interface JobSubmitResponse {
 const router = useRouter();
 
 const projects = ref<ProjectListItem[]>([]);
+const projectsError = ref<string | null>(null);
 const form = ref({
   project_slug: "",
   job_type: "fix-bug",
@@ -145,7 +148,7 @@ onMounted(async () => {
       form.value.project_slug = projects.value[0]!.slug;
     }
   } catch {
-    // Non-critical; user can still type the slug manually
+    projectsError.value = "Could not load projects. Check that the dashboard is running.";
   }
 });
 
@@ -165,8 +168,16 @@ async function handleSubmit() {
 
     if (!res.ok) {
       const detail = body?.detail;
-      if (Array.isArray(detail)) {
+      if (Array.isArray(detail) && detail.length > 0 && "kind" in detail[0]) {
+        // Structured compile failures: [{kind, stage_id, message}]
         compileErrors.value = detail as CompileFailure[];
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        // FastAPI schema validation errors: [{loc, msg, type}]
+        compileErrors.value = detail.map((d) => ({
+          kind: "validation_error",
+          stage_id: null,
+          message: d.msg ?? String(d),
+        }));
       } else {
         compileErrors.value = [
           { kind: "error", stage_id: null, message: String(detail ?? res.statusText) },
