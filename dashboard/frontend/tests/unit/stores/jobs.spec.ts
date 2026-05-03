@@ -5,14 +5,14 @@ import type { JobListItem } from "@/api/schema.d";
 
 function makeJob(overrides: Partial<JobListItem> = {}): JobListItem {
   return {
+    job_id: "job-id-1",
     job_slug: "test-job-1",
     project_slug: "my-project",
-    title: "Test Job",
     job_type: "build-feature",
     state: "SUBMITTED",
     created_at: "2026-05-02T10:00:00Z",
-    cost_usd: 0,
-    budget_cap_usd: 10,
+    total_cost_usd: 0,
+    current_stage_id: null,
     ...overrides,
   };
 }
@@ -51,6 +51,6 @@ describe("useJobsStore", () => {
     const store = useJobsStore();
     store.setJobs([makeJob()]);
     store.patchJobCost("test-job-1", 3.14);
-    expect(store.items[0]?.cost_usd).toBe(3.14);
+    expect(store.items[0]?.total_cost_usd).toBe(3.14);
   });
 });
