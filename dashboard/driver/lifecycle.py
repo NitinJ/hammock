@@ -31,6 +31,7 @@ async def spawn_driver(
     *,
     root: Path | None = None,
     fake_fixtures_dir: Path | None = None,
+    claude_binary: str | None = None,
     python: str | None = None,
 ) -> int:
     """Spawn ``job_driver`` as a fully detached subprocess; return its PID.
@@ -45,8 +46,13 @@ async def spawn_driver(
     root:
         Override for HAMMOCK_ROOT passed via ``--root``.
     fake_fixtures_dir:
-        Required in Stage 4 (passed via ``--fake-fixtures <dir>``). Stage 5
-        will allow ``None`` once the real runner exists.
+        Path to fake-stage fixture dir. When set, the driver uses
+        ``FakeStageRunner``. When ``None``, the driver uses
+        ``RealStageRunner`` (real ``claude`` subprocess).
+    claude_binary:
+        Path to the ``claude`` CLI; only consulted by ``RealStageRunner``
+        (i.e., when ``fake_fixtures_dir`` is ``None``). When ``None``
+        the driver uses its built-in default (``claude`` from ``$PATH``).
     python:
         Python interpreter path (defaults to ``sys.executable``).
     """
@@ -57,6 +63,10 @@ async def spawn_driver(
         cmd += ["--root", str(root)]
     if fake_fixtures_dir is not None:
         cmd += ["--fake-fixtures", str(fake_fixtures_dir)]
+    elif claude_binary is not None:
+        # Only meaningful in real mode; passing it alongside fake-fixtures
+        # would have no effect, so skip it for clarity.
+        cmd += ["--claude-binary", claude_binary]
 
     pid = _double_fork_exec(cmd)
 

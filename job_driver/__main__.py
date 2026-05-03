@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -62,14 +63,25 @@ def _build_runner(
     fake_fixtures: str | None,
     claude_binary: str,
 ) -> StageRunner:
-    """Pure runner-selection. Extracted from ``main`` so tests can exercise
-    the choice + project-resolution logic without going through
-    ``asyncio.run`` (which leaves event-loop debris that confuses
-    pytest's unraisable-exception capture in long suites).
+    """Select the StageRunner for this driver invocation.
+
+    Real-mode preflight: verify the ``claude`` binary is resolvable
+    before constructing ``RealStageRunner``. Without this, a missing
+    binary surfaces only after ``asyncio.create_subprocess_exec`` runs
+    inside ``RealStageRunner.run()`` — by which time the driver is
+    already detached with stderr redirected to ``/dev/null``, leaving
+    the operator with a stuck job and a fail-stage event but no
+    actionable error.
     """
     if fake_fixtures:
         return FakeStageRunner(Path(fake_fixtures).expanduser().resolve())
     project_root = _resolve_project_root(job_slug, root)
+    if shutil.which(claude_binary) is None and not Path(claude_binary).is_file():
+        raise FileNotFoundError(
+            f"`claude` binary not found at {claude_binary!r} (not in $PATH "
+            "and not a file). Install Claude Code, set HAMMOCK_CLAUDE_BINARY "
+            "to the absolute path of the binary, or pass --claude-binary."
+        )
     return RealStageRunner(project_root=project_root, claude_binary=claude_binary)
 
 

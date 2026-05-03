@@ -3,9 +3,12 @@
 > Agentic development harness — a single local system that orchestrates safe, observable, human-gated edits to source repositories, driven by a Claude session as the orchestrator and background agents as the workers.
 
 **Status:** v0 (Stages 0–16 complete). The end-to-end lifecycle works
-today against the **fake-fixture** stage runner used by tests and the
-local smoke. Wiring the real `claude`-spawning runner into the driver
-entry point is a v1+ item — see `docs/implementation.md § 9`.
+with either the **fake-fixture** runner (used by tests + the bundled
+smoke) or the real `claude`-spawning `RealStageRunner` (selected
+automatically when `HAMMOCK_FAKE_FIXTURES_DIR` is unset and `claude`
+is on `$PATH`). Per-stage MCP server + Stop hook plumbing into the
+driver entry point remains a v1+ item — see
+`docs/implementation.md § 9`.
 
 See [`docs/implementation.md`](docs/implementation.md) for the stage-by-stage plan and [`docs/design.md`](docs/design.md) for the canonical design. See [`docs/runbook.md`](docs/runbook.md) for the operator-facing reference.
 

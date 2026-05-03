@@ -27,6 +27,12 @@ class HealthResponse(BaseModel):
 
     ok: bool
     cache_size: int
+    # Stage 16 follow-up: surface the active runner mode + claude binary
+    # so operators can confirm at a glance whether this dashboard will
+    # spawn jobs against real Claude (and incur real spend) or against
+    # FakeStageRunner. Mirrors the startup log line in dashboard/__main__.
+    runner_mode: str
+    claude_binary: str | None
 
 
 router = APIRouter()
@@ -34,9 +40,15 @@ router = APIRouter()
 
 @router.get("/api/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
-    """Return server liveness and aggregate cache entry count."""
+    """Return server liveness, cache size, and active runner-mode info."""
     cache = request.app.state.cache  # type: ignore[attr-defined]
-    return HealthResponse(ok=True, cache_size=sum(cache.size().values()))
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    return HealthResponse(
+        ok=True,
+        cache_size=sum(cache.size().values()),
+        runner_mode=settings.runner_mode,
+        claude_binary=settings.claude_binary if settings.runner_mode == "real" else None,
+    )
 
 
 # Mount the per-resource routers under the same top-level router so

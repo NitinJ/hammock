@@ -319,16 +319,23 @@ Most common cause: the dashboard spawned the driver but the driver
 exited immediately. Check `logs/job-driver-<slug>.log` (when present)
 and the dashboard process stderr.
 
-If you spawned via `python -m job_driver` directly (not via the
-dashboard), the driver requires `--fake-fixtures <dir>` in v0 (Stage 5
-has not yet shipped a real `claude`-spawning runner). Without it the
-driver exits with code 2.
+The driver picks its runner based on whether `--fake-fixtures` was
+passed (see § 4 "Real Claude vs. fake fixtures"):
 
-To run a job with the real Claude path you must arrange for the
-dashboard to spawn the driver and the driver's runner selection to use
-`RealStageRunner`. Until that runner ships (v0+ Stage 5), use fake
-fixtures via `Settings.fake_fixtures_dir` (env var
-`HAMMOCK_FAKE_FIXTURES_DIR`).
+- **`--fake-fixtures` set, fixtures missing/incomplete** → driver fails
+  the first stage that has no fixture YAML; check `events.jsonl` for
+  the `stage_state_transition` to `FAILED`.
+- **`--fake-fixtures` absent (real mode), `claude` not on `$PATH`** →
+  the driver now refuses to start (parent process exits with code 2
+  before the detached grandchild is spawned). Install Claude Code or
+  set `HAMMOCK_CLAUDE_BINARY` to the absolute path of the binary.
+- **Real mode, `claude` available, project not registered** → driver
+  exits 2 with `cannot resolve project root for job <slug>`. Re-check
+  `hammock project list` and the slug in `job.json`.
+- **Stage drove a real `claude` invocation but tools didn't work** →
+  the per-stage MCP server (`MCPManager`, Stage 6) and the Stop hook
+  validation are not yet plumbed from `job_driver/__main__.py`; see
+  `implementation.md § 9` for the v1+ remainder.
 
 ### Stage stuck on `BLOCKED_ON_HUMAN` after answering
 
@@ -411,10 +418,13 @@ Steps:
    <http://127.0.0.1:8765/jobs/new> using project slug `dogfood-bug`
    (or whatever slug `register` printed), job type `fix-bug`, title
    `parse_range off-by-one`, and the contents of the fixture's
-   `prompt.md` as the request text. **Note:** real-Claude submission
-   requires the v1+ RealStageRunner wiring described in § 4 — until it
-   ships, this walk-through demonstrates the flow but cannot drive a
-   real fix.
+   `prompt.md` as the request text. **Note:** for a real-Claude run,
+   start the dashboard *without* `HAMMOCK_FAKE_FIXTURES_DIR` set and
+   make sure `claude` is on `$PATH` (or set `HAMMOCK_CLAUDE_BINARY`).
+   The `RealStageRunner` will then drive the stages — but the per-
+   stage MCP server and Stop hook are not yet plumbed from the entry
+   point (see `implementation.md § 9`), so any agent that depends on
+   the dashboard MCP tools will need that follow-up.
 4. Open the dashboard, walk through the live view + HIL queue.
 5. Once `summary.md` lands in the job dir, compare the resulting commit
    diff against `expected-fix.md` in the fixture.

@@ -27,6 +27,18 @@ def _configure_logging() -> None:
 def main() -> None:
     _configure_logging()
     settings = Settings()
+    log = logging.getLogger("dashboard")
+    if settings.runner_mode == "real":
+        log.warning(
+            "runner-mode=REAL — jobs will spawn `%s` and may incur Claude API costs. "
+            "Set HAMMOCK_FAKE_FIXTURES_DIR to switch to fake-runner mode.",
+            settings.claude_binary,
+        )
+    else:
+        log.info(
+            "runner-mode=FAKE — fixtures: %s",
+            settings.fake_fixtures_dir,
+        )
     app = create_app(settings)
     uvicorn.run(app, host=settings.host, port=settings.port, workers=1)
 

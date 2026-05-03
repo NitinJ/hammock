@@ -77,7 +77,10 @@ def test_build_runner_uses_real_when_fake_fixtures_absent(tmp_path: Path) -> Non
     """No --fake-fixtures → RealStageRunner constructed with project's repo."""
     repo = _seed_job(tmp_path, job_slug="job-real", project_slug="proj-real")
     real_mock = MagicMock(name="RealStageRunnerMock")
-    with patch.object(entry, "RealStageRunner", real_mock):
+    with (
+        patch.object(entry, "RealStageRunner", real_mock),
+        patch.object(entry.shutil, "which", return_value="/fake/path/claude"),
+    ):
         runner = entry._build_runner(
             job_slug="job-real",
             root=tmp_path,
@@ -91,7 +94,10 @@ def test_build_runner_uses_real_when_fake_fixtures_absent(tmp_path: Path) -> Non
 def test_build_runner_real_respects_claude_binary_override(tmp_path: Path) -> None:
     repo = _seed_job(tmp_path, job_slug="job-x", project_slug="proj-x")
     real_mock = MagicMock(name="RealStageRunnerMock")
-    with patch.object(entry, "RealStageRunner", real_mock):
+    with (
+        patch.object(entry, "RealStageRunner", real_mock),
+        patch.object(entry.shutil, "which", return_value="/opt/claude/bin/claude"),
+    ):
         entry._build_runner(
             job_slug="job-x",
             root=tmp_path,
@@ -111,3 +117,52 @@ def test_build_runner_real_propagates_missing_job(tmp_path: Path) -> None:
             fake_fixtures=None,
             claude_binary="claude",
         )
+
+
+def test_build_runner_real_preflights_missing_claude_binary(tmp_path: Path) -> None:
+    """When `claude` isn't on PATH and the override isn't a real file, fail
+    in the parent process with a clear message — not later in the
+    detached grandchild."""
+    _seed_job(tmp_path, job_slug="job-pf", project_slug="proj-pf")
+    with patch.object(entry.shutil, "which", return_value=None):
+        with pytest.raises(FileNotFoundError, match=r"claude.*binary not found"):
+            entry._build_runner(
+                job_slug="job-pf",
+                root=tmp_path,
+                fake_fixtures=None,
+                claude_binary="claude",
+            )
+
+
+def test_build_runner_real_accepts_absolute_claude_path(tmp_path: Path) -> None:
+    """Absolute-path override skips the PATH lookup and only checks the
+    file exists. (Operators set HAMMOCK_CLAUDE_BINARY to install paths
+    that aren't on the daemon's $PATH.)"""
+    _seed_job(tmp_path, job_slug="job-abs", project_slug="proj-abs")
+    fake_claude = tmp_path / "claude"
+    fake_claude.write_text("#!/bin/sh\nexit 0\n")
+    fake_claude.chmod(0o755)
+    real_mock = MagicMock(name="RealStageRunnerMock")
+    with (
+        patch.object(entry, "RealStageRunner", real_mock),
+        patch.object(entry.shutil, "which", return_value=None),
+    ):
+        entry._build_runner(
+            job_slug="job-abs",
+            root=tmp_path,
+            fake_fixtures=None,
+            claude_binary=str(fake_claude),
+        )
+    real_mock.assert_called_once()
+
+
+def test_main_exits_2_on_unresolvable_project(tmp_path: Path, capsys) -> None:
+    """End-to-end coverage of main()'s try/except + exit-2 stderr path —
+    not just _build_runner. (Codex review L1.)"""
+    argv = ["job_driver", "no-such-job", "--root", str(tmp_path)]
+    with patch("sys.argv", argv), pytest.raises(SystemExit) as excinfo:
+        entry.main()
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "no-such-job" in err
+    assert "cannot resolve project root" in err
