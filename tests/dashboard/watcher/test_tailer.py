@@ -8,13 +8,12 @@ coverage lives in the smoke script (``scripts/manual-smoke-stage1.py``).
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 from watchfiles import Change
-
-import json
 
 from dashboard.state.cache import Cache, ChangeKind, ClassifiedPath
 from dashboard.state.pubsub import InProcessPubSub
@@ -298,4 +297,3 @@ async def test_tailer_events_jsonl_tails_only_new_bytes(tmp_path: Path) -> None:
     # No more events
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(anext(sub), timeout=0.1)
-

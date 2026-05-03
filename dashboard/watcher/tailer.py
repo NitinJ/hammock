@@ -196,11 +196,7 @@ def _tail_and_publish_events(
     # Determine scope set once for all events in this tail
     if classified.kind == "events_jsonl" and classified.job_slug:
         scopes = ["global", f"job:{classified.job_slug}"]
-    elif (
-        classified.kind == "events_jsonl_stage"
-        and classified.job_slug
-        and classified.stage_id
-    ):
+    elif classified.kind == "events_jsonl_stage" and classified.job_slug and classified.stage_id:
         scopes = [
             "global",
             f"job:{classified.job_slug}",
