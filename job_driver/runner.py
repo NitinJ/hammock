@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from job_driver.stage_runner import StageResult, StageRunner
 from shared import paths
@@ -485,7 +486,12 @@ class JobDriver:
             return False
         try:
             sr = StageRun.model_validate_json(sj.read_text())
-        except Exception:
+        except (json.JSONDecodeError, ValidationError, OSError) as exc:
+            # Stage 12.5 (A7): narrow + log.  An unreadable stage.json is
+            # treated as not-yet-succeeded so the driver re-runs the stage —
+            # but we now log the cause so corruption / schema drift is
+            # visible rather than silently swallowed.
+            log.warning("stage.json unreadable for %s, treating as not-yet-succeeded: %s", sj, exc)
             return False
         if sr.state != StageState.SUCCEEDED:
             return False
@@ -678,7 +684,11 @@ class JobDriver:
         attempt = self._next_attempt(stage_def.id) if not sj.exists() else 1
         try:
             existing = StageRun.model_validate_json(sj.read_text()) if sj.exists() else None
-        except Exception:
+        except (json.JSONDecodeError, ValidationError, OSError) as exc:
+            # Stage 12.5 (A7): narrow + log.  An unreadable existing stage.json
+            # falls back to a fresh PENDING — same behaviour as before, but the
+            # cause is now visible.
+            log.warning("existing stage.json unreadable for %s, starting fresh: %s", sj, exc)
             existing = None
         stage_run = (
             existing
@@ -705,7 +715,10 @@ class JobDriver:
         sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
         try:
             existing = StageRun.model_validate_json(sj.read_text()) if sj.exists() else None
-        except Exception:
+        except (json.JSONDecodeError, ValidationError, OSError) as exc:
+            # Stage 12.5 (A7): narrow + log.  Same treatment as
+            # ``_block_on_human`` — fall back to fresh state, log the cause.
+            log.warning("existing stage.json unreadable for %s, starting fresh: %s", sj, exc)
             existing = None
         attempt = existing.attempt if existing is not None else self._next_attempt(stage_def.id)
         stage_run = (
