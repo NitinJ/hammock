@@ -24,6 +24,8 @@ from typing import Any
 
 from dashboard.mcp.channel import Channel
 
+_SERVER_NAME = "hammock-dashboard"
+
 
 @dataclass
 class ServerHandle:
@@ -37,12 +39,12 @@ class ServerHandle:
 
 
 class MCPManager:
-    """Owns the engine-side bookkeeping for per-stage MCP servers.
+    """Engine-side bookkeeping for per-stage MCP servers.
 
     Construction is parameterless; pass per-stage args to :meth:`spawn`.
     The default ``mcp_config`` template launches ``python -m dashboard.mcp``
-    over stdio with the job/stage/root encoded as CLI args; tests can pass
-    a custom ``python_executable`` (e.g., a recorded fixture launcher).
+    over stdio with the job/stage/root encoded as CLI args. Tests can pass
+    a custom ``python_executable``.
     """
 
     def __init__(
@@ -51,7 +53,9 @@ class MCPManager:
         python_executable: str | None = None,
         module: str = "dashboard.mcp",
     ) -> None:
-        raise NotImplementedError
+        self._python = python_executable or default_python_executable()
+        self._module = module
+        self._live: dict[tuple[str, str], ServerHandle] = {}
 
     def spawn(
         self,
@@ -60,17 +64,49 @@ class MCPManager:
         stage_id: str,
         root: Path | None = None,
     ) -> ServerHandle:
-        """Build the per-stage server descriptor."""
-        raise NotImplementedError
+        resolved_root = root if root is not None else _default_root()
+        channel = Channel(job_slug=job_slug, stage_id=stage_id, root=resolved_root)
+        cfg = self._build_mcp_config(job_slug, stage_id, resolved_root)
+        handle = ServerHandle(
+            job_slug=job_slug,
+            stage_id=stage_id,
+            root=resolved_root,
+            channel=channel,
+            mcp_config=cfg,
+        )
+        self._live[(job_slug, stage_id)] = handle
+        return handle
 
     def dispose(self, handle: ServerHandle) -> None:
-        """Release resources owned by *handle*. Idempotent."""
-        raise NotImplementedError
+        self._live.pop((handle.job_slug, handle.stage_id), None)
+
+    def _build_mcp_config(self, job_slug: str, stage_id: str, root: Path) -> dict[str, Any]:
+        return {
+            "mcpServers": {
+                _SERVER_NAME: {
+                    "command": self._python,
+                    "args": [
+                        "-m",
+                        self._module,
+                        job_slug,
+                        stage_id,
+                        "--root",
+                        str(root),
+                    ],
+                }
+            }
+        }
 
 
 def default_python_executable() -> str:
     """The interpreter path used by spawned MCP servers."""
     return sys.executable
+
+
+def _default_root() -> Path:
+    from shared.paths import HAMMOCK_ROOT
+
+    return HAMMOCK_ROOT
 
 
 __all__ = ["MCPManager", "ServerHandle", "default_python_executable"]

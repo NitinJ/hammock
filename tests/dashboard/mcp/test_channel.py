@@ -11,7 +11,6 @@ import pytest
 from dashboard.mcp.channel import Channel, NudgeMessage
 from shared.paths import stage_nudges_jsonl
 
-
 # Helpers --------------------------------------------------------------------
 
 

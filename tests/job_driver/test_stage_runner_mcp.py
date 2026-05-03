@@ -37,7 +37,7 @@ def _stage(stage_id: str = "implement-1") -> StageDefinition:
 def _write_fake_claude(path: Path) -> None:
     """Fake claude that emits a minimal valid result event then exits 0."""
     path.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'echo \'{"type":"system","subtype":"init","session_id":"x"}\'\n'
         'echo \'{"type":"result","subtype":"success","is_error":false,'
         '"total_cost_usd":0.0,"session_id":"x"}\'\n'
@@ -45,9 +45,7 @@ def _write_fake_claude(path: Path) -> None:
     os.chmod(path, 0o755)
 
 
-async def test_real_runner_spawns_and_disposes_mcp(
-    tmp_path: Path, hammock_root: Path
-) -> None:
+async def test_real_runner_spawns_and_disposes_mcp(tmp_path: Path, hammock_root: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     fake_claude = tmp_path / "claude"

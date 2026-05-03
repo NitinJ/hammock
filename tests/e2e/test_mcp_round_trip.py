@@ -22,7 +22,6 @@ from mcp.client.stdio import stdio_client
 
 from shared.paths import hil_dir
 
-
 JOB = "proj/feat"
 STAGE = "implement-1"
 
