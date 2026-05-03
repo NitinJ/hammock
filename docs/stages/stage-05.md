@@ -1,7 +1,8 @@
 # Stage 5 — CLI session spawning + observability extraction
 
-**PR:** TBD (in PR)
+**PR:** [#11](https://github.com/NitinJ/hammock/pull/11) (merged 2026-05-03)
 **Branch:** `feat/stage-05-cli-session`
+**Commit on `main`:** `c7f45f4`
 
 ## What was built
 
