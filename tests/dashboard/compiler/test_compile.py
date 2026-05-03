@@ -99,6 +99,37 @@ def test_compile_writes_parseable_stage_list_yaml(hammock_root: Path, fake_proje
     assert isinstance(parsed["stages"], list)
 
 
+def test_compile_persists_loop_back_max_iterations(hammock_root: Path, fake_project) -> None:
+    """Stage 12.5 (E2): loop_back.max_iterations must round-trip from template
+    YAML through compile to compiled stage-list.yaml.  build-feature has six
+    loop_back stages; each must keep its declared max_iterations.
+    """
+    res = _compile_default(hammock_root=hammock_root)
+    assert isinstance(res, CompileSuccess)
+
+    # Inspect the compiled in-memory representation
+    looping = [s for s in res.stages if s.loop_back is not None]
+    assert len(looping) >= 1, "build-feature template should have loop_back stages"
+    for s in looping:
+        assert s.loop_back is not None  # narrow for type checker
+        assert s.loop_back.max_iterations >= 1
+        assert s.loop_back.condition  # non-empty
+        assert s.loop_back.to  # non-empty target
+        assert s.loop_back.on_exhaustion is not None
+
+    # And in the persisted YAML — the round-trip the Job Driver actually reads
+    parsed = yaml.safe_load(paths.job_stage_list(res.job_slug, root=hammock_root).read_text())
+    yaml_looping = [s for s in parsed["stages"] if s.get("loop_back")]
+    assert len(yaml_looping) == len(looping)
+    for s in yaml_looping:
+        lb = s["loop_back"]
+        assert isinstance(lb["max_iterations"], int)
+        assert lb["max_iterations"] >= 1
+        assert "condition" in lb
+        assert "to" in lb
+        assert "on_exhaustion" in lb
+
+
 def test_param_binding_substitutes_job_title(hammock_root: Path, fake_project) -> None:
     res = _compile_default(hammock_root=hammock_root, title="my new feature")
     assert isinstance(res, CompileSuccess)
