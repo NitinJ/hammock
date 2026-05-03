@@ -154,7 +154,7 @@ def _check_malformed(tmp: Path) -> None:
 def _check_thinking_blocks(tmp: Path) -> None:
     print("\n[thinking_blocks] thinking content preserved")
     out = tmp / "thinking_blocks"
-    summary = StreamExtractor.extract(FIXTURES / "thinking_blocks.jsonl", out)
+    StreamExtractor.extract(FIXTURES / "thinking_blocks.jsonl", out)
 
     msgs = _read_jsonl(out / "messages.jsonl")
     if not msgs:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -59,7 +60,10 @@ def _append_json_line(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     try:
-        os.write(fd, encoded)
+        view = memoryview(encoded)
+        while view:
+            n = os.write(fd, view)
+            view = view[n:]
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -186,6 +190,14 @@ class StreamExtractor:
             Summary of what was extracted.
         """
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clear derived files so re-runs overwrite rather than append.
+        # stream.jsonl is the raw authority and is never touched.
+        for fname in ("messages.jsonl", "tool-uses.jsonl"):
+            (out_dir / fname).unlink(missing_ok=True)
+        subagents_dir = out_dir / "subagents"
+        if subagents_dir.exists():
+            shutil.rmtree(subagents_dir)
 
         # Agent0 context (parent_tool_use_id is null)
         agent0 = _ContextState(out_dir)

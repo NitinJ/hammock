@@ -233,3 +233,14 @@ def test_out_dir_created_if_missing(tmp_path: Path) -> None:
 
     assert deep.is_dir()
     assert (deep / "result.json").exists()
+
+
+def test_extract_idempotent_no_duplicate_rows(tmp_path: Path) -> None:
+    """Running extract() twice on the same stream produces the same row count."""
+    StreamExtractor.extract(FIXTURES / "with_one_tool.jsonl", tmp_path)
+    StreamExtractor.extract(FIXTURES / "with_one_tool.jsonl", tmp_path)
+
+    msgs = _read_jsonl(tmp_path / "messages.jsonl")
+    uses = _read_jsonl(tmp_path / "tool-uses.jsonl")
+    assert len(msgs) == 2, f"expected 2 messages after 2 extractions, got {len(msgs)}"
+    assert len(uses) == 1, f"expected 1 tool use after 2 extractions, got {len(uses)}"

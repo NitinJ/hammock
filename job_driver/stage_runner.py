@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -211,7 +212,10 @@ class RealStageRunner:
         fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
             async for line in proc.stdout:
-                os.write(fd, line)
+                view = memoryview(line)
+                while view:
+                    n = os.write(fd, view)
+                    view = view[n:]
         finally:
             os.close(fd)
 
@@ -225,7 +229,10 @@ class RealStageRunner:
         cost_usd = 0.0
         succeeded = return_code == 0
 
-        if summary.result is not None:
+        if summary.result is None:
+            # No result event in stream (truncated or missing) — treat as failure.
+            succeeded = False
+        else:
             cost_usd = float(summary.result.get("total_cost_usd") or 0.0)
             if summary.result.get("is_error"):
                 succeeded = False
@@ -245,7 +252,7 @@ class RealStageRunner:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": f"bash {self._stop_hook_path}",
+                            "command": f"bash {shlex.quote(str(self._stop_hook_path))}",
                         }
                     ]
                 }

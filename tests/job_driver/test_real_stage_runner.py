@@ -146,6 +146,24 @@ async def test_nonzero_exit_code_maps_to_failed(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_result_event_maps_to_failed(tmp_path: Path) -> None:
+    """Exit-0 stream with no result event → StageResult.succeeded=False."""
+    fake_claude = _write_fake_claude(tmp_path, "no_result_event.jsonl")
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    stage_run_dir = tmp_path / "stage-run-1"
+    stage_run_dir.mkdir()
+
+    runner = RealStageRunner(
+        project_root=project_root,
+        claude_binary=str(fake_claude),
+    )
+    result = await runner.run(_make_stage(), tmp_path, stage_run_dir)
+
+    assert result.succeeded is False
+
+
+@pytest.mark.asyncio
 async def test_cost_extracted_from_result_json(tmp_path: Path) -> None:
     """total_cost_usd from result.json is reflected in StageResult.cost_usd."""
     fake_claude = _write_fake_claude(tmp_path, "simple_success.jsonl")
