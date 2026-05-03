@@ -1,6 +1,6 @@
 # Stage 7 — HIL plane realisation
 
-**PR:** TBD (in PR)
+**PR:** [#13](https://github.com/NitinJ/hammock/pull/13)
 **Branch:** `feat/stage-07-hil-plane`
 
 ## What was built
