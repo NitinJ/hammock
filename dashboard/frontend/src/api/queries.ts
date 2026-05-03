@@ -23,7 +23,8 @@ export const QUERY_KEYS = {
   stage: (jobSlug: string, stageId: string) => ["stages", jobSlug, stageId] as const,
   hil: (status?: string) => ["hil", status ?? "all"] as const,
   hilItem: (itemId: string) => ["hil", itemId] as const,
-  costs: (scope: string, id: string) => ["costs", scope, id] as const,
+  costs: (scope: string, id: string, job?: string | null) =>
+    ["costs", scope, id, job ?? null] as const,
   activeStages: ["active-stages"] as const,
   artifact: (jobSlug: string, path: string) => ["artifact", jobSlug, path] as const,
 };
@@ -80,11 +81,23 @@ export function useHilQueue(status: MaybeRefOrGetter<string> = "awaiting") {
   });
 }
 
-export function useCosts(scope: MaybeRefOrGetter<string>, id: MaybeRefOrGetter<string>) {
+export function useCosts(
+  scope: MaybeRefOrGetter<string>,
+  id: MaybeRefOrGetter<string>,
+  job?: MaybeRefOrGetter<string | null | undefined>,
+) {
   return useQuery({
-    queryKey: computed(() => QUERY_KEYS.costs(toValue(scope), toValue(id))),
-    queryFn: () => api.get<CostRollup>(`/costs?scope=${toValue(scope)}&id=${toValue(id)}`),
-    enabled: computed(() => Boolean(toValue(id))),
+    queryKey: computed(() => QUERY_KEYS.costs(toValue(scope), toValue(id), toValue(job) ?? null)),
+    queryFn: () => {
+      const jobVal = toValue(job);
+      const jobParam = jobVal ? `&job=${encodeURIComponent(jobVal)}` : "";
+      return api.get<CostRollup>(`/costs?scope=${toValue(scope)}&id=${toValue(id)}${jobParam}`);
+    },
+    enabled: computed(() => {
+      const idOk = Boolean(toValue(id));
+      const isStage = toValue(scope) === "stage";
+      return idOk && (!isStage || Boolean(toValue(job)));
+    }),
   });
 }
 

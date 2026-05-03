@@ -1,5 +1,5 @@
 import { ref, onUnmounted } from "vue";
-import type { SseEvent } from "@/api/schema.d";
+import type { ReplaySseEvent, SseEvent } from "@/api/schema.d";
 
 export type SseScope = "global" | `job/${string}` | `stage/${string}/${string}`;
 
@@ -49,7 +49,10 @@ export function useEventStream(
     source.onmessage = (raw) => {
       try {
         const event = JSON.parse(raw.data as string) as SseEvent;
-        lastSeq.value = event.seq;
+        // Replay events carry seq; live CacheChange events do not.
+        if ("seq" in event) {
+          lastSeq.value = (event as ReplaySseEvent).seq;
+        }
         options.onEvent?.(event);
       } catch {
         // malformed event — skip

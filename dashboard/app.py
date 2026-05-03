@@ -26,6 +26,7 @@ from dashboard.state.cache import Cache
 from dashboard.state.pubsub import InProcessPubSub
 from dashboard.watcher import tailer
 from dashboard.watcher.tailer import CacheChange
+from shared.models import Event
 
 
 @asynccontextmanager
@@ -34,12 +35,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     cache = await Cache.bootstrap(settings.root)
     pubsub: InProcessPubSub[CacheChange] = InProcessPubSub()
+    # Stage 12.5 (A5): separate bus for typed Event records tailed from events.jsonl
+    events_pubsub: InProcessPubSub[Event] = InProcessPubSub()
 
     app.state.cache = cache  # type: ignore[attr-defined]
     app.state.pubsub = pubsub  # type: ignore[attr-defined]
+    app.state.events_pubsub = events_pubsub  # type: ignore[attr-defined]
 
     tasks = [
-        asyncio.create_task(tailer.run(cache, pubsub), name="watcher"),
+        asyncio.create_task(tailer.run(cache, pubsub, events_pubsub), name="watcher"),
     ]
     try:
         yield
