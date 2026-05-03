@@ -1286,6 +1286,32 @@ The v1+ deferred-by-design list from the design doc rolls forward unchanged. To 
 - Project-shipped agent integration at `<repo>/.claude/agents/`
 - The four remaining job templates (`refactor`, `migration`, `chore`, `research-spike`)
 - Filesystem-level scoping for task subagents
+- **Closed-loop HIL → artifact bridge in the form pipeline.** v0 ships
+  HIL items + the form pipeline, but `submit_answer` only writes the HIL
+  item file; it does not write the stage's required output artifact,
+  flip `stage.json` to `SUCCEEDED`, or re-spawn the driver. Operators
+  must do that by hand today (see `docs/runbook.md § 6` and § 8). The
+  on-disk shape the bridge must produce is captured by
+  `_resolve_human_gate` in `tests/e2e/test_full_lifecycle.py`.
+  *(Surfaced by Stage 16.)*
+- **`RealStageRunner` wired into `job_driver.__main__` + `spawn_driver`.**
+  The class exists from Stage 5 (`tests/job_driver/test_real_stage_runner.py`
+  covers it), but the `python -m job_driver` entry point still requires
+  `--fake-fixtures` and exits with code 2 when absent. A v1+ stage
+  needs to add a runner-selection flag, surface it in `Settings`, and
+  update the dashboard's spawn paths to choose between fake and real.
+  *(Surfaced by Stage 16; blocks the "fresh-machine real-Claude
+  dogfood" path.)*
+- **CLI `hammock job submit` should optionally spawn the driver.** Today
+  it only compiles + writes the job dir; the operator must then submit
+  via the dashboard form to get a driver. Either an explicit
+  `--spawn` flag or a follow-up `hammock job start <slug>` verb would
+  close the gap and make CLI-driven workflows self-contained.
+  *(Surfaced by Stage 16.)*
+- **Frontend Playwright e2e smoke.** Stage 16 ships backend e2e only;
+  a one-spec Playwright walk through "open dashboard → submit job →
+  watch live view → answer HIL form" would close the loop on the UI
+  side once the HIL bridge above ships. *(Surfaced by Stage 16.)*
 
 The first v1+ stage will reuse this doc's structure: stage numbers continue (Stage 17, 18, ...) but tagged `v1.*`. The deferred items themselves don't have a fixed order; expect to pick whichever is most pressing once dogfooding reveals which ones are missed first.
 

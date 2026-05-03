@@ -94,6 +94,11 @@ reportUnknownArgumentType = "none"
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# Default norecursedirs is `('*.egg', '.*', '_darcs', 'build', 'CVS', 'dist',
+# 'node_modules', 'venv', '{arguments}')`; we keep those plus exclude
+# `tests/fixtures` (Stage 16 ships a synthetic project under there whose
+# tests are part of the dogfood target, not the hammock suite).
+norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "tests/fixtures"]
 addopts = ["-q", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
 filterwarnings = [
