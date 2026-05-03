@@ -519,8 +519,16 @@ class JobDriver:
 
         # Outputs must also exist — guards against an orphaned stage.json
         # whose declared outputs were deleted out from under us.
-        if stage_def.exit_condition.required_outputs:
-            return not self._missing_required_outputs(stage_def)
+        if stage_def.exit_condition.required_outputs and self._missing_required_outputs(stage_def):
+            return False
+        validator_errors = self._run_output_validators(stage_def)
+        if validator_errors:
+            log.warning(
+                "stage %s is SUCCEEDED but validators fail on resume; will re-run: %s",
+                stage_def.id,
+                validator_errors,
+            )
+            return False
         return True
 
     def _missing_required_outputs(self, stage_def: StageDefinition) -> list[str]:
@@ -537,8 +545,8 @@ class JobDriver:
         """Run named validators on required_outputs and artifact_validators.
 
         Returns a list of error messages; empty means all pass.
-        Unknown validator names are silently skipped (compiler rejects them at
-        plan-compile time; this is a last-resort defensive path only).
+        Fail-closed: unknown validator names are treated as errors so a
+        misconfigured plan doesn't silently skip validation.
         """
         from shared.artifact_validators import REGISTRY
 
@@ -549,6 +557,7 @@ class JobDriver:
             for name in ro.validators or []:
                 fn = REGISTRY.get(name)
                 if fn is None:
+                    errors.append(f"{ro.path}: [{name}] unknown validator (not in registry)")
                     continue
                 result = fn(job_dir / ro.path)
                 if result is not None:
@@ -556,6 +565,7 @@ class JobDriver:
         for av in ec.artifact_validators or []:
             fn = REGISTRY.get(av.schema_)
             if fn is None:
+                errors.append(f"{av.path}: [{av.schema_}] unknown validator (not in registry)")
                 continue
             result = fn(job_dir / av.path)
             if result is not None:

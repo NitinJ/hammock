@@ -5,12 +5,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from shared.artifact_validators import REGISTRY, _non_empty, _review_verdict_schema
+import yaml
+
+from shared.artifact_validators import (
+    REGISTRY,
+    _integration_test_report_schema,
+    _non_empty,
+    _plan_schema,
+    _review_verdict_schema,
+)
 
 
-def test_registry_contains_expected_names() -> None:
+def test_registry_contains_all_expected_names() -> None:
     assert "non-empty" in REGISTRY
     assert "review-verdict-schema" in REGISTRY
+    assert "plan-schema" in REGISTRY
+    assert "integration-test-report-schema" in REGISTRY
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +169,117 @@ def test_review_verdict_schema_fails_bad_json(tmp_path: Path) -> None:
 def test_review_verdict_schema_fails_missing_file(tmp_path: Path) -> None:
     p = tmp_path / "missing.json"
     assert _review_verdict_schema(p) is not None
+
+
+# ---------------------------------------------------------------------------
+# plan-schema
+# ---------------------------------------------------------------------------
+
+_VALID_PLAN_STAGE = {
+    "id": "write",
+    "worker": "agent",
+    "agent_ref": "writer",
+    "inputs": {"required": ["prompt.md"]},
+    "outputs": {"required": ["spec.md"]},
+    "budget": {"max_turns": 10},
+    "exit_condition": {},
+}
+
+
+def test_plan_schema_passes_valid(tmp_path: Path) -> None:
+    p = tmp_path / "plan.yaml"
+    p.write_text(yaml.safe_dump({"stages": [_VALID_PLAN_STAGE]}))
+    assert _plan_schema(p) is None
+
+
+def test_plan_schema_fails_missing_stages_key(tmp_path: Path) -> None:
+    p = tmp_path / "plan.yaml"
+    p.write_text(yaml.safe_dump({"not_stages": []}))
+    assert _plan_schema(p) is not None
+
+
+def test_plan_schema_fails_bad_yaml(tmp_path: Path) -> None:
+    p = tmp_path / "plan.yaml"
+    p.write_text("{: bad yaml ][")
+    assert _plan_schema(p) is not None
+
+
+def test_plan_schema_fails_missing_file(tmp_path: Path) -> None:
+    p = tmp_path / "missing.yaml"
+    assert _plan_schema(p) is not None
+
+
+# ---------------------------------------------------------------------------
+# integration-test-report-schema
+# ---------------------------------------------------------------------------
+
+_VALID_REPORT = {
+    "verdict": "passed",
+    "summary": "All tests passed.",
+    "test_command": "pytest tests/",
+    "total_count": 3,
+    "passed_count": 3,
+    "failed_count": 0,
+    "skipped_count": 0,
+    "failures": [],
+    "duration_seconds": 1.5,
+}
+
+
+def test_integration_test_report_schema_passes_valid(tmp_path: Path) -> None:
+    p = tmp_path / "report.json"
+    p.write_text(json.dumps(_VALID_REPORT))
+    assert _integration_test_report_schema(p) is None
+
+
+def test_integration_test_report_schema_passes_failed_verdict(tmp_path: Path) -> None:
+    p = tmp_path / "report.json"
+    p.write_text(
+        json.dumps(
+            {
+                **_VALID_REPORT,
+                "verdict": "failed",
+                "passed_count": 2,
+                "failed_count": 1,
+                "failures": [
+                    {
+                        "test_name": "test_foo",
+                        "file_path": "tests/test_foo.py",
+                        "error_summary": "AssertionError",
+                    }
+                ],
+            }
+        )
+    )
+    assert _integration_test_report_schema(p) is None
+
+
+def test_integration_test_report_schema_fails_invalid_verdict(tmp_path: Path) -> None:
+    p = tmp_path / "report.json"
+    p.write_text(json.dumps({**_VALID_REPORT, "verdict": "unknown"}))
+    assert _integration_test_report_schema(p) is not None
+
+
+def test_integration_test_report_schema_fails_count_mismatch(tmp_path: Path) -> None:
+    p = tmp_path / "report.json"
+    p.write_text(json.dumps({**_VALID_REPORT, "total_count": 99}))
+    assert _integration_test_report_schema(p) is not None
+
+
+def test_integration_test_report_schema_fails_verdict_count_mismatch(tmp_path: Path) -> None:
+    p = tmp_path / "report.json"
+    p.write_text(
+        json.dumps({**_VALID_REPORT, "verdict": "passed", "failed_count": 1, "passed_count": 2})
+    )
+    assert _integration_test_report_schema(p) is not None
+
+
+def test_integration_test_report_schema_fails_bad_json(tmp_path: Path) -> None:
+    p = tmp_path / "report.json"
+    p.write_text("{not json}")
+    assert _integration_test_report_schema(p) is not None
+
+
+def test_integration_test_report_schema_fails_missing_file(tmp_path: Path) -> None:
+    p = tmp_path / "missing.json"
+    assert _integration_test_report_schema(p) is not None

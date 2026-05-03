@@ -198,6 +198,26 @@ def validate_no_path_traversal(stages: list[StageDefinition]) -> list[Validation
                             f"{kind} path {p!r} is unsafe (absolute or contains '..')",
                         )
                     )
+        for ro in s.exit_condition.required_outputs or []:
+            if _path_unsafe(ro.path):
+                failures.append(
+                    ValidationFailure(
+                        "path_traversal",
+                        s.id,
+                        f"exit_condition.required_outputs path {ro.path!r} is unsafe "
+                        "(absolute or contains '..')",
+                    )
+                )
+        for av in s.exit_condition.artifact_validators or []:
+            if _path_unsafe(av.path):
+                failures.append(
+                    ValidationFailure(
+                        "path_traversal",
+                        s.id,
+                        f"exit_condition.artifact_validators path {av.path!r} is unsafe "
+                        "(absolute or contains '..')",
+                    )
+                )
     return failures
 
 

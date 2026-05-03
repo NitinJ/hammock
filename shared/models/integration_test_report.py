@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TestFailure(BaseModel):
@@ -32,3 +32,16 @@ class IntegrationTestReport(BaseModel):
     skipped_count: int = Field(ge=0)
     failures: list[TestFailure] = Field(default_factory=list)
     duration_seconds: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> IntegrationTestReport:
+        if self.passed_count + self.failed_count + self.skipped_count != self.total_count:
+            raise ValueError(
+                f"passed_count ({self.passed_count}) + failed_count ({self.failed_count})"
+                f" + skipped_count ({self.skipped_count}) != total_count ({self.total_count})"
+            )
+        if self.verdict == "passed" and self.failed_count > 0:
+            raise ValueError(f"verdict='passed' but failed_count={self.failed_count}")
+        if self.verdict == "failed" and self.failed_count == 0 and not self.failures:
+            raise ValueError("verdict='failed' but failed_count=0 and no failures listed")
+        return self
