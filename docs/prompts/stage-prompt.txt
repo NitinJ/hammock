@@ -58,6 +58,18 @@
     HALT. Post a PR comment explaining the conflict and ping the human. Do
     not ship a guessed fix.
 
+  AFTER PR OPEN
+  - Take a review from codex reviewer agent tool using /codex:review. Provide these document sections to codex:
+    1. docs/implementation.md §7 Stage <NN>             — the spec for this stage
+    2. docs/implementation.md §8                        — conventions (TDD,parallel-stage,summary docs,conflict resolution)
+    3. docs/design.md (sections referenced by §7 Stage <NN>)
+    4. One liner info about impl status of stages.
+    Nudge the agent to find code level as well as infrastructure/architecture issues or misalignments with the design.
+  - Publish all comments from the review to the PR.
+  - Fix all issues from the review.
+  - Re-run the verify suite.
+  - If the verify suite passes, push the PR to update it.
+
   AFTER MERGE
   - git checkout main && git pull
   - No docs work needed — the stage summary was already merged with the PR.

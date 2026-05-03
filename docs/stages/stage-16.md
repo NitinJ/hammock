@@ -1,7 +1,8 @@
 # Stage 16 — E2E smoke + self-host dogfood
 
-**PR:** _open — pending merge_
+**PR:** [#20](https://github.com/NitinJ/hammock/pull/20) (merged 2026-05-03)
 **Branch:** `feat/stage-16-e2e-dogfood`
+**Commit on `main`:** `cf3cd74`
 
 ## What was built
 
