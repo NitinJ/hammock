@@ -399,10 +399,17 @@ class JobDriver:
         )
 
         if result.cost_usd > 0:
+            # Per design doc § Observability § Event taxonomy: cost_accrued
+            # payload uses ``delta_usd`` / ``delta_tokens`` / ``running_total``.
+            # v0 driver only knows the per-stage USD delta; tokens and the
+            # accumulator are reserved for v1+.  Stage 12.5 (A3) aligned this
+            # key with both the spec and the projection reader, which had
+            # silently been folding to 0 because driver, projection, and spec
+            # all named the field differently.
             self._emit_event(
                 "cost_accrued",
                 stage_id=stage_def.id,
-                payload={"amount_usd": result.cost_usd},
+                payload={"delta_usd": result.cost_usd},
             )
 
         return result

@@ -173,7 +173,7 @@ def populated_root(tmp_path: Path) -> Path:
             "source": "agent0",
             "job_id": j1.job_id,
             "stage_id": "design",
-            "payload": {"usd": 0.5, "tokens": 12000, "agent_ref": "design-spec-writer"},
+            "payload": {"delta_usd": 0.5, "delta_tokens": 12000, "agent_ref": "design-spec-writer"},
         },
     )
     _write_event(
@@ -185,7 +185,11 @@ def populated_root(tmp_path: Path) -> Path:
             "source": "agent0",
             "job_id": j1.job_id,
             "stage_id": "design",
-            "payload": {"usd": 0.75, "tokens": 18000, "agent_ref": "design-spec-writer"},
+            "payload": {
+                "delta_usd": 0.75,
+                "delta_tokens": 18000,
+                "agent_ref": "design-spec-writer",
+            },
         },
     )
     _write_event(
@@ -197,7 +201,7 @@ def populated_root(tmp_path: Path) -> Path:
             "source": "agent0",
             "job_id": j1.job_id,
             "stage_id": "implement",
-            "payload": {"usd": 1.0, "tokens": 24000, "agent_ref": "implementer"},
+            "payload": {"delta_usd": 1.0, "delta_tokens": 24000, "agent_ref": "implementer"},
         },
     )
     # A non-cost event so the folder skips it
@@ -224,7 +228,7 @@ def populated_root(tmp_path: Path) -> Path:
             "source": "agent0",
             "job_id": j1.job_id,
             "stage_id": "design",
-            "payload": {"usd": 0.5, "tokens": 12000, "agent_ref": "design-spec-writer"},
+            "payload": {"delta_usd": 0.5, "delta_tokens": 12000, "agent_ref": "design-spec-writer"},
         },
     )
     _write_event(
@@ -236,7 +240,11 @@ def populated_root(tmp_path: Path) -> Path:
             "source": "agent0",
             "job_id": j1.job_id,
             "stage_id": "design",
-            "payload": {"usd": 0.75, "tokens": 18000, "agent_ref": "design-spec-writer"},
+            "payload": {
+                "delta_usd": 0.75,
+                "delta_tokens": 18000,
+                "agent_ref": "design-spec-writer",
+            },
         },
     )
 

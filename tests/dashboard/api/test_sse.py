@@ -192,7 +192,7 @@ def test_format_replay_event_includes_id() -> None:
         event_type="cost_accrued",
         source="agent0",
         job_id="job-id-1",
-        payload={"usd": 0.5},
+        payload={"delta_usd": 0.5},
     )
     result = _format_replay_event(event, "stage:job:s1")
     # Scoped channels include id: for reconnect replay
