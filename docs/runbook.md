@@ -171,18 +171,29 @@ v0 ships `fix-bug` and `build-feature`; the other four (`refactor`,
 
 ### Real Claude vs. fake fixtures
 
-In v0 the Job Driver requires `--fake-fixtures <dir>` at startup
-(`job_driver/__main__.py` exits 2 without it). Wiring the
-`RealStageRunner` (which exists from Stage 5) into the driver entry
-point is a v1+ item. Until then:
+The Job Driver's runner is selected by whether `--fake-fixtures` is
+passed at startup:
 
-- For **automated tests + the bundled smoke**: pass
-  `Settings.fake_fixtures_dir` (env: `HAMMOCK_FAKE_FIXTURES_DIR`); the
-  dashboard forwards it on every spawn.
-- For **real-Claude runs**: the runner must be selected manually by
-  invoking `python -m job_driver` with a real-runner flag (not yet
-  implemented). Do not expect a fresh-machine real dogfood to work in
-  v0 without that wiring.
+- **`--fake-fixtures <dir>` set** → `FakeStageRunner`. Deterministic;
+  reads YAML scripts per stage. Used by the lifecycle test, the
+  bundled Stage 16 smoke, and any operator who wants to exercise the
+  pipeline without invoking `claude`. Set
+  `Settings.fake_fixtures_dir` (env: `HAMMOCK_FAKE_FIXTURES_DIR`) and
+  the dashboard forwards it on every spawn.
+- **`--fake-fixtures` absent** → `RealStageRunner`. Spawns a real
+  `claude` subprocess per stage; resolves the project's repo path
+  from `job.json` → `project.json`. Override the binary with
+  `--claude-binary <path>` (default: `claude` in `$PATH`).
+
+The dashboard's spawn path picks fake when `HAMMOCK_FAKE_FIXTURES_DIR`
+is set in its environment, real otherwise. To switch modes, restart
+the dashboard with the env var set / unset.
+
+Limitations of the v0 real path: the per-stage MCP server (`MCPManager`,
+Stage 6) and the Stop hook script are wired inside `RealStageRunner`
+but are not yet plumbed from `job_driver.__main__`, so agents running
+under the real path don't get the dashboard MCP tools by default. That
+plumbing is a separate follow-up.
 
 ---
 
