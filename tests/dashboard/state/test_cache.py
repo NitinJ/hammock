@@ -211,7 +211,16 @@ async def test_list_stages_per_job(tmp_path: Path) -> None:
 async def test_list_hil_filters(tmp_path: Path) -> None:
     cache = await Cache.bootstrap(tmp_path)
     h_awaiting = make_ask_hil_item()
-    h_answered = h_awaiting.model_copy(update={"id": "hil-007", "status": "answered"})
+    from shared.models.hil import AskAnswer
+
+    h_answered = h_awaiting.model_copy(
+        update={
+            "id": "hil-007",
+            "status": "answered",
+            "answer": AskAnswer(text="yes", choice=None),
+            "answered_at": datetime(2026, 5, 2, 1, 0, tzinfo=UTC),
+        }
+    )
 
     atomic_write_json(paths.hil_item_path("job-a", h_awaiting.id, root=tmp_path), h_awaiting)
     atomic_write_json(paths.hil_item_path("job-a", h_answered.id, root=tmp_path), h_answered)
