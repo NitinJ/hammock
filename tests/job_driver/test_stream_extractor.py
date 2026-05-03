@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from job_driver.stream_extractor import ExtractedStream, StreamExtractor
+from job_driver.stream_extractor import StreamExtractor
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "recorded-streams"
 

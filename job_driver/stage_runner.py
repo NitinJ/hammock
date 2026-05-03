@@ -1,7 +1,7 @@
 """Stage runner protocol, FakeStageRunner, and RealStageRunner.
 
 Per design doc § Stage as universal primitive, § Observability, and
-implementation.md §§ Stage 4–5.
+implementation.md §§ Stage 4-5.
 
 ``StageRunner`` is the Protocol; ``FakeStageRunner`` is the test double that
 reads from YAML fixture scripts; ``RealStageRunner`` (Stage 5) spawns the
@@ -173,4 +173,93 @@ class RealStageRunner:
         job_dir: Path,
         stage_run_dir: Path,
     ) -> StageResult:
-        raise NotImplementedError
+        from job_driver.stream_extractor import StreamExtractor
+
+        agent0_dir = stage_run_dir / "agent0"
+        agent0_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write per-session settings (Stop hook wiring)
+        settings_path = stage_run_dir / "session-settings.json"
+        self._write_session_settings(settings_path, stage_def)
+
+        # Build command: use stage description as the agent's initial prompt
+        prompt = stage_def.description or stage_def.id
+        cmd = [
+            self._claude_binary,
+            "-p",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--settings",
+            str(settings_path),
+        ]
+
+        # Build subprocess environment with Hammock context for the hook
+        env = self._build_env(job_dir, stage_def)
+
+        stream_path = agent0_dir / "stream.jsonl"
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(self._project_root),
+            env=env,
+        )
+        assert proc.stdout is not None
+
+        # Stream stdout to stream.jsonl line-by-line
+        fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            async for line in proc.stdout:
+                os.write(fd, line)
+        finally:
+            os.close(fd)
+
+        await proc.wait()
+        return_code = proc.returncode or 0
+
+        # Extract stream → messages.jsonl, tool-uses.jsonl, result.json, subagents/
+        summary = StreamExtractor.extract(stream_path, agent0_dir)
+
+        # Map result to StageResult
+        cost_usd = 0.0
+        succeeded = return_code == 0
+
+        if summary.result is not None:
+            cost_usd = float(summary.result.get("total_cost_usd") or 0.0)
+            if summary.result.get("is_error"):
+                succeeded = False
+
+        return StageResult(
+            succeeded=succeeded,
+            cost_usd=cost_usd,
+            outputs_produced=[],  # tracked via MCP task records in Stage 6
+        )
+
+    def _write_session_settings(self, settings_path: Path, stage_def: StageDefinition) -> None:
+        """Write a per-session settings.json with optional Stop hook."""
+        hooks: dict[str, object] = {}
+        if self._stop_hook_path is not None:
+            hooks["Stop"] = [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"bash {self._stop_hook_path}",
+                        }
+                    ]
+                }
+            ]
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"hooks": hooks}, indent=2))
+
+    def _build_env(self, job_dir: Path, stage_def: StageDefinition) -> dict[str, str]:
+        """Build subprocess env with HAMMOCK_* vars for the Stop hook."""
+        env = dict(os.environ)
+        env["HAMMOCK_JOB_DIR"] = str(job_dir)
+        env["HAMMOCK_STAGE_ID"] = stage_def.id
+        if stage_def.exit_condition.required_outputs:
+            env["HAMMOCK_STAGE_REQUIRED_OUTPUTS"] = "\n".join(
+                ro.path for ro in stage_def.exit_condition.required_outputs
+            )
+        return env

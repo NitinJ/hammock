@@ -8,15 +8,13 @@ requiring a real Claude Code installation or API key.
 from __future__ import annotations
 
 import json
-import os
 import stat
 from pathlib import Path
 
 import pytest
 
 from job_driver.stage_runner import RealStageRunner
-from job_driver.stream_extractor import StreamExtractor
-from shared.models.stage import Budget, ExitCondition, InputSpec, OutputSpec, StageDefinition
+from shared.models.stage import Budget, ExitCondition, StageDefinition
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "recorded-streams"
 
@@ -31,11 +29,9 @@ def _make_stage(
     description: str = "Write the problem specification.",
     required_outputs: list[str] | None = None,
 ) -> StageDefinition:
-    ros = (
-        [__import__("shared.models.stage", fromlist=["RequiredOutput"]).RequiredOutput(path=p) for p in required_outputs]
-        if required_outputs
-        else None
-    )
+    from shared.models.stage import RequiredOutput
+
+    ros = [RequiredOutput(path=p) for p in required_outputs] if required_outputs else None
     return StageDefinition(
         id=stage_id,
         description=description,
@@ -52,9 +48,7 @@ def _write_fake_claude(tmp_path: Path, fixture_name: str) -> Path:
     """
     fixture_path = FIXTURES / fixture_name
     script = tmp_path / "fake_claude"
-    script.write_text(
-        f"#!/usr/bin/env bash\ncat {fixture_path}\n"
-    )
+    script.write_text(f"#!/usr/bin/env bash\ncat {fixture_path}\n")
     script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return script
 
@@ -63,9 +57,7 @@ def _write_fake_claude_exitcode(tmp_path: Path, fixture_name: str, exit_code: in
     """Fake claude that emits fixture content but exits with exit_code."""
     fixture_path = FIXTURES / fixture_name
     script = tmp_path / "fake_claude_err"
-    script.write_text(
-        f"#!/usr/bin/env bash\ncat {fixture_path}\nexit {exit_code}\n"
-    )
+    script.write_text(f"#!/usr/bin/env bash\ncat {fixture_path}\nexit {exit_code}\n")
     script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return script
 
@@ -93,8 +85,8 @@ async def test_stream_jsonl_written_from_subprocess_stdout(tmp_path: Path) -> No
 
     stream_path = stage_run_dir / "agent0" / "stream.jsonl"
     assert stream_path.exists(), "stream.jsonl must be written"
-    lines = [json.loads(l) for l in stream_path.read_text().splitlines() if l.strip()]
-    types = [l["type"] for l in lines]
+    lines = [json.loads(ln) for ln in stream_path.read_text().splitlines() if ln.strip()]
+    types = [ln["type"] for ln in lines]
     assert "system" in types
     assert "result" in types
 
@@ -250,9 +242,7 @@ async def test_session_env_vars_set(tmp_path: Path) -> None:
     env_dump = tmp_path / "env_dump.txt"
     fixture_path = FIXTURES / "simple_success.jsonl"
     fake_claude = tmp_path / "fake_env_claude"
-    fake_claude.write_text(
-        f"#!/usr/bin/env bash\nenv > {env_dump}\ncat {fixture_path}\n"
-    )
+    fake_claude.write_text(f"#!/usr/bin/env bash\nenv > {env_dump}\ncat {fixture_path}\n")
     fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IEXEC)
 
     runner = RealStageRunner(project_root=project_root, claude_binary=str(fake_claude))
