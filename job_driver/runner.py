@@ -171,16 +171,24 @@ class JobDriver:
 
             stage_def = stages[i]
 
-            # Check runs_if predicate
+            # Check runs_if predicate.  Stage 12.5 (A6): unified policy —
+            # PredicateError defaults to False (skip-on-uncertainty) for both
+            # runs_if and loop_back.condition.  A predicate that compiled but
+            # failed at evaluation is a real bug somewhere upstream; logging
+            # at error makes it visible.  Skipping is the safer default: the
+            # next stage's missing-input check will surface the issue, rather
+            # than running a stage with stale or wrong context.
             if stage_def.runs_if is not None:
                 try:
                     ctx = self._build_predicate_context()
                     should_run = evaluate_predicate(stage_def.runs_if, ctx)
                 except PredicateError as exc:
-                    log.warning(
-                        "runs_if eval error for %s: %s — defaulting to True", stage_def.id, exc
+                    log.error(
+                        "runs_if eval error for %s: %s — defaulting to False (skip)",
+                        stage_def.id,
+                        exc,
                     )
-                    should_run = True
+                    should_run = False
                 if not should_run:
                     log.info("Skipping stage %s (runs_if=false)", stage_def.id)
                     i += 1
@@ -266,7 +274,10 @@ class JobDriver:
                     ctx = self._build_predicate_context()
                     condition_holds = evaluate_predicate(lb.condition, ctx)
                 except PredicateError as exc:
-                    log.warning("loop_back condition eval error: %s — not looping", exc)
+                    # Stage 12.5 (A6): unified default-False policy.  Same
+                    # rationale as runs_if above — terminate progress on
+                    # uncertainty rather than loop forever on broken context.
+                    log.error("loop_back condition eval error: %s — not looping", exc)
                     condition_holds = False
 
                 if condition_holds:
@@ -499,7 +510,11 @@ class JobDriver:
         """Validate every stage's required_outputs are on disk before COMPLETED.
 
         Skips stages whose ``runs_if`` evaluated false (their outputs are
-        legitimately absent).
+        legitimately absent).  Stage 12.5 (A6): also skips stages whose
+        ``runs_if`` raised PredicateError — the same default-False policy
+        used at stage-dispatch time.  Otherwise the same predicate failure
+        would skip the stage *and* fail completion, which is internally
+        inconsistent.
         """
         missing: list[str] = []
         ctx = self._build_predicate_context()
@@ -509,7 +524,7 @@ class JobDriver:
                     if not evaluate_predicate(s.runs_if, ctx):
                         continue
                 except PredicateError:
-                    pass  # err on the side of validating
+                    continue  # PredicateError → treat as skipped (A6)
             missing.extend(self._missing_required_outputs(s))
         return missing
 

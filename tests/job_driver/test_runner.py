@@ -894,3 +894,116 @@ async def test_latest_symlink_atomic_replace(tmp_path: Path) -> None:
     # No leftover .latest.tmp.* files
     leftovers = list(latest.parent.glob(".latest.tmp.*"))
     assert leftovers == [], f"leftover temp symlinks: {leftovers}"
+
+
+# ---------------------------------------------------------------------------
+# Stage 12.5 (A6) — predicate error policy
+#
+# Pre-12.5 ``runs_if`` defaulted to True on PredicateError (run on uncertainty)
+# while ``loop_back.condition`` defaulted to False (don't loop on uncertainty).
+# The asymmetry was undocumented and likely accidental.  Stage 12.5 unifies
+# both to default-False on PredicateError — skip-on-uncertainty is the safer
+# side for both branches: a stage that should have run gets skipped (visible
+# in the next stage's missing-input failure) rather than running with stale
+# context, and a loop that should have run gets ended (terminating progress)
+# rather than running forever on broken context.
+# ---------------------------------------------------------------------------
+
+
+async def test_runs_if_eval_error_skips_stage(tmp_path: Path) -> None:
+    """A runs_if predicate that references a missing artifact raises
+    PredicateError at evaluation time; the stage must be SKIPPED, not run.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    # The runs_if predicate references an artifact that does NOT exist on
+    # disk; evaluate_predicate will raise PredicateError when it tries to
+    # resolve the dotted path.
+    stages = [
+        _make_stage(
+            "stage-with-bad-predicate",
+            required_outputs=["should-not-be-written.txt"],
+            runs_if="missing.json.verdict == 'approved'",
+        ),
+        # A trailing stage so the job has something to complete with —
+        # otherwise the final-outputs check fails with "no outputs".
+        _make_stage("final-stage", required_outputs=["final.txt"]),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+    _write_fixture(
+        fixtures_dir,
+        "final-stage",
+        {"outcome": "succeeded", "artifacts": {"final.txt": "done"}},
+    )
+    # No fixture for the bad-predicate stage — if runs_if defaulted-True,
+    # the runner would try to dispatch FakeStageRunner which would fail
+    # to find the fixture; we'd get a runner exception, not a clean skip.
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+    await driver.run()
+
+    # The stage was skipped — no stage.json, no output written.
+    assert not (job_dir / "stages" / "stage-with-bad-predicate" / "stage.json").exists()
+    assert not (job_dir / "should-not-be-written.txt").exists()
+    # Job completes — skipping is a normal flow when paired with a real
+    # downstream stage.
+    assert _read_job_config(job_dir).state == JobState.COMPLETED
+
+
+async def test_loop_back_condition_eval_error_does_not_loop(tmp_path: Path) -> None:
+    """A loop_back.condition predicate that raises PredicateError must NOT
+    loop — same default-False policy as runs_if.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    stages = [
+        _make_stage("write-spec", required_outputs=["spec.md"]),
+        _make_stage(
+            "review-spec",
+            required_outputs=["spec-review.json"],
+            required_inputs=["spec.md"],
+            loop_back=LoopBack(
+                to="write-spec",
+                # Condition references an artifact that doesn't exist —
+                # evaluate_predicate will raise PredicateError.
+                condition="totally-missing.json.verdict == 'rejected'",
+                max_iterations=3,
+                on_exhaustion=OnExhaustion(
+                    kind="hil-manual-step",
+                    prompt="exhausted",
+                ),
+            ),
+        ),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+    _write_fixture(
+        fixtures_dir, "write-spec", {"outcome": "succeeded", "artifacts": {"spec.md": "v1"}}
+    )
+    _write_fixture(
+        fixtures_dir,
+        "review-spec",
+        # Note: no totally-missing.json artifact written
+        {"outcome": "succeeded", "artifacts": {"spec-review.json": '{"verdict":"rejected"}'}},
+    )
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+    await driver.run()
+
+    # write-spec must have run exactly once — predicate-eval-error means
+    # don't loop, so we never re-enter the writer.
+    assert _read_job_config(job_dir).state == JobState.COMPLETED
+    write_run_dir = job_dir / "stages" / "write-spec"
+    runs = sorted(p.name for p in write_run_dir.iterdir() if p.is_dir())
+    # Only run-1 should exist; if we'd looped, run-2 would also exist.
+    assert "run-1" in runs
+    assert "run-2" not in runs
