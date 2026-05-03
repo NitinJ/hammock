@@ -44,7 +44,7 @@ class ClassifiedPath:
     according to ``kind``.
     """
 
-    kind: Literal["project", "job", "stage", "hil", "unknown"]
+    kind: Literal["project", "job", "stage", "hil", "events_jsonl", "events_jsonl_stage", "unknown"]
     project_slug: str | None = None
     job_slug: str | None = None
     stage_id: str | None = None
@@ -84,6 +84,20 @@ def classify_path(path: Path, root: Path) -> ClassifiedPath:
             job_slug=parts[1],
             hil_id=parts[3][: -len(".json")],
         )
+
+    # Stage 12.5 (A5): classify events.jsonl so the watcher can tail live appends.
+    # jobs/<slug>/events.jsonl
+    if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "events.jsonl":
+        return ClassifiedPath("events_jsonl", job_slug=parts[1])
+
+    # jobs/<slug>/stages/<sid>/events.jsonl
+    if (
+        len(parts) == 5
+        and parts[0] == "jobs"
+        and parts[2] == "stages"
+        and parts[4] == "events.jsonl"
+    ):
+        return ClassifiedPath("events_jsonl_stage", job_slug=parts[1], stage_id=parts[3])
 
     return ClassifiedPath("unknown")
 
@@ -239,7 +253,7 @@ class Cache:
         watcher can derive a pub/sub scope without re-classifying.
         """
         cls = classify_path(path, self._root)
-        if cls.kind == "unknown":
+        if cls.kind in ("unknown", "events_jsonl", "events_jsonl_stage"):
             return cls
 
         if kind is ChangeKind.DELETED:

@@ -54,11 +54,27 @@ def test_classify_hil(tmp_path: Path) -> None:
 
 
 def test_classify_unknown_paths(tmp_path: Path) -> None:
-    # raw artifact, event log, side files
-    assert classify_path(tmp_path / "jobs/x/events.jsonl", tmp_path).kind == "unknown"
+    # raw artifact, side files — events.jsonl is now classified as events_jsonl (A5)
     assert classify_path(tmp_path / "jobs/x/heartbeat", tmp_path).kind == "unknown"
     assert classify_path(tmp_path / "jobs/x/design-spec.md", tmp_path).kind == "unknown"
     assert classify_path(tmp_path / "outside", Path("/elsewhere")).kind == "unknown"
+
+
+# Stage 12.5 (A5): events.jsonl paths must be classified so the watcher can tail them
+def test_classify_events_jsonl_job(tmp_path: Path) -> None:
+    p = paths.job_events_jsonl("fix-login", root=tmp_path)
+    c = classify_path(p, tmp_path)
+    assert c.kind == "events_jsonl"
+    assert c.job_slug == "fix-login"
+    assert c.stage_id is None
+
+
+def test_classify_events_jsonl_stage(tmp_path: Path) -> None:
+    p = paths.stage_events_jsonl("fix-login", "design", root=tmp_path)
+    c = classify_path(p, tmp_path)
+    assert c.kind == "events_jsonl_stage"
+    assert c.job_slug == "fix-login"
+    assert c.stage_id == "design"
 
 
 # ---------------------------------------------------------------------------

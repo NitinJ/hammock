@@ -3965,22 +3965,27 @@ A browser tab opens 1–2 SSE connections at a time (`/sse/global` from the layo
 
 #### Event envelope on the wire
 
-The on-wire SSE message is a thin projection of the storage event envelope (already defined in § *Observability and Observatory*):
+Two message shapes share the wire:
 
+**Replay / live-log events** (typed `Event` records from `events.jsonl`):
 ```
 id: <seq>
-event: <event_type>
-data: {"timestamp": "...", "source": "...", "scope": "...", "payload": {...}}
+data: {"seq": ..., "timestamp": "...", "event_type": "...", "source": "...", "payload": {...}}
 ```
+No `event:` line — unnamed messages fire `EventSource.onmessage`.  `id:` is included so the browser updates `Last-Event-ID` on every message, enabling gapless reconnect replay.  Global scope suppresses `id:` because `seq` is per-job monotonic, not globally monotonic.
 
-The `id` field is what the browser sends back as `Last-Event-ID` on reconnect. `event` is the `event_type` from the typed taxonomy; clients dispatch on this. `data` is the event payload, JSON-serialised.
+**Live cache-change events** (state-file mutations, not replayable):
+```
+data: {"scope": "...", "change_kind": "modified"|"added"|"deleted", "file_kind": "job"|"stage"|..., ...}
+```
+No `event:` line and no `id:` — these are ephemeral cache-invalidation signals, not durable events.  Frontend narrows the union on `"seq" in event` before reading kind-specific fields.
 
 #### Reconnect and replay
 
 On `EventSource` reconnect, the browser sends `Last-Event-ID: <last seq seen>`. The SSE handler:
 
 1. Reads from disk to replay events with `seq > last_seen` for the requested scope.
-2. After the replay, joins the live pub/sub for that scope and forwards new events.
+2. After the replay, joins the live pub/sub for that scope.  The live phase consumes two channels: typed `Event` records tailed from `events.jsonl` (published as above with `id:`) and `CacheChange` notifications for state-file mutations (published without `id:`).
 
 The replay path uses the same on-disk jsonl files the cache reads from. Bounded by file size; for a long-running stage, a reconnecting client sees a brief catch-up burst. Acceptable on localhost.
 

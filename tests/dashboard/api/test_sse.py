@@ -31,6 +31,7 @@ from dashboard.api.sse import (
 from dashboard.state.cache import ChangeKind, ClassifiedPath
 from dashboard.state.pubsub import InProcessPubSub
 from dashboard.watcher.tailer import CacheChange
+from shared.models import Event
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,6 +99,7 @@ async def _collect_stream(
     root: Path,
     *,
     last_event_id: int | None,
+    events_pubsub: InProcessPubSub[Event] | None = None,
     request: object | None = None,
     timeout: float = 2.0,
 ) -> list[str]:
@@ -115,6 +117,7 @@ async def _collect_stream(
             pubsub,
             root,
             last_event_id,
+            events_pubsub,
         ):
             chunks.append(chunk)
     return chunks
@@ -572,3 +575,60 @@ async def test_sse_job_scope_isolation_live(tmp_path: Path) -> None:
 
     event_chunks = [c for c in received if "event:" in c]
     assert not event_chunks, "job-b stream must not receive job-a events"
+
+
+# ---------------------------------------------------------------------------
+# Stage 12.5 (A5) — live typed Event delivery via events_pubsub
+# ---------------------------------------------------------------------------
+
+
+async def test_sse_live_typed_event_delivered_via_events_pubsub(tmp_path: Path) -> None:
+    """Stage 12.5 (A5): a typed Event published to events_pubsub appears in
+    the SSE live stream with ``id: <seq>`` so the browser updates Last-Event-ID.
+
+    This covers the second channel in _event_stream — typed Event records from
+    events.jsonl tail delivery, distinct from CacheChange (state-file mutations).
+    """
+    pubsub: InProcessPubSub[CacheChange] = InProcessPubSub()
+    events_pubsub: InProcessPubSub[Event] = InProcessPubSub()
+    request = _ConnectedRequest()
+
+    live_event = Event(
+        seq=7,
+        timestamp=datetime(2026, 5, 2, 12, 0, tzinfo=UTC),
+        event_type="cost_accrued",
+        source="agent0",
+        job_id="job-id-live",
+        payload={"delta_usd": 0.07},
+    )
+
+    received: list[str] = []
+    gen = _event_stream(
+        request,  # type: ignore[arg-type]
+        "job:test-job",
+        pubsub,
+        tmp_path,
+        None,  # last_event_id — skip replay
+        events_pubsub,
+    )
+
+    async def _publish_then_disconnect() -> None:
+        await asyncio.sleep(0.05)
+        events_pubsub.publish("job:test-job", live_event)
+        await asyncio.sleep(0.2)
+        request.disconnect()
+
+    pub_task = asyncio.create_task(_publish_then_disconnect())
+    try:
+        async with asyncio.timeout(3.0):
+            async for chunk in gen:
+                received.append(chunk)
+    finally:
+        await gen.aclose()
+        await pub_task
+
+    full = "".join(received)
+    # Typed Event must arrive with id: for reconnect tracking
+    assert "id: 7" in full, "live typed event must include id: <seq>"
+    assert "cost_accrued" in full
+    assert "delta_usd" in full

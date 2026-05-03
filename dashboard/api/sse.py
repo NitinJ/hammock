@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 
 from dashboard.state.pubsub import InProcessPubSub, replay_since
 from dashboard.watcher.tailer import CacheChange
+from shared.models import Event
 
 router = APIRouter(tags=["sse"])
 
@@ -121,6 +122,7 @@ async def _event_stream(
     pubsub: InProcessPubSub[CacheChange],
     root: Path,
     last_event_id: int | None,
+    events_pubsub: InProcessPubSub[Event] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Replay from disk, then forward live pub/sub events with keepalives.
 
@@ -155,23 +157,33 @@ async def _event_stream(
             yield _format_replay_event(event, scope)
 
     # Phase 2 — live stream
-    # NOTE: The live pubsub carries CacheChange (state-file mutations), not
-    # Event log entries from events.jsonl.  The watcher classifies events.jsonl
-    # appends as "unknown" and does not publish them here.  Live delivery of
-    # log events (tailing) is deferred to Stage 11.
-    sub = pubsub.subscribe(scope)
+    # Two channels:
+    # - pubsub carries CacheChange (state-file mutations, no id: — not replayable)
+    # - events_pubsub carries typed Event records tailed from events.jsonl
+    #   (with id: so the browser updates Last-Event-ID for reconnect replay)
+    change_sub = pubsub.subscribe(scope)
+    event_sub = events_pubsub.subscribe(scope) if events_pubsub is not None else None
     try:
         while True:
-            msg_task = asyncio.create_task(sub._queue.get())  # type: ignore[attr-defined]
+            change_task: asyncio.Task[CacheChange] = asyncio.create_task(
+                change_sub._queue.get()  # type: ignore[attr-defined]
+            )
+            event_task: asyncio.Task[Event] | None = (
+                asyncio.create_task(event_sub._queue.get())  # type: ignore[attr-defined]
+                if event_sub is not None
+                else None
+            )
             ka_task = asyncio.create_task(asyncio.sleep(KEEPALIVE_INTERVAL))
             dc_task = asyncio.create_task(_poll_disconnected(request))
 
-            done, _ = await asyncio.wait(
-                {msg_task, ka_task, dc_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for t in (msg_task, ka_task, dc_task):
-                if t not in done:
+            wait_set: set[asyncio.Task[object]] = {change_task, ka_task, dc_task}
+            if event_task is not None:
+                wait_set.add(event_task)
+
+            done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+
+            for t in (change_task, event_task, ka_task, dc_task):
+                if t is not None and t not in done:
                     t.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await t
@@ -179,16 +191,30 @@ async def _event_stream(
             if dc_task in done:
                 break
 
-            if msg_task in done:
+            yielded = False
+            if change_task in done:
                 try:
-                    change = msg_task.result()
+                    change = change_task.result()
                 except Exception:
                     break
                 yield _format_change(change, scope)
-            else:
+                yielded = True
+
+            if event_task is not None and event_task in done:
+                try:
+                    event = event_task.result()
+                except Exception:
+                    pass
+                else:
+                    yield _format_replay_event(event, scope)
+                    yielded = True
+
+            if not yielded and ka_task in done:
                 yield ": keepalive\n\n"
     finally:
-        await sub.aclose()
+        await change_sub.aclose()
+        if event_sub is not None:
+            await event_sub.aclose()
 
 
 def _sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
@@ -211,9 +237,10 @@ def _sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
 async def sse_global(request: Request) -> StreamingResponse:
     """Cross-job lifecycle + HIL events."""
     pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
+    events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
     root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
     return _sse_response(
-        _event_stream(request, "global", pubsub, root, _parse_last_event_id(request))
+        _event_stream(request, "global", pubsub, root, _parse_last_event_id(request), events_pubsub)
     )
 
 
@@ -221,9 +248,12 @@ async def sse_global(request: Request) -> StreamingResponse:
 async def sse_job(request: Request, job_slug: str) -> StreamingResponse:
     """Job-scoped events — stage transitions, cost deltas, HIL opens."""
     pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
+    events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
     root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
     return _sse_response(
-        _event_stream(request, f"job:{job_slug}", pubsub, root, _parse_last_event_id(request))
+        _event_stream(
+            request, f"job:{job_slug}", pubsub, root, _parse_last_event_id(request), events_pubsub
+        )
     )
 
 
@@ -231,6 +261,7 @@ async def sse_job(request: Request, job_slug: str) -> StreamingResponse:
 async def sse_stage(request: Request, job_slug: str, stage_id: str) -> StreamingResponse:
     """Stage-scoped events — the high-volume stream fed by the Agent0 pane."""
     pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
+    events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
     root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
     return _sse_response(
         _event_stream(
@@ -239,5 +270,6 @@ async def sse_stage(request: Request, job_slug: str, stage_id: str) -> Streaming
             pubsub,
             root,
             _parse_last_event_id(request),
+            events_pubsub,
         )
     )
