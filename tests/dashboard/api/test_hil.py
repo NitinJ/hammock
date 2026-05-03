@@ -38,8 +38,11 @@ class TestGetHilItem:
             r = client.get("/api/hil/hil-open-ask")
         assert r.status_code == 200
         body = r.json()
-        assert body["id"] == "hil-open-ask"
-        assert body["kind"] == "ask"
+        # Stage 13: GET /api/hil/{id} returns HilItemDetail envelope
+        assert body["item"]["id"] == "hil-open-ask"
+        assert body["item"]["kind"] == "ask"
+        assert body["job_slug"] == "alpha-job-1"
+        assert body["ui_template_name"] == "ask-default-form"
 
     def test_404_unknown(self, client: TestClient) -> None:
         with client:

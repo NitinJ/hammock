@@ -59,7 +59,23 @@ class TemplateRegistry:
 
         Raises :class:`TemplateNotFoundError` if no global template exists.
         """
-        raise NotImplementedError
+        global_path = self._global_dir / f"{name}.json"
+        if not global_path.exists():
+            raise TemplateNotFoundError(
+                f"Template {name!r} not found at {global_path}"
+            )
+
+        base = self._load(global_path)
+
+        if project_repo is None:
+            return base
+
+        override_path = project_repo / ".hammock" / "ui-templates" / f"{name}.json"
+        if not override_path.exists():
+            return base
+
+        override = self._load(override_path)
+        return self._merge(base, override)
 
     # ------------------------------------------------------------------
     # Internals
@@ -67,7 +83,7 @@ class TemplateRegistry:
 
     def _load(self, path: Path) -> UiTemplate:
         """Parse and validate a template JSON file."""
-        raise NotImplementedError
+        return UiTemplate.model_validate_json(path.read_text())
 
     def _merge(self, base: UiTemplate, override: UiTemplate) -> UiTemplate:
         """Overlay *override* onto *base*, enforcing kernel invariants.
@@ -75,4 +91,18 @@ class TemplateRegistry:
         Raises :class:`TemplateKindConflictError` if ``override.hil_kinds``
         differs from ``base.hil_kinds`` (and override.hil_kinds is not None).
         """
-        raise NotImplementedError
+        if override.hil_kinds is not None and override.hil_kinds != base.hil_kinds:
+            raise TemplateKindConflictError(
+                f"Override must not change hil_kinds: "
+                f"base={base.hil_kinds!r}, override={override.hil_kinds!r}"
+            )
+
+        return base.model_copy(
+            update={
+                "description": override.description if override.description is not None else base.description,
+                "instructions": override.instructions if override.instructions is not None else base.instructions,
+                "fields": override.fields if override.fields is not None else base.fields,
+                # hil_kinds: keep base value (override may not change it)
+                "hil_kinds": base.hil_kinds,
+            }
+        )

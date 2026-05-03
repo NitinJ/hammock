@@ -3,14 +3,13 @@
 POST /api/hil/{id}/answer  — submit an answer
 GET  /api/hil/{id}         — enriched HilItemDetail envelope
 GET  /api/hil/templates/{name} — resolved template
-
-TDD red phase — tests fail until backend implementation is complete.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from collections.abc import Generator, Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -30,8 +29,6 @@ from shared.models.hil import ManualStepQuestion
 
 
 def _ts(offset: int = 0) -> datetime:
-    from datetime import timedelta
-
     return datetime(2026, 5, 1, 12, 0, tzinfo=UTC) + timedelta(minutes=offset)
 
 
@@ -120,20 +117,18 @@ def seeded_root(root: Path, project_dir: Path) -> Path:
 
 
 @pytest.fixture
-def client_with_items(seeded_root: Path) -> TestClient:
-    # Write HIL items
+def client_with_items(seeded_root: Path) -> Iterator[TestClient]:
     ask = _hil_ask("hil-ask-1")
     review = _hil_review("hil-review-1")
     manual = _hil_manual("hil-manual-1")
     for item in (ask, review, manual):
         atomic_write_json(paths.hil_item_path("alpha-job-1", item.id, root=seeded_root), item)
-    app = create_app(Settings(root=seeded_root))
-    return TestClient(app)
+    with TestClient(create_app(Settings(root=seeded_root))) as client:
+        yield client
 
 
 @pytest.fixture
-def client_template_dir(seeded_root: Path) -> tuple[TestClient, Path]:
-    """Client with a seeded global ui-templates dir."""
+def client_template_dir(seeded_root: Path) -> Iterator[tuple[TestClient, Path]]:
     tpl_dir = seeded_root / "ui-templates"
     tpl_dir.mkdir(parents=True, exist_ok=True)
     (tpl_dir / "ask-default-form.json").write_text(
@@ -147,8 +142,8 @@ def client_template_dir(seeded_root: Path) -> tuple[TestClient, Path]:
             }
         )
     )
-    app = create_app(Settings(root=seeded_root))
-    return TestClient(app), tpl_dir
+    with TestClient(create_app(Settings(root=seeded_root))) as client:
+        yield client, tpl_dir
 
 
 # ---------------------------------------------------------------------------
@@ -172,22 +167,19 @@ def test_get_hil_item_detail_review(client_with_items: TestClient) -> None:
     """Review items default to spec-review-form."""
     resp = client_with_items.get("/api/hil/hil-review-1")
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["ui_template_name"] == "spec-review-form"
+    assert resp.json()["ui_template_name"] == "spec-review-form"
 
 
 def test_get_hil_item_detail_manual(client_with_items: TestClient) -> None:
     """Manual-step items default to manual-step-default-form."""
     resp = client_with_items.get("/api/hil/hil-manual-1")
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["ui_template_name"] == "manual-step-default-form"
+    assert resp.json()["ui_template_name"] == "manual-step-default-form"
 
 
 def test_get_hil_item_detail_not_found(client_with_items: TestClient) -> None:
     """GET /api/hil/{id} returns 404 for unknown id."""
-    resp = client_with_items.get("/api/hil/does-not-exist")
-    assert resp.status_code == 404
+    assert client_with_items.get("/api/hil/does-not-exist").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +203,7 @@ def test_get_template_not_found_returns_404(
     client_template_dir: tuple[TestClient, Path],
 ) -> None:
     client, _ = client_template_dir
-    resp = client.get("/api/hil/templates/no-such-template")
-    assert resp.status_code == 404
+    assert client.get("/api/hil/templates/no-such-template").status_code == 404
 
 
 def test_get_template_uses_project_override(
@@ -245,14 +236,14 @@ def test_get_template_uses_project_override(
             }
         )
     )
-    client = TestClient(create_app(Settings(root=seeded_root)))
-    resp = client.get("/api/hil/templates/spec-review-form?project_slug=alpha")
+    with TestClient(create_app(Settings(root=seeded_root))) as client:
+        resp = client.get("/api/hil/templates/spec-review-form?project_slug=alpha")
     assert resp.status_code == 200
     assert resp.json()["instructions"] == "Project override."
 
 
 # ---------------------------------------------------------------------------
-# POST /api/hil/{id}/answer — submit ask answer
+# POST /api/hil/{id}/answer
 # ---------------------------------------------------------------------------
 
 
@@ -292,15 +283,13 @@ def test_submit_manual_step_answer_transitions_to_answered(
 def test_submit_answer_not_found_returns_404(client_with_items: TestClient) -> None:
     """POST to unknown item_id returns 404."""
     payload = {"kind": "ask", "choice": None, "text": "whatever"}
-    resp = client_with_items.post("/api/hil/no-such-id/answer", json=payload)
-    assert resp.status_code == 404
+    assert client_with_items.post("/api/hil/no-such-id/answer", json=payload).status_code == 404
 
 
 def test_submit_answer_idempotent_same_answer(client_with_items: TestClient) -> None:
     """Re-submitting the identical answer is idempotent (200, no error)."""
     payload = {"kind": "ask", "choice": "yes", "text": "Agreed."}
-    resp1 = client_with_items.post("/api/hil/hil-ask-1/answer", json=payload)
-    assert resp1.status_code == 200
+    assert client_with_items.post("/api/hil/hil-ask-1/answer", json=payload).status_code == 200
     resp2 = client_with_items.post("/api/hil/hil-ask-1/answer", json=payload)
     assert resp2.status_code == 200
     assert resp2.json()["status"] == "answered"
@@ -310,36 +299,37 @@ def test_submit_answer_conflict_different_answer_returns_409(
     client_with_items: TestClient,
 ) -> None:
     """Re-submitting a different answer to an already-answered item returns 409."""
-    payload1 = {"kind": "ask", "choice": "yes", "text": "First answer."}
-    client_with_items.post("/api/hil/hil-ask-1/answer", json=payload1)
-    payload2 = {"kind": "ask", "choice": "no", "text": "Changed my mind."}
-    resp = client_with_items.post("/api/hil/hil-ask-1/answer", json=payload2)
+    client_with_items.post(
+        "/api/hil/hil-ask-1/answer", json={"kind": "ask", "choice": "yes", "text": "First."}
+    )
+    resp = client_with_items.post(
+        "/api/hil/hil-ask-1/answer", json={"kind": "ask", "choice": "no", "text": "Changed."}
+    )
     assert resp.status_code == 409
 
 
 def test_submit_answer_wrong_kind_returns_422(client_with_items: TestClient) -> None:
-    """Submitting review answer body to an ask item returns 422 (validation error)."""
+    """Submitting review answer body to an ask item returns 422."""
     payload = {"kind": "review", "decision": "approve", "comments": "wrong kind"}
-    resp = client_with_items.post("/api/hil/hil-ask-1/answer", json=payload)
-    # The HilAnswer discriminated union validates the kind against the item
-    assert resp.status_code == 422
+    assert (
+        client_with_items.post("/api/hil/hil-ask-1/answer", json=payload).status_code == 422
+    )
 
 
-def test_submit_answer_persists_to_disk(
-    seeded_root: Path, project_dir: Path
-) -> None:
+def test_submit_answer_persists_to_disk(seeded_root: Path) -> None:
     """Answered item is persisted to disk so a fresh cache reads it back."""
     ask = _hil_ask("persist-test")
     atomic_write_json(paths.hil_item_path("alpha-job-1", ask.id, root=seeded_root), ask)
-    client = TestClient(create_app(Settings(root=seeded_root)))
 
-    payload = {"kind": "ask", "choice": "yes", "text": "Yes."}
-    resp = client.post("/api/hil/persist-test/answer", json=payload)
+    with TestClient(create_app(Settings(root=seeded_root))) as client:
+        resp = client.post(
+            "/api/hil/persist-test/answer",
+            json={"kind": "ask", "choice": "yes", "text": "Yes."},
+        )
     assert resp.status_code == 200
 
-    # Verify file on disk
-    on_disk_path = paths.hil_item_path("alpha-job-1", "persist-test", root=seeded_root)
-    assert on_disk_path.exists()
-    on_disk = HilItem.model_validate_json(on_disk_path.read_text())
+    on_disk = HilItem.model_validate_json(
+        paths.hil_item_path("alpha-job-1", "persist-test", root=seeded_root).read_text()
+    )
     assert on_disk.status == "answered"
     assert on_disk.answer is not None
