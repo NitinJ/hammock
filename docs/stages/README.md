@@ -20,6 +20,7 @@ The intent is to give future agents (and humans) enough context that reading `de
 | 3 | [stage-03.md](stage-03.md) | merged | [#6](https://github.com/NitinJ/hammock/pull/6) |
 | 4 | [stage-04.md](stage-04.md) | in PR  | TBD |
 | 5 | [stage-05.md](stage-05.md) | in PR  | TBD |
+| 6 | [stage-06.md](stage-06.md) | in PR  | TBD |
 | 8 | [stage-08.md](stage-08.md) | merged | [#4](https://github.com/NitinJ/hammock/pull/4) |
 | 9 | [stage-09.md](stage-09.md) | in PR  | TBD |
 | 10 | [stage-10.md](stage-10.md) | in PR  | TBD |
