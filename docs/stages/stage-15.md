@@ -1,7 +1,8 @@
 # Stage 15 — Stage live view + Agent0 stream pane
 
-**PR:** [#19](https://github.com/NitinJ/hammock/pull/19) (open)
-**Branch:** `feat/stage-15-stage-live`
+**PR:** [#19](https://github.com/NitinJ/hammock/pull/19) (merged 2026-05-03)
+**Branch:** `feat/stage-15-stage-live-view`
+**Commit on `main`:** `bea5372`
 
 ## What was built
 

@@ -30,4 +30,4 @@ The intent is to give future agents (and humans) enough context that reading `de
 | 12.5 | [stage-12.5.md](stage-12.5.md) | merged | [#14](https://github.com/NitinJ/hammock/pull/14), [#15](https://github.com/NitinJ/hammock/pull/15), [#16](https://github.com/NitinJ/hammock/pull/16) |
 | 13 | [stage-13.md](stage-13.md) | merged | [#17](https://github.com/NitinJ/hammock/pull/17) |
 | 14 | [stage-14.md](stage-14.md) | merged | [#18](https://github.com/NitinJ/hammock/pull/18) |
-| 15 | [stage-15.md](stage-15.md) | open | [#19](https://github.com/NitinJ/hammock/pull/19) |
+| 15 | [stage-15.md](stage-15.md) | merged | [#19](https://github.com/NitinJ/hammock/pull/19) |
