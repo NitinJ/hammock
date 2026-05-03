@@ -62,8 +62,10 @@ def _format_change(change: CacheChange, scope: str) -> str:
         data["project_slug"] = classified.project_slug
     if classified.hil_id is not None:
         data["hil_id"] = classified.hil_id
-    event_type = f"{classified.kind}_changed"
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    # Stage 12.5 (A4): emit as unnamed event (no ``event:`` line) so the browser
+    # fires ``EventSource.onmessage``.  Named events only reach ``addEventListener``
+    # listeners, which the frontend does not register.
+    return f"data: {json.dumps(data)}\n\n"
 
 
 def _format_replay_event(event: object, scope: str) -> str:

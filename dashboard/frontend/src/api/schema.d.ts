@@ -213,9 +213,22 @@ export interface HealthResponse {
   cache_size: number;
 }
 
-// ── SSE event ──────────────────────────────────────────────────────────────
+// ── SSE events ─────────────────────────────────────────────────────────────
+//
+// Stage 12.5 (A4): live and replay messages are distinct shapes.
+//
+// Replay events (from events.jsonl) are *unnamed* SSE messages fired via
+// ``EventSource.onmessage``.  They carry ``seq`` for Last-Event-ID tracking.
+//
+// Live events (CacheChange notifications from the watcher) are also *unnamed*
+// (no ``event:`` line) — the A4 fix dropped the ``event: {kind}_changed`` line
+// so the browser fires ``onmessage`` for them too.  They carry ``change_kind``
+// instead of ``seq``.
+//
+// Narrow the union before accessing kind-specific fields.
 
-export interface SseEvent {
+/** Replay event — emitted by the server from on-disk events.jsonl. */
+export interface ReplaySseEvent {
   seq: number;
   timestamp: string;
   event_type: string;
@@ -227,3 +240,17 @@ export interface SseEvent {
   parent_event_seq: number | null;
   payload: Record<string, unknown>;
 }
+
+/** Live event — emitted by the server when a state file changes (CacheChange). */
+export interface LiveSseEvent {
+  scope: string;
+  change_kind: "added" | "modified" | "deleted";
+  file_kind: "project" | "job" | "stage" | "hil" | string;
+  job_slug?: string;
+  stage_id?: string;
+  project_slug?: string;
+  hil_id?: string;
+}
+
+/** Discriminated union over both SSE event shapes. Narrow on ``"seq" in event``. */
+export type SseEvent = ReplaySseEvent | LiveSseEvent;

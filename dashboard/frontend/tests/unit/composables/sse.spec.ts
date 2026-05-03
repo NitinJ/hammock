@@ -105,7 +105,7 @@ describe("useEventStream", () => {
     unmount();
   });
 
-  it("tracks lastSeq from events", () => {
+  it("tracks lastSeq from replay events (has seq)", () => {
     const [stream, unmount] = withSetup(() => useEventStream("global"));
     MockEventSource.instances[0]?.triggerMessage({
       seq: 99,
@@ -120,6 +120,23 @@ describe("useEventStream", () => {
       payload: {},
     });
     expect(stream.lastSeq.value).toBe(99);
+    unmount();
+  });
+
+  // Stage 12.5 (A4): live CacheChange events lack seq; onEvent must still fire
+  it("delivers live event (change_kind shape) to onEvent without updating lastSeq", () => {
+    const onEvent = vi.fn();
+    const [stream, unmount] = withSetup(() => useEventStream("global", { onEvent }));
+    const liveEvent = {
+      scope: "global",
+      change_kind: "modified",
+      file_kind: "job",
+      job_slug: "feat-auth-20260501",
+    };
+    MockEventSource.instances[0]?.triggerMessage(liveEvent);
+    expect(onEvent).toHaveBeenCalledWith(liveEvent);
+    // lastSeq must NOT be updated — live events have no seq
+    expect(stream.lastSeq.value).toBeNull();
     unmount();
   });
 
