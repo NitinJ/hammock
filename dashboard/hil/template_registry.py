@@ -37,8 +37,9 @@ class TemplateRegistry:
         are read from ``<root>/ui-templates/``.
     """
 
-    def __init__(self, *, root: Path) -> None:
+    def __init__(self, *, root: Path, bundled_dir: Path | None = None) -> None:
         self._global_dir: Path = ui_templates_dir(root)
+        self._bundled_dir: Path | None = bundled_dir
 
     # ------------------------------------------------------------------
     # Public API
@@ -60,10 +61,14 @@ class TemplateRegistry:
         Raises :class:`TemplateNotFoundError` if no global template exists.
         """
         global_path = self._global_dir / f"{name}.json"
-        if not global_path.exists():
-            raise TemplateNotFoundError(f"Template {name!r} not found at {global_path}")
+        bundled_path = (self._bundled_dir / f"{name}.json") if self._bundled_dir else None
 
-        base = self._load(global_path)
+        if global_path.exists():
+            base = self._load(global_path)
+        elif bundled_path is not None and bundled_path.exists():
+            base = self._load(bundled_path)
+        else:
+            raise TemplateNotFoundError(f"Template {name!r} not found")
 
         if project_repo is None:
             return base

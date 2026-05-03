@@ -150,4 +150,14 @@ describe("FormRenderer", () => {
     expect(emitted).toBeTruthy();
     expect(emitted![0][0]).toMatchObject({ kind: "ask", text: "My answer text" });
   });
+
+  it("does not emit submit when review form has no decision selected", async () => {
+    const w = mount(FormRenderer, {
+      props: { item: makeReviewDetail(), template: null, submitting: false, error: null },
+    });
+    await w.find(".btn-submit").trigger("click");
+    // No decision selected: submit should be blocked, no emit
+    expect(w.emitted("submit")).toBeFalsy();
+    expect(w.text()).toContain("select a decision");
+  });
 });

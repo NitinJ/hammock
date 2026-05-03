@@ -311,6 +311,19 @@ def test_submit_answer_wrong_kind_returns_422(client_with_items: TestClient) -> 
     assert client_with_items.post("/api/hil/hil-ask-1/answer", json=payload).status_code == 422
 
 
+def test_submit_answer_to_cancelled_item_returns_409(seeded_root: Path) -> None:
+    """POST answer to a cancelled HIL item must return 409, not 500."""
+    cancelled = _hil_ask("cancelled-1")
+    cancelled = cancelled.model_copy(update={"status": "cancelled"})
+    atomic_write_json(paths.hil_item_path("alpha-job-1", cancelled.id, root=seeded_root), cancelled)
+    with TestClient(create_app(Settings(root=seeded_root))) as client:
+        resp = client.post(
+            "/api/hil/cancelled-1/answer",
+            json={"kind": "ask", "choice": "yes", "text": "too late"},
+        )
+    assert resp.status_code == 409
+
+
 def test_submit_answer_persists_to_disk(seeded_root: Path) -> None:
     """Answered item is persisted to disk so a fresh cache reads it back."""
     ask = _hil_ask("persist-test")

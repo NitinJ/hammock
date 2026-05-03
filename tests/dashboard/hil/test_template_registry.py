@@ -240,3 +240,62 @@ def test_override_merges_fields(root: Path, registry: TemplateRegistry, project_
 
     assert template.fields is not None
     assert template.fields["submit_label"] == "Override submit"
+
+
+# ---------------------------------------------------------------------------
+# Bundled templates fallback
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_falls_back_to_bundled_dir(tmp_path: Path) -> None:
+    """When global dir is empty, bundled_dir is used as fallback."""
+    root = tmp_path / "hammock"
+    root.mkdir()
+    bundled = tmp_path / "bundled"
+    _write_template(
+        _global_path(bundled, "ask-default-form"),
+        {
+            "name": "ask-default-form",
+            "hil_kinds": ["ask"],
+            "instructions": "Bundled instructions.",
+            "description": None,
+            "fields": None,
+        },
+    )
+
+    registry = TemplateRegistry(root=root, bundled_dir=bundled / "ui-templates")
+    template = registry.resolve("ask-default-form")
+
+    assert template.instructions == "Bundled instructions."
+
+
+def test_resolve_global_takes_precedence_over_bundled(tmp_path: Path) -> None:
+    """Global dir wins over bundled dir when both have the template."""
+    root = tmp_path / "hammock"
+    root.mkdir()
+    bundled = tmp_path / "bundled"
+    _write_template(
+        _global_path(root, "ask-default-form"),
+        {
+            "name": "ask-default-form",
+            "hil_kinds": ["ask"],
+            "instructions": "Global instructions.",
+            "description": None,
+            "fields": None,
+        },
+    )
+    _write_template(
+        _global_path(bundled, "ask-default-form"),
+        {
+            "name": "ask-default-form",
+            "hil_kinds": ["ask"],
+            "instructions": "Bundled instructions.",
+            "description": None,
+            "fields": None,
+        },
+    )
+
+    registry = TemplateRegistry(root=root, bundled_dir=bundled / "ui-templates")
+    template = registry.resolve("ask-default-form")
+
+    assert template.instructions == "Global instructions."

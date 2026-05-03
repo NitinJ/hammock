@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from dashboard.hil.contract import ConflictError, HilContract, HilFilter, NotFoundError
-from dashboard.hil.state_machine import InvalidTransitionError
 from dashboard.state.cache import Cache
 from shared.atomic import atomic_write_json
 from shared.models.hil import (
@@ -256,5 +255,5 @@ async def test_submit_answer_cancelled_item_raises(tmp_path: Path) -> None:
         items=[_ask_item("h1", status="cancelled")],
     )
     contract = HilContract(cache=cache, root=root)
-    with pytest.raises(InvalidTransitionError):
+    with pytest.raises(ConflictError):
         contract.submit_answer("h1", AskAnswer(text="yes", choice=None))

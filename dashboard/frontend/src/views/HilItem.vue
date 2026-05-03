@@ -64,10 +64,14 @@ async function loadItem() {
     const res = await fetch(`/api/hil/${itemId.value}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     detail.value = (await res.json()) as HilItemDetail;
-    template.value = await fetchTemplate(
+    const tpl = await fetchTemplate(
       detail.value.ui_template_name,
       detail.value.project_slug ?? undefined,
     );
+    if (tpl === null) {
+      throw new Error(`Template '${detail.value.ui_template_name}' not found`);
+    }
+    template.value = tpl;
   } catch (e) {
     fetchError.value = e instanceof Error ? e.message : "Failed to load item";
   } finally {

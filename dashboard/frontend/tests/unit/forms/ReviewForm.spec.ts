@@ -44,4 +44,12 @@ describe("ReviewForm", () => {
     expect(answer.decision).toBe("approve");
     expect(answer.comments).toBe("Looks good");
   });
+
+  it("getAnswer returns decision=null when no button clicked", () => {
+    const w = mount(ReviewForm, { props: { question: reviewQuestion, submitting: false } });
+    const answer = (w.vm as { getAnswer(): unknown }).getAnswer() as {
+      decision: string | null;
+    };
+    expect(answer.decision).toBeNull();
+  });
 });

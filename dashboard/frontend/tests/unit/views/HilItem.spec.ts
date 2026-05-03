@@ -170,4 +170,21 @@ describe("HilItem", () => {
 
     expect(w.text()).toContain("Conflict error");
   });
+
+  it("shows error when template cannot be found (404)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/templates")) {
+          return { ok: false, status: 404, json: () => Promise.resolve({}) };
+        }
+        return { ok: true, status: 200, json: () => Promise.resolve(askDetail) };
+      }),
+    );
+    const router = makeRouter();
+    await router.isReady();
+    const w = mount(HilItem, { global: { plugins: [router, createPinia()] } });
+    await flushPromises();
+    expect(w.find("[role='alert']").exists()).toBe(true);
+  });
 });

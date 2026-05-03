@@ -29,6 +29,11 @@ from shared.models.presentation import UiTemplate
 
 router = APIRouter(prefix="/api/hil", tags=["hil"])
 
+# Bundled templates shipped in the repo (fallback when user's global dir is empty)
+_BUNDLED_TEMPLATES_DIR: Path = (
+    Path(__file__).parent.parent.parent / "hammock" / "templates" / "ui-templates"
+)
+
 HilStatus = Literal["awaiting", "answered", "cancelled"]
 HilKind = Literal["ask", "review", "manual-step"]
 
@@ -89,7 +94,7 @@ async def get_template(
         if proj is not None:
             project_repo = Path(proj.repo_path)
 
-    registry = TemplateRegistry(root=root)
+    registry = TemplateRegistry(root=root, bundled_dir=_BUNDLED_TEMPLATES_DIR)
     try:
         return registry.resolve(name, project_repo=project_repo)
     except TemplateNotFoundError as exc:

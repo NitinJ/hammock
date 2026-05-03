@@ -51,7 +51,7 @@ defineExpose({ getAnswer });
 function getAnswer() {
   return {
     kind: "review" as const,
-    decision: decision.value ?? "approve",
+    decision: decision.value,
     comments: comments.value,
   };
 }

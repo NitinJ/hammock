@@ -88,7 +88,9 @@ class HilContract:
                 return item
             raise ConflictError(f"HIL item {item_id!r} already answered with a different answer")
 
-        # Raises InvalidTransitionError if item.status is "cancelled"
+        if item.status == "cancelled":
+            raise ConflictError(f"HIL item {item_id!r} is cancelled and cannot be answered")
+
         updated = transition(item, "answered")
         updated = updated.model_copy(update={"answer": answer, "answered_at": datetime.now(UTC)})
 

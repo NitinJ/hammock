@@ -28,8 +28,9 @@
       :submitting="submitting"
     />
 
-    <!-- Error -->
-    <p v-if="error" class="submit-error" role="alert">{{ error }}</p>
+    <!-- Validation + submit errors -->
+    <p v-if="validationError" class="submit-error" role="alert">{{ validationError }}</p>
+    <p v-else-if="error" class="submit-error" role="alert">{{ error }}</p>
 
     <!-- Submit -->
     <button
@@ -73,15 +74,20 @@ const emit = defineEmits<{
 }>();
 
 const formRef = ref<{ getAnswer(): unknown } | null>(null);
+const validationError = ref<string | null>(null);
 
 const submitLabel = computed(
   () => props.template?.fields?.submit_label ?? "Submit",
 );
 
 function handleSubmit() {
-  const answer = formRef.value?.getAnswer();
-  if (answer !== undefined) {
-    emit("submit", answer);
+  validationError.value = null;
+  const answer = formRef.value?.getAnswer() as Record<string, unknown> | undefined;
+  if (answer === undefined) return;
+  if (answer.kind === "review" && answer.decision == null) {
+    validationError.value = "Please select a decision before submitting.";
+    return;
   }
+  emit("submit", answer);
 }
 </script>
