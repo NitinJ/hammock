@@ -57,7 +57,17 @@ class StageResult:
 
 
 class StageRunner(Protocol):
-    """Async callable that executes one stage."""
+    """Async callable that executes one stage.
+
+    Signature is ``run(stage_def, job_dir, stage_run_dir) -> StageResult``.
+
+    The implementation.md § Stage 4 task DAG sketches this as
+    ``run(stage_def, work_dir)``; we split ``work_dir`` into two explicit
+    args because runners need both the **job-level** dir (for shared
+    artifacts like ``spec.md`` that span stages) and the **stage-run**
+    dir (for per-attempt logs / nudges / pr-info). This is the contract
+    Stage 5's ``RealStageRunner`` will bind to.
+    """
 
     async def run(
         self,

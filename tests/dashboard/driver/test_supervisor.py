@@ -91,3 +91,23 @@ def test_get_pid_returns_none_on_corrupt_file(tmp_path: Path) -> None:
 
     sup = _make_supervisor()
     assert sup.get_pid(pid_path) is None
+
+
+def test_is_stale_uses_injected_clock(tmp_path: Path) -> None:
+    """is_stale() uses now_fn instead of wall-clock time.time().
+
+    Codex-review (Minor): Supervisor previously stored now_fn but bypassed it.
+    """
+    hb = tmp_path / "heartbeat"
+    hb.write_text("")
+    file_mtime = hb.stat().st_mtime
+
+    # Pin "now" to 100s after the file's mtime — should be stale (>90s).
+    fake_now = datetime.fromtimestamp(file_mtime + 100, tz=UTC)
+    sup = Supervisor(heartbeat_interval=30.0, stale_factor=3, now_fn=lambda: fake_now)
+    assert sup.is_stale(hb) is True
+
+    # Pin "now" to 10s after — should NOT be stale.
+    fake_now2 = datetime.fromtimestamp(file_mtime + 10, tz=UTC)
+    sup2 = Supervisor(heartbeat_interval=30.0, stale_factor=3, now_fn=lambda: fake_now2)
+    assert sup2.is_stale(hb) is False

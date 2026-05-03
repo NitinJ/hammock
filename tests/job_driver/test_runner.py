@@ -198,7 +198,15 @@ async def test_stage_failure_fails_job(tmp_path: Path) -> None:
 
 
 async def test_resume_skips_completed_stages(tmp_path: Path) -> None:
-    """Re-running driver with outputs already present skips completed stages."""
+    """Re-running driver with stage.json SUCCEEDED + outputs present skips completed stages.
+
+    Per design § Recovery — resume requires BOTH stage.json reporting
+    SUCCEEDED AND required outputs on disk. Stray output files alone must
+    not be treated as completion (codex-review: prevents skipping a crashed
+    stage that wrote partial outputs).
+    """
+    from shared.atomic import atomic_write_json
+
     jobs_dir = tmp_path / "jobs"
     job_dir = jobs_dir / "test-job"
     job_dir.mkdir(parents=True)
@@ -212,8 +220,21 @@ async def test_resume_skips_completed_stages(tmp_path: Path) -> None:
     _write_job_config(job_dir, state=JobState.STAGES_RUNNING)
     _write_stage_list(job_dir, stages)
 
-    # stage-a already completed: output exists on disk
+    # stage-a already completed: BOTH output AND stage.json SUCCEEDED.
     (job_dir / "a.txt").write_text("already done")
+    sa_dir = job_dir / "stages" / "stage-a"
+    sa_dir.mkdir(parents=True)
+    atomic_write_json(
+        sa_dir / "stage.json",
+        StageRun(
+            stage_id="stage-a",
+            attempt=1,
+            state=StageState.SUCCEEDED,
+            started_at=datetime.now(UTC),
+            ended_at=datetime.now(UTC),
+            outputs_produced=["a.txt"],
+        ),
+    )
     # stage-b needs to run
     _write_fixture(
         fixtures_dir, "stage-b", {"outcome": "succeeded", "artifacts": {"b.txt": "b out"}}
@@ -236,6 +257,45 @@ async def test_resume_skips_completed_stages(tmp_path: Path) -> None:
 
     assert "stage-a" not in ran_stages, "stage-a should have been skipped (already succeeded)"
     assert "stage-b" in ran_stages
+    assert _read_job_config(job_dir).state == JobState.COMPLETED
+
+
+async def test_resume_does_not_skip_stage_with_outputs_but_no_stage_json(tmp_path: Path) -> None:
+    """Crash recovery: stray output files alone must not skip a stage.
+
+    Spec: design § Recovery — must not treat partial/orphaned outputs as
+    completion. Codex-review finding (Important).
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir, state=JobState.STAGES_RUNNING)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["a.txt"])])
+
+    # Output exists but stage.json does NOT — this is the crashed-stage case.
+    (job_dir / "a.txt").write_text("partial output from crashed prior run")
+    _write_fixture(
+        fixtures_dir, "stage-a", {"outcome": "succeeded", "artifacts": {"a.txt": "fresh output"}}
+    )
+
+    ran: list[str] = []
+    original_run = FakeStageRunner.run
+
+    async def _tracking_run(self, stage_def, job_dir_arg, stage_run_dir):
+        ran.append(stage_def.id)
+        return await original_run(self, stage_def, job_dir_arg, stage_run_dir)
+
+    FakeStageRunner.run = _tracking_run  # type: ignore[method-assign]
+    try:
+        driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+        await driver.run()
+    finally:
+        FakeStageRunner.run = original_run  # type: ignore[method-assign]
+
+    assert ran == ["stage-a"], "stage-a must re-run since its stage.json is absent"
     assert _read_job_config(job_dir).state == JobState.COMPLETED
 
 
@@ -427,3 +487,410 @@ async def test_events_appended_to_jsonl(tmp_path: Path) -> None:
     assert len(events) >= 2, "expect at least SUBMITTED→STAGES_RUNNING and STAGES_RUNNING→COMPLETED"
     event_types = [e["event_type"] for e in events]
     assert "job_state_transition" in event_types
+
+
+# ---------------------------------------------------------------------------
+# Tests added in response to codex review
+# ---------------------------------------------------------------------------
+
+
+async def test_human_stage_transitions_to_blocked_on_human(tmp_path: Path) -> None:
+    """`worker: human` stages must NOT be auto-completed by the runner.
+
+    Codex-review (Critical): the design requires
+    STAGES_RUNNING → BLOCKED_ON_HUMAN for HIL waits.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    stages = [
+        _make_stage("approve-spec", required_outputs=["approval.json"], worker="human"),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver.run()
+
+    cfg = _read_job_config(job_dir)
+    assert cfg.state == JobState.BLOCKED_ON_HUMAN
+    sr = _read_stage_run(job_dir, "approve-spec")
+    assert sr is not None
+    assert sr.state == StageState.BLOCKED_ON_HUMAN
+
+
+async def test_human_stage_resumes_after_artifact_appears(tmp_path: Path) -> None:
+    """After the human action lands on disk, a re-spawned driver advances."""
+    from shared.atomic import atomic_write_json
+
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    stages = [
+        _make_stage("approve-spec", required_outputs=["approval.json"], worker="human"),
+        _make_stage(
+            "downstream",
+            required_outputs=["next.txt"],
+            required_inputs=["approval.json"],
+        ),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+    _write_fixture(
+        fixtures_dir, "downstream", {"outcome": "succeeded", "artifacts": {"next.txt": "ok"}}
+    )
+
+    # First pass: blocks
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver.run()
+    assert _read_job_config(job_dir).state == JobState.BLOCKED_ON_HUMAN
+
+    # Human action arrives: write the approval artifact + mark stage SUCCEEDED
+    (job_dir / "approval.json").write_text('{"approved": true}')
+    sa_dir = job_dir / "stages" / "approve-spec"
+    sa_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(
+        sa_dir / "stage.json",
+        StageRun(
+            stage_id="approve-spec",
+            attempt=1,
+            state=StageState.SUCCEEDED,
+            started_at=datetime.now(UTC),
+            ended_at=datetime.now(UTC),
+            outputs_produced=["approval.json"],
+        ),
+    )
+
+    # Second pass: should advance through downstream
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver.run()
+    assert _read_job_config(job_dir).state == JobState.COMPLETED
+
+
+async def test_succeeded_without_required_outputs_fails_job(tmp_path: Path) -> None:
+    """Runner returns succeeded=True but no outputs → job FAILS, not COMPLETES.
+
+    Codex-review (Critical): driver must validate required_outputs.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["must-exist.md"])])
+    # Fixture says succeeded but writes NOTHING
+    _write_fixture(fixtures_dir, "stage-a", {"outcome": "succeeded"})
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver.run()
+
+    cfg = _read_job_config(job_dir)
+    assert cfg.state == JobState.FAILED, "missing required output must FAIL the job"
+
+
+async def test_runner_exception_fails_job(tmp_path: Path) -> None:
+    """If the stage runner raises, the job is left FAILED (not in STAGES_RUNNING).
+
+    Codex-review (Important): heartbeat would otherwise stop while
+    job.json still says STAGES_RUNNING.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["x.txt"])])
+
+    class ExplodingRunner:
+        async def run(self, stage_def, job_dir_arg, stage_run_dir):
+            raise RuntimeError("boom")
+
+    driver = JobDriver(
+        job_dir.name,
+        root=tmp_path,
+        stage_runner=ExplodingRunner(),  # type: ignore[arg-type]
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    cfg = _read_job_config(job_dir)
+    assert cfg.state == JobState.FAILED
+    sr = _read_stage_run(job_dir, "stage-a")
+    assert sr is not None
+    assert sr.state == StageState.FAILED
+
+
+async def test_missing_required_inputs_fails_stage(tmp_path: Path) -> None:
+    """Stage whose required input is missing on disk → job FAILS.
+
+    Codex-review (P2): _inputs_ready() must gate stage execution.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    # stage-b requires a.txt as input but no producer exists for it
+    _write_stage_list(
+        job_dir,
+        [_make_stage("stage-b", required_outputs=["b.txt"], required_inputs=["a.txt"])],
+    )
+    _write_fixture(
+        fixtures_dir, "stage-b", {"outcome": "succeeded", "artifacts": {"b.txt": "would write"}}
+    )
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver.run()
+
+    assert _read_job_config(job_dir).state == JobState.FAILED
+
+
+async def test_event_seq_resumes_after_restart(tmp_path: Path) -> None:
+    """A restarted driver resumes seq numbers from existing events.jsonl.
+
+    Codex-review (Important): re-emitting seq=0 violates monotonic-seq spec.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["a.txt"])])
+    _write_fixture(fixtures_dir, "stage-a", {"outcome": "succeeded", "artifacts": {"a.txt": "x"}})
+
+    # First run produces some events
+    driver1 = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver1.run()
+    events_path = paths.job_events_jsonl(job_dir.name, root=tmp_path)
+    seqs_before = [
+        json.loads(line)["seq"] for line in events_path.read_text().splitlines() if line.strip()
+    ]
+    assert seqs_before == sorted(set(seqs_before)) and seqs_before == list(
+        range(min(seqs_before), max(seqs_before) + 1)
+    )
+
+    # Spawn a second driver (same job dir). Since job is COMPLETED it won't
+    # emit stage events, but JobDriver.run() emits the initial state-resume
+    # transition. The seq must be > max seqs_before.
+    driver2 = JobDriver(
+        job_dir.name,
+        root=tmp_path,
+        stage_runner=FakeStageRunner(fixtures_dir),
+        heartbeat_interval=0.1,
+    )
+    assert driver2._seq == max(seqs_before) + 1, (
+        f"_seq should resume from {max(seqs_before) + 1}, got {driver2._seq}"
+    )
+
+
+async def test_event_seq_tolerates_truncated_tail(tmp_path: Path) -> None:
+    """Corrupt/truncated events.jsonl tail is skipped; seq still resumes.
+
+    Codex-review (Important).
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["a.txt"])])
+
+    # Pre-seed events.jsonl with valid + corrupt lines
+    events_path = paths.job_events_jsonl(job_dir.name, root=tmp_path)
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    events_path.write_text(
+        '{"seq": 0, "event_type": "x", "source": "job_driver", "job_id": "j", "stage_id": null, '
+        '"timestamp": "2026-01-01T00:00:00+00:00", "payload": {}}\n'
+        '{"seq": 1, "event_type": "x", "source": "job_driver", "job_id": "j", "stage_id": null, '
+        '"timestamp": "2026-01-01T00:00:00+00:00", "payload": {}}\n'
+        '{"seq": 2, "event_type":\n'  # truncated mid-line
+    )
+
+    driver = JobDriver(
+        job_dir.name,
+        root=tmp_path,
+        stage_runner=FakeStageRunner(fixtures_dir),
+        heartbeat_interval=0.1,
+    )
+    assert driver._seq == 2, "seq should resume from max valid+1, ignoring corrupt tail"
+
+
+async def test_loop_back_preserves_verdict_artifact(tmp_path: Path) -> None:
+    """Loop-back preserves the verdict-producing stage's output (the writer's feedback).
+
+    Codex-review (Important): clearing the verdict drops the routing signal
+    the writer needs to revise.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    stages = [
+        _make_stage("write-spec", required_outputs=["spec.md"]),
+        _make_stage(
+            "review-spec",
+            required_outputs=["spec-review.json"],
+            required_inputs=["spec.md"],
+            loop_back=LoopBack(
+                to="write-spec",
+                condition="not spec-review.json.approved",
+                max_iterations=2,
+                on_exhaustion=OnExhaustion(kind="hil-manual-step", prompt="x"),
+            ),
+        ),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+
+    # First review: approved=False (so loop_back fires); second: approved=True.
+    review_attempt = {"n": 0}
+    seen_inputs_to_writer: list[bool] = []
+    original_run = FakeStageRunner.run
+
+    async def _scripted_run(self, stage_def, job_dir_arg, stage_run_dir):
+        if stage_def.id == "write-spec":
+            # Snapshot whether the verdict file is visible to the writer
+            verdict_path = job_dir_arg / "spec-review.json"
+            seen_inputs_to_writer.append(verdict_path.exists())
+            (job_dir_arg / "spec.md").write_text("draft")
+            return StageResult(succeeded=True, outputs_produced=["spec.md"])
+        if stage_def.id == "review-spec":
+            review_attempt["n"] += 1
+            payload = {"approved": review_attempt["n"] >= 2}
+            (job_dir_arg / "spec-review.json").write_text(json.dumps(payload))
+            return StageResult(succeeded=True, outputs_produced=["spec-review.json"])
+        return await original_run(self, stage_def, job_dir_arg, stage_run_dir)
+
+    FakeStageRunner.run = _scripted_run  # type: ignore[method-assign]
+    try:
+        driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+        await driver.run()
+    finally:
+        FakeStageRunner.run = original_run  # type: ignore[method-assign]
+
+    assert _read_job_config(job_dir).state == JobState.COMPLETED
+    # First write: no prior verdict. Second write (after loop_back):
+    # the rejected verdict MUST be visible to the writer.
+    assert seen_inputs_to_writer == [False, True], (
+        f"verdict must be preserved across loop_back; got {seen_inputs_to_writer}"
+    )
+
+
+async def test_loop_back_exhaustion_blocks_on_human(tmp_path: Path) -> None:
+    """When loop_back.max_iterations is exhausted, job → BLOCKED_ON_HUMAN.
+
+    Codex-review (Important): on_exhaustion.kind=hil-manual-step must
+    actually block, not silently advance.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    stages = [
+        _make_stage("write-spec", required_outputs=["spec.md"]),
+        _make_stage(
+            "review-spec",
+            required_outputs=["spec-review.json"],
+            required_inputs=["spec.md"],
+            loop_back=LoopBack(
+                to="write-spec",
+                condition="not spec-review.json.approved",
+                max_iterations=1,
+                on_exhaustion=OnExhaustion(
+                    kind="hil-manual-step",
+                    prompt="Spec keeps getting rejected; please intervene.",
+                ),
+            ),
+        ),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+
+    original_run = FakeStageRunner.run
+
+    async def _always_reject(self, stage_def, job_dir_arg, stage_run_dir):
+        if stage_def.id == "write-spec":
+            (job_dir_arg / "spec.md").write_text("v")
+            return StageResult(succeeded=True, outputs_produced=["spec.md"])
+        if stage_def.id == "review-spec":
+            (job_dir_arg / "spec-review.json").write_text('{"approved": false}')
+            return StageResult(succeeded=True, outputs_produced=["spec-review.json"])
+        return await original_run(self, stage_def, job_dir_arg, stage_run_dir)
+
+    FakeStageRunner.run = _always_reject  # type: ignore[method-assign]
+    try:
+        driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+        await driver.run()
+    finally:
+        FakeStageRunner.run = original_run  # type: ignore[method-assign]
+
+    assert _read_job_config(job_dir).state == JobState.BLOCKED_ON_HUMAN
+
+
+async def test_runner_required_when_starting(tmp_path: Path) -> None:
+    """A driver constructed with no stage_runner must refuse to run.
+
+    Codex-review (P1): otherwise the assert fires mid-stage and leaves
+    the job stuck in STAGES_RUNNING.
+    """
+    import pytest
+
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["a.txt"])])
+
+    driver = JobDriver(job_dir.name, root=tmp_path, stage_runner=None, heartbeat_interval=0.1)
+    with pytest.raises(RuntimeError, match="stage_runner"):
+        await driver.run()
+
+    # Job state must NOT have transitioned
+    assert _read_job_config(job_dir).state == JobState.SUBMITTED
+
+
+async def test_latest_symlink_atomic_replace(tmp_path: Path) -> None:
+    """Re-running a stage replaces the `latest` symlink atomically.
+
+    Codex-review (Minor): unlink-then-symlink left a no-latest window.
+    Now we use os.replace() with a temp symlink.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, [_make_stage("stage-a", required_outputs=["a.txt"])])
+    _write_fixture(fixtures_dir, "stage-a", {"outcome": "succeeded", "artifacts": {"a.txt": "x"}})
+
+    driver = _make_driver(job_dir, fixtures_dir, root=tmp_path, heartbeat_interval=0.1)
+    await driver.run()
+
+    latest = paths.stage_run_latest(job_dir.name, "stage-a", root=tmp_path)
+    assert latest.is_symlink()
+    # No leftover .latest.tmp.* files
+    leftovers = list(latest.parent.glob(".latest.tmp.*"))
+    assert leftovers == [], f"leftover temp symlinks: {leftovers}"

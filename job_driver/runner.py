@@ -10,16 +10,30 @@ implementation.md § Stage 4.
 2. Transitions ``job.json`` from ``SUBMITTED`` to ``STAGES_RUNNING``.
 3. Iterates stages in order:
    - Skips stages whose ``runs_if`` predicate evaluates to false.
-   - Skips stages whose required outputs already exist on disk (resume).
+   - Skips stages that already SUCCEEDED (resume after crash).
+   - For ``worker: human`` stages with outputs missing: writes
+     ``BLOCKED_ON_HUMAN`` and exits cleanly so the dashboard can resume
+     the driver after the human action lands on disk.
    - Runs the ``StageRunner`` (FakeStageRunner in Stage 4; RealStageRunner in
      Stage 5).
+   - Validates ``exit_condition.required_outputs`` after success.
    - Handles ``loop_back``: if the condition holds and the attempt counter
-     is within ``max_iterations``, re-runs the target stage.
-4. When all stages are done: ``STAGES_RUNNING`` → ``COMPLETED``.
-5. On unrecoverable failure: ``STAGES_RUNNING`` → ``FAILED``.
+     is within ``max_iterations``, re-runs the target stage. The verdict
+     artifact (the looping stage's output) is preserved as feedback for the
+     writer; only the target-range writer outputs are cleared.
+   - On ``loop_back.max_iterations`` exhaustion: writes ``BLOCKED_ON_HUMAN``
+     per ``on_exhaustion: hil-manual-step``.
+4. When all stages are done with all final outputs present:
+   ``STAGES_RUNNING`` → ``COMPLETED``.
+5. On unrecoverable failure (stage failed, runner exception, missing
+   required output): ``STAGES_RUNNING`` → ``FAILED``.
 6. On SIGTERM or command-file cancel: ``STAGES_RUNNING`` → ``ABANDONED``;
    active stage → ``CANCELLED``.
 7. Writes a heartbeat file every ``heartbeat_interval`` seconds (default 30).
+
+Event sequence numbers persist across driver restarts: on startup the driver
+scans existing ``events.jsonl`` and resumes from ``max(seq) + 1`` so a
+restarted driver never duplicates seq values in the same job log.
 """
 
 from __future__ import annotations
@@ -28,7 +42,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import signal
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -60,7 +76,9 @@ class JobDriver:
     root:
         Override for the hammock root (``~/.hammock/`` by default).
     stage_runner:
-        Stage execution backend. Must be supplied.
+        Stage execution backend. Must be supplied; ``run()`` raises
+        ``RuntimeError`` if missing so the driver fails fast before
+        changing job state.
     heartbeat_interval:
         Seconds between heartbeat touches (default 30).
     now_fn:
@@ -82,14 +100,21 @@ class JobDriver:
         self.heartbeat_interval = heartbeat_interval
         self._now: Callable[[], datetime] = now_fn or (lambda: datetime.now(UTC))
         self._cancel_event = asyncio.Event()
-        self._seq = 0
+        self._seq = self._initial_seq()
 
     # ------------------------------------------------------------------
     # Public entry
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
-        """Main loop: run until terminal state or cancellation."""
+        """Main loop: run until terminal/blocked state or cancellation."""
+        if self._stage_runner is None:
+            raise RuntimeError(
+                "JobDriver requires a stage_runner; refusing to start "
+                "(would otherwise crash mid-stage and leave the job in "
+                "STAGES_RUNNING)."
+            )
+
         loop = asyncio.get_event_loop()
 
         # Install SIGTERM handler to trigger graceful shutdown
@@ -100,9 +125,15 @@ class JobDriver:
         loop.add_signal_handler(signal.SIGTERM, _sigterm_handler)
 
         try:
-            # Transition SUBMITTED → STAGES_RUNNING
+            # Transition SUBMITTED → STAGES_RUNNING (idempotent: only fires
+            # if state is SUBMITTED; on resume, state is already
+            # STAGES_RUNNING/BLOCKED_ON_HUMAN and we leave it alone).
             job_cfg = self._read_job_config()
             if job_cfg.state == JobState.SUBMITTED:
+                self._write_job_state(JobState.STAGES_RUNNING)
+            elif job_cfg.state == JobState.BLOCKED_ON_HUMAN:
+                # Resume from human-block: re-enter STAGES_RUNNING.
+                # _execute_stages will skip already-resolved human stages.
                 self._write_job_state(JobState.STAGES_RUNNING)
 
             # Touch heartbeat at startup
@@ -155,14 +186,51 @@ class JobDriver:
                     i += 1
                     continue
 
-            # Skip if all required outputs already exist (resume / already succeeded)
+            # Skip if stage already SUCCEEDED (resume) — requires BOTH
+            # stage.json SUCCEEDED AND outputs present, so we never treat
+            # stray output files from a crashed stage as completion.
             if self._stage_already_succeeded(stage_def):
-                log.info("Skipping stage %s (outputs already present)", stage_def.id)
+                log.info("Skipping stage %s (already SUCCEEDED)", stage_def.id)
                 i += 1
                 continue
 
-            # Run the stage
-            result = await self._run_single_stage(stage_def)
+            # Human/HIL gate: the Job Driver does not run human stages — it
+            # blocks the job, writes BLOCKED_ON_HUMAN, and exits cleanly.
+            # The dashboard re-spawns the driver once outputs land.
+            if stage_def.worker == "human":
+                self._block_on_human(stage_def, reason="human-stage")
+                return
+
+            # Required inputs must be present before running. If a producer
+            # was skipped by runs_if (or an artifact was deleted before
+            # resume), the stage is not READY — fail the job rather than
+            # running with missing inputs and silently producing nothing.
+            if not self._inputs_ready(stage_def):
+                log.error(
+                    "Stage %s required inputs missing: %s",
+                    stage_def.id,
+                    [
+                        inp
+                        for inp in stage_def.inputs.required
+                        if not (self._job_dir() / inp).exists()
+                    ],
+                )
+                self._fail_stage(
+                    stage_def,
+                    reason="required inputs missing",
+                )
+                self._write_job_state(JobState.FAILED)
+                return
+
+            # Run the stage (catching runner exceptions so the job is always
+            # left in a terminal state on failure).
+            try:
+                result = await self._run_single_stage(stage_def)
+            except Exception as exc:
+                log.exception("Stage %s runner raised: %s", stage_def.id, exc)
+                self._fail_stage(stage_def, reason=f"runner exception: {exc}")
+                self._write_job_state(JobState.FAILED)
+                return
 
             if result is None:
                 # Cancelled mid-stage
@@ -170,6 +238,23 @@ class JobDriver:
                 return
 
             if not result.succeeded:
+                self._write_job_state(JobState.FAILED)
+                return
+
+            # Validate required_outputs are present after success. This is
+            # the SUCCEEDED gate per design § Stage state machine — a runner
+            # may return succeeded=True without actually writing outputs.
+            missing = self._missing_required_outputs(stage_def)
+            if missing:
+                log.error(
+                    "Stage %s reported success but required outputs missing: %s",
+                    stage_def.id,
+                    missing,
+                )
+                self._fail_stage(
+                    stage_def,
+                    reason=f"required outputs missing after success: {missing}",
+                )
                 self._write_job_state(JobState.FAILED)
                 return
 
@@ -195,27 +280,42 @@ class JobDriver:
                             loop_counters[key],
                             lb.max_iterations,
                         )
-                        # Find target stage index and resume from there
+                        # Find target stage index and resume from there.
                         target_idx = next((j for j, s in enumerate(stages) if s.id == lb.to), None)
                         if target_idx is not None:
-                            # Clear outputs of stages from target_idx to current i
-                            # so they will re-run
-                            self._clear_stage_outputs(stages[target_idx : i + 1])
+                            # Clear stage.json + outputs for [target_idx, i) so
+                            # those stages re-run from scratch. For the
+                            # verdict-producing stage at i, reset only its
+                            # stage.json (so it re-runs to evaluate the new
+                            # spec) — its OUTPUT file is the writer's
+                            # feedback and must be preserved through the
+                            # next iteration.
+                            self._clear_stage_outputs(stages[target_idx:i])
+                            self._reset_stage_run(stage_def)
                             i = target_idx
                             continue
                     else:
                         log.warning(
-                            "loop_back max_iterations=%d exhausted for %s → %s",
+                            "loop_back max_iterations=%d exhausted for %s → %s — "
+                            "transitioning to BLOCKED_ON_HUMAN",
                             lb.max_iterations,
                             stage_def.id,
                             lb.to,
                         )
-                        # Per spec: on_exhaustion(hil-manual-step) — Stage 7 handles HIL
-                        # For Stage 4, treat as success and move on
+                        self._block_on_human(
+                            stage_def,
+                            reason=f"loop_back max_iterations exhausted ({stage_def.id} → {lb.to})",
+                        )
+                        return
             i += 1
 
-        # All stages done
+        # All stages done — verify final-stage outputs exist before COMPLETED.
         if not self._cancel_event.is_set():
+            final_missing = self._missing_final_outputs(stages)
+            if final_missing:
+                log.error("Cannot COMPLETE: final outputs missing: %s", final_missing)
+                self._write_job_state(JobState.FAILED)
+                return
             self._write_job_state(JobState.COMPLETED)
 
     async def _run_single_stage(self, stage_def: StageDefinition) -> StageResult | None:
@@ -223,7 +323,7 @@ class JobDriver:
 
         Returns ``None`` if the run was interrupted by a cancellation request.
         """
-        assert self._stage_runner is not None, "stage_runner must be set"
+        assert self._stage_runner is not None  # checked in run()
 
         job_dir = self._job_dir()
         attempt = self._next_attempt(stage_def.id)
@@ -231,11 +331,10 @@ class JobDriver:
         stage_run_dir = paths.stage_run_dir(self.job_slug, stage_def.id, attempt, root=self.root)
         stage_run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Update latest symlink
-        latest = paths.stage_run_latest(self.job_slug, stage_def.id, root=self.root)
-        if latest.is_symlink():
-            latest.unlink()
-        latest.symlink_to(stage_run_dir.name)
+        # Update latest symlink atomically — create a new symlink under a
+        # temp name and os.replace() it over latest, so readers never see a
+        # missing latest.
+        self._update_latest_symlink(stage_def.id, stage_run_dir.name)
 
         # Persist RUNNING state
         stage_run = StageRun(
@@ -279,6 +378,7 @@ class JobDriver:
             )
             return None
 
+        # If the runner raised, propagate so the caller can fail the job.
         result: StageResult = stage_task.result()
 
         final_state = StageState.SUCCEEDED if result.succeeded else StageState.FAILED
@@ -357,20 +457,54 @@ class JobDriver:
         return [StageDefinition.model_validate(s) for s in data.get("stages", [])]
 
     def _stage_already_succeeded(self, stage_def: StageDefinition) -> bool:
-        """True if all required outputs exist in the job dir."""
-        job_dir = self._job_dir()
-        if not stage_def.exit_condition.required_outputs:
-            # No outputs required — stage was considered atomic; check stage.json
-            sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
-            if sj.exists():
-                try:
-                    sr = StageRun.model_validate_json(sj.read_text())
-                    return sr.state == StageState.SUCCEEDED
-                except Exception:
-                    return False
+        """True only if both stage.json says SUCCEEDED and outputs exist.
+
+        Resume safety: a crashed stage that wrote partial outputs but never
+        reached SUCCEEDED must re-run, not be skipped.
+        """
+        sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
+        if not sj.exists():
+            return False
+        try:
+            sr = StageRun.model_validate_json(sj.read_text())
+        except Exception:
+            return False
+        if sr.state != StageState.SUCCEEDED:
             return False
 
-        return all((job_dir / ro.path).exists() for ro in stage_def.exit_condition.required_outputs)
+        # Outputs must also exist — guards against an orphaned stage.json
+        # whose declared outputs were deleted out from under us.
+        if stage_def.exit_condition.required_outputs:
+            return not self._missing_required_outputs(stage_def)
+        return True
+
+    def _missing_required_outputs(self, stage_def: StageDefinition) -> list[str]:
+        if not stage_def.exit_condition.required_outputs:
+            return []
+        job_dir = self._job_dir()
+        return [
+            ro.path
+            for ro in stage_def.exit_condition.required_outputs
+            if not (job_dir / ro.path).exists()
+        ]
+
+    def _missing_final_outputs(self, stages: list[StageDefinition]) -> list[str]:
+        """Validate every stage's required_outputs are on disk before COMPLETED.
+
+        Skips stages whose ``runs_if`` evaluated false (their outputs are
+        legitimately absent).
+        """
+        missing: list[str] = []
+        ctx = self._build_predicate_context()
+        for s in stages:
+            if s.runs_if is not None:
+                try:
+                    if not evaluate_predicate(s.runs_if, ctx):
+                        continue
+                except PredicateError:
+                    pass  # err on the side of validating
+            missing.extend(self._missing_required_outputs(s))
+        return missing
 
     def _inputs_ready(self, stage_def: StageDefinition) -> bool:
         job_dir = self._job_dir()
@@ -394,15 +528,6 @@ class JobDriver:
                     pass
         return ctx
 
-    def _evaluate_runs_if(self, stage_def: StageDefinition) -> bool:
-        if stage_def.runs_if is None:
-            return True
-        try:
-            ctx = self._build_predicate_context()
-            return evaluate_predicate(stage_def.runs_if, ctx)
-        except PredicateError:
-            return True
-
     def _check_cancel_command(self) -> bool:
         """Return True if human-action.json contains a cancel command."""
         action_path = paths.job_human_action(self.job_slug, root=self.root)
@@ -413,6 +538,35 @@ class JobDriver:
             return payload.get("command") == "cancel"
         except (json.JSONDecodeError, OSError):
             return False
+
+    def _initial_seq(self) -> int:
+        """Resume seq counter from existing events.jsonl (max+1).
+
+        Per design § Recovery — append-only logs use monotonic sequence
+        numbers. A restarted driver must not re-emit seq values already
+        written to disk by a previous instance.
+
+        Tolerates corrupt/truncated tails: malformed lines are skipped.
+        """
+        events_path = paths.job_events_jsonl(self.job_slug, root=self.root)
+        if not events_path.exists():
+            return 0
+        max_seq = -1
+        try:
+            for line in events_path.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # tolerate truncated tail
+                seq = obj.get("seq")
+                if isinstance(seq, int) and seq > max_seq:
+                    max_seq = seq
+        except OSError:
+            return 0
+        return max_seq + 1
 
     def _emit_event(
         self,
@@ -455,8 +609,18 @@ class JobDriver:
         ]
         return (max(existing) + 1) if existing else 1
 
+    def _reset_stage_run(self, stage_def: StageDefinition) -> None:
+        """Delete stage.json so a re-run is forced. Outputs are preserved."""
+        sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
+        if sj.exists():
+            sj.unlink()
+
     def _clear_stage_outputs(self, stage_defs: list[StageDefinition]) -> None:
-        """Remove required output files for the given stages (to force re-run)."""
+        """Remove required output files for the given stages (to force re-run).
+
+        Also resets each stage's stage.json so resume detection treats them
+        as PENDING rather than skipping by stale SUCCEEDED state.
+        """
         job_dir = self._job_dir()
         for stage_def in stage_defs:
             if stage_def.exit_condition.required_outputs:
@@ -464,3 +628,76 @@ class JobDriver:
                     p = job_dir / ro.path
                     if p.exists():
                         p.unlink()
+            # Reset stage.json so _stage_already_succeeded returns False.
+            sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
+            if sj.exists():
+                sj.unlink()
+
+    def _update_latest_symlink(self, stage_id: str, target_name: str) -> None:
+        """Atomically point the ``latest`` symlink at ``target_name``.
+
+        Creates a uniquely named temp symlink and ``os.replace()``-es it
+        over ``latest`` so concurrent readers never observe a missing link.
+        """
+        latest = paths.stage_run_latest(self.job_slug, stage_id, root=self.root)
+        latest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = latest.parent / f".latest.tmp.{uuid.uuid4().hex}"
+        tmp.symlink_to(target_name)
+        os.replace(tmp, latest)
+
+    def _block_on_human(self, stage_def: StageDefinition, *, reason: str) -> None:
+        """Mark the active stage and the job as BLOCKED_ON_HUMAN, then exit.
+
+        The driver returns control to its caller (typically ``main()``); the
+        dashboard re-spawns the driver after the human action lands on disk.
+        """
+        # Persist stage as BLOCKED_ON_HUMAN (creates stage.json if absent).
+        sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
+        attempt = self._next_attempt(stage_def.id) if not sj.exists() else 1
+        try:
+            existing = StageRun.model_validate_json(sj.read_text()) if sj.exists() else None
+        except Exception:
+            existing = None
+        stage_run = (
+            existing
+            or StageRun(
+                stage_id=stage_def.id,
+                attempt=attempt,
+                state=StageState.PENDING,
+                started_at=self._now(),
+            )
+        ).model_copy(update={"state": StageState.BLOCKED_ON_HUMAN})
+        self._write_stage_run(stage_def.id, stage_run)
+        self._emit_event(
+            "stage_state_transition",
+            stage_id=stage_def.id,
+            payload={"to": "BLOCKED_ON_HUMAN", "reason": reason},
+        )
+        self._write_job_state(JobState.BLOCKED_ON_HUMAN)
+        log.info(
+            "Job %s blocked on human (stage=%s, reason=%s)", self.job_slug, stage_def.id, reason
+        )
+
+    def _fail_stage(self, stage_def: StageDefinition, *, reason: str) -> None:
+        """Persist a stage as FAILED with a reason, before failing the job."""
+        sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
+        try:
+            existing = StageRun.model_validate_json(sj.read_text()) if sj.exists() else None
+        except Exception:
+            existing = None
+        attempt = existing.attempt if existing is not None else self._next_attempt(stage_def.id)
+        stage_run = (
+            existing
+            or StageRun(
+                stage_id=stage_def.id,
+                attempt=attempt,
+                state=StageState.PENDING,
+                started_at=self._now(),
+            )
+        ).model_copy(update={"state": StageState.FAILED, "ended_at": self._now()})
+        self._write_stage_run(stage_def.id, stage_run)
+        self._emit_event(
+            "stage_state_transition",
+            stage_id=stage_def.id,
+            payload={"to": "FAILED", "reason": reason},
+        )

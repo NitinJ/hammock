@@ -9,7 +9,6 @@ Per design doc § Process structure § Fault tolerance and recovery:
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,12 +49,15 @@ class Supervisor:
         return self.heartbeat_interval * self.stale_factor
 
     def is_stale(self, heartbeat_path: Path) -> bool:
-        """Return True if the heartbeat file is absent or older than the stale threshold."""
+        """Return True if the heartbeat file is absent or older than the stale threshold.
+
+        Uses the injected ``now_fn`` so tests can drive this deterministically.
+        """
         if not heartbeat_path.exists():
             return True
         try:
             mtime = heartbeat_path.stat().st_mtime
-            age_seconds = time.time() - mtime
+            age_seconds = self._now().timestamp() - mtime
             return age_seconds > self.stale_threshold_seconds()
         except OSError:
             return True
