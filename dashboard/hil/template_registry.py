@@ -61,9 +61,7 @@ class TemplateRegistry:
         """
         global_path = self._global_dir / f"{name}.json"
         if not global_path.exists():
-            raise TemplateNotFoundError(
-                f"Template {name!r} not found at {global_path}"
-            )
+            raise TemplateNotFoundError(f"Template {name!r} not found at {global_path}")
 
         base = self._load(global_path)
 
@@ -99,8 +97,12 @@ class TemplateRegistry:
 
         return base.model_copy(
             update={
-                "description": override.description if override.description is not None else base.description,
-                "instructions": override.instructions if override.instructions is not None else base.instructions,
+                "description": override.description
+                if override.description is not None
+                else base.description,
+                "instructions": override.instructions
+                if override.instructions is not None
+                else base.instructions,
                 "fields": override.fields if override.fields is not None else base.fields,
                 # hil_kinds: keep base value (override may not change it)
                 "hil_kinds": base.hil_kinds,

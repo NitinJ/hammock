@@ -15,7 +15,6 @@ from dashboard.hil.template_registry import (
     TemplateNotFoundError,
     TemplateRegistry,
 )
-from shared.models.presentation import UiTemplate
 
 
 def _write_template(path: Path, data: dict) -> None:
@@ -214,9 +213,7 @@ def test_override_with_null_hil_kinds_uses_base(
     assert template.instructions == "Override."
 
 
-def test_override_merges_fields(
-    root: Path, registry: TemplateRegistry, project_repo: Path
-) -> None:
+def test_override_merges_fields(root: Path, registry: TemplateRegistry, project_repo: Path) -> None:
     """Override fields dict replaces (not merges) the base fields dict."""
     _write_template(
         _global_path(root, "spec-review-form"),

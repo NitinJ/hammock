@@ -8,7 +8,7 @@ GET  /api/hil/templates/{name} — resolved template
 from __future__ import annotations
 
 import json
-from collections.abc import Generator, Iterator
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,7 +21,6 @@ from shared import paths
 from shared.atomic import atomic_write_json
 from shared.models import AskQuestion, HilItem, JobConfig, JobState, ProjectConfig, ReviewQuestion
 from shared.models.hil import ManualStepQuestion
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -206,9 +205,7 @@ def test_get_template_not_found_returns_404(
     assert client.get("/api/hil/templates/no-such-template").status_code == 404
 
 
-def test_get_template_uses_project_override(
-    seeded_root: Path, project_dir: Path
-) -> None:
+def test_get_template_uses_project_override(seeded_root: Path, project_dir: Path) -> None:
     """Per-project override is applied when project_slug query param is set."""
     tpl_dir = seeded_root / "ui-templates"
     tpl_dir.mkdir(parents=True, exist_ok=True)
@@ -311,9 +308,7 @@ def test_submit_answer_conflict_different_answer_returns_409(
 def test_submit_answer_wrong_kind_returns_422(client_with_items: TestClient) -> None:
     """Submitting review answer body to an ask item returns 422."""
     payload = {"kind": "review", "decision": "approve", "comments": "wrong kind"}
-    assert (
-        client_with_items.post("/api/hil/hil-ask-1/answer", json=payload).status_code == 422
-    )
+    assert client_with_items.post("/api/hil/hil-ask-1/answer", json=payload).status_code == 422
 
 
 def test_submit_answer_persists_to_disk(seeded_root: Path) -> None:

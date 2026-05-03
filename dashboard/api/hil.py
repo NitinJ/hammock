@@ -16,7 +16,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from dashboard.hil.contract import ConflictError, HilContract, NotFoundError
-from dashboard.hil.template_registry import TemplateKindConflictError, TemplateNotFoundError, TemplateRegistry
+from dashboard.hil.template_registry import (
+    TemplateKindConflictError,
+    TemplateNotFoundError,
+    TemplateRegistry,
+)
 from dashboard.state import projections
 from dashboard.state.projections import HilQueueItem
 from shared.models import HilItem
@@ -67,7 +71,9 @@ async def list_hil(
 async def get_template(
     request: Request,
     name: str,
-    project_slug: Annotated[str | None, Query(description="project slug for per-project override")] = None,
+    project_slug: Annotated[
+        str | None, Query(description="project slug for per-project override")
+    ] = None,
 ) -> UiTemplate:
     """Return the resolved UI template for *name*.
 
