@@ -176,8 +176,14 @@ def _jsonl_paths_for_scope(scope: str, *, root: Path) -> list[Path]:
         with no second colon, or ``"job:"`` with no slug).  Stage 12.5 (A1)
         moved this from a silent empty-list return to fail-fast — the old
         behaviour masked routing bugs because clients couldn't tell "no
-        events yet" from "you asked the wrong thing."  SSE route handlers
-        map this to HTTP 422.
+        events yet" from "you asked the wrong thing."
+
+    Replay surface in v0 supports only ``"global"``, ``"job:<slug>"``, and
+    ``"stage:<job>:<sid>"``.  ``"project:<slug>"`` is a live pub/sub scope
+    used by the watcher (see ``dashboard/watcher/tailer.py``) but has no
+    on-disk events.jsonl, so it is not replayable.  Public SSE routes
+    constrain the scope shape via path parameters; an internal caller
+    that constructs an unsupported scope string will see this exception.
     """
     from shared import paths as _paths  # local import avoids dashboard→shared→dashboard cycle
 

@@ -163,6 +163,11 @@ class JobDriver:
         stages = self._read_stages()
         # loop_back iteration counters: keyed by (review_stage_id, target_stage_id)
         loop_counters: dict[tuple[str, str], int] = {}
+        # Stage 12.5 (A6 follow-up): track stages skipped at dispatch so the
+        # final-outputs check can exempt only those (and not silently exempt
+        # a stage that actually ran but whose predicate artifact later
+        # disappeared — that would mask a real integrity failure).
+        dispatch_skipped: set[str] = set()
 
         i = 0
         while i < len(stages):
@@ -192,6 +197,7 @@ class JobDriver:
                     should_run = False
                 if not should_run:
                     log.info("Skipping stage %s (runs_if=false)", stage_def.id)
+                    dispatch_skipped.add(stage_def.id)
                     i += 1
                     continue
 
@@ -323,7 +329,7 @@ class JobDriver:
 
         # All stages done — verify final-stage outputs exist before COMPLETED.
         if not self._cancel_event.is_set():
-            final_missing = self._missing_final_outputs(stages)
+            final_missing = self._missing_final_outputs(stages, skipped=dispatch_skipped)
             if final_missing:
                 log.error("Cannot COMPLETE: final outputs missing: %s", final_missing)
                 self._write_job_state(JobState.FAILED)
@@ -512,25 +518,30 @@ class JobDriver:
             if not (job_dir / ro.path).exists()
         ]
 
-    def _missing_final_outputs(self, stages: list[StageDefinition]) -> list[str]:
+    def _missing_final_outputs(
+        self,
+        stages: list[StageDefinition],
+        *,
+        skipped: set[str] | None = None,
+    ) -> list[str]:
         """Validate every stage's required_outputs are on disk before COMPLETED.
 
-        Skips stages whose ``runs_if`` evaluated false (their outputs are
-        legitimately absent).  Stage 12.5 (A6): also skips stages whose
-        ``runs_if`` raised PredicateError — the same default-False policy
-        used at stage-dispatch time.  Otherwise the same predicate failure
-        would skip the stage *and* fail completion, which is internally
-        inconsistent.
+        Stage 12.5 (A6): exempts stages that were *actually skipped at
+        dispatch time*, not stages whose predicate happens to be false now.
+        ``skipped`` is the set of stage ids the dispatch loop skipped via
+        ``runs_if`` (false or PredicateError).  Re-evaluating the predicate
+        here would mis-classify a stage that ran successfully but whose
+        predicate-referenced artifact was later deleted: the dispatch path
+        ran the stage, so its outputs are required, but a re-evaluation of
+        ``runs_if`` would now fail, silently exempting the missing outputs
+        and letting the job COMPLETE with a real integrity violation.
+        Tracking the dispatch decision is the correct gate.
         """
+        skipped = skipped or set()
         missing: list[str] = []
-        ctx = self._build_predicate_context()
         for s in stages:
-            if s.runs_if is not None:
-                try:
-                    if not evaluate_predicate(s.runs_if, ctx):
-                        continue
-                except PredicateError:
-                    continue  # PredicateError → treat as skipped (A6)
+            if s.id in skipped:
+                continue
             missing.extend(self._missing_required_outputs(s))
         return missing
 

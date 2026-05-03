@@ -1007,3 +1007,73 @@ async def test_loop_back_condition_eval_error_does_not_loop(tmp_path: Path) -> N
     # Only run-1 should exist; if we'd looped, run-2 would also exist.
     assert "run-1" in runs
     assert "run-2" not in runs
+
+
+async def test_completion_does_not_silently_exempt_actually_run_stage(tmp_path: Path) -> None:
+    """Stage 12.5 (A6 follow-up after Codex review): a stage that actually
+    ran at dispatch must NOT be exempted from the final-outputs check just
+    because a re-evaluation of its ``runs_if`` predicate would now fail.
+
+    Scenario: stage-A's runs_if references foo.json (which exists at
+    dispatch); stage-A runs and is supposed to write a.txt; we then delete
+    a.txt before completion.  If the final-outputs check naively
+    re-evaluated runs_if and treated PredicateError as "skipped", a
+    deletion of foo.json instead would mask the real integrity failure.
+    Here we use a stable predicate so dispatch sees True, the stage runs,
+    we then delete its output and assert completion FAILS — the dispatch
+    decision (ran) trumps any later predicate state.
+    """
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "test-job"
+    job_dir.mkdir(parents=True)
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+
+    # Pre-seed an artifact so the predicate evaluates to True at dispatch
+    seed = job_dir / "seed.json"
+    seed.parent.mkdir(parents=True, exist_ok=True)
+    seed.write_text('{"flag": "go"}')
+
+    stages = [
+        _make_stage(
+            "stage-a",
+            required_outputs=["a.txt"],
+            runs_if="seed.json.flag == 'go'",
+        ),
+    ]
+    _write_job_config(job_dir)
+    _write_stage_list(job_dir, stages)
+
+    # Custom fixture: stage runs successfully, writes a.txt, then we delete
+    # it AFTER the stage completes but BEFORE final-outputs check fires.
+    # We achieve that by patching the FakeStageRunner to delete the output
+    # right after writing it.
+    _write_fixture(fixtures_dir, "stage-a", {"outcome": "succeeded", "artifacts": {"a.txt": "x"}})
+
+    original_run = FakeStageRunner.run
+
+    async def patched_run(self: FakeStageRunner, stage_def, job_dir_, *args, **kwargs):  # type: ignore[no-untyped-def]
+        result = await original_run(self, stage_def, job_dir_, *args, **kwargs)
+        # Simulate the artifact being deleted out from under us — a race,
+        # a human cleanup, a buggy hook, etc.
+        out = job_dir_ / "a.txt"
+        if out.exists():
+            out.unlink()
+        return result
+
+    try:
+        FakeStageRunner.run = patched_run  # type: ignore[method-assign]
+        driver = _make_driver(job_dir, fixtures_dir, root=tmp_path)
+        await driver.run()
+    finally:
+        FakeStageRunner.run = original_run  # type: ignore[method-assign]
+
+    # The stage actually ran (its stage.json exists with SUCCEEDED), but the
+    # required output is now missing.  Per Stage 12.5 (A6 follow-up), this
+    # must FAIL completion — the dispatch decision says "ran", so the
+    # outputs are required.  Pre-fix this would have silently exempted the
+    # stage if the seed artifact had also vanished and we'd re-evaluated
+    # the predicate at completion.
+    assert _read_job_config(job_dir).state == JobState.FAILED, (
+        "stage that actually ran must not be exempted from final-outputs check"
+    )

@@ -251,6 +251,106 @@ class TestCostRollup:
 
 
 class TestCostPayloadContract:
+    async def test_real_driver_writes_delta_usd_to_events_jsonl(self, tmp_path: Path) -> None:
+        """Stage 12.5 (A3, post-Codex-review): exercise the actual JobDriver
+        cost-emit path and assert the on-disk payload uses ``delta_usd``.
+
+        Pre-fix the driver wrote ``{"amount_usd": ...}``, which silently
+        produced 0.0 from the cost projection.  Codex's review of the first
+        version of this contract test pointed out that hand-rolling the
+        event dict only verifies the *projection* side; if the driver
+        regressed to ``amount_usd`` the projection-side test would still
+        be green.  This second test catches that by running the actual
+        ``JobDriver`` against a fixture stage with non-zero cost and
+        inspecting the event payload key directly.
+        """
+        import json
+        from datetime import UTC, datetime
+
+        import yaml
+
+        from job_driver.runner import JobDriver
+        from job_driver.stage_runner import FakeStageRunner
+        from shared import paths
+        from shared.atomic import atomic_write_json
+        from shared.models.job import JobConfig, JobState
+        from shared.models.stage import (
+            Budget,
+            ExitCondition,
+            InputSpec,
+            OutputSpec,
+            RequiredOutput,
+            StageDefinition,
+        )
+
+        # Minimal job dir setup
+        jobs_dir = tmp_path / "jobs"
+        job_dir = jobs_dir / "cost-test-job"
+        job_dir.mkdir(parents=True)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+
+        atomic_write_json(
+            paths.job_json(job_dir.name, root=tmp_path),
+            JobConfig(
+                job_id="job-cost",
+                job_slug=job_dir.name,
+                project_slug="proj",
+                job_type="build-feature",
+                created_at=datetime(2026, 5, 1, tzinfo=UTC),
+                created_by="human",
+                state=JobState.SUBMITTED,
+            ),
+        )
+
+        stage = StageDefinition(
+            id="cost-stage",
+            worker="agent",
+            inputs=InputSpec(required=[], optional=None),
+            outputs=OutputSpec(required=["out.txt"]),
+            budget=Budget(max_turns=10),
+            exit_condition=ExitCondition(required_outputs=[RequiredOutput(path="out.txt")]),
+        )
+        stage_list = job_dir / "stage-list.yaml"
+        stage_list.write_text(yaml.dump({"stages": [json.loads(stage.model_dump_json())]}))
+
+        # Fixture: stage emits cost_usd > 0 — drives the cost_accrued event path
+        (fixtures_dir / "cost-stage.yaml").write_text(
+            yaml.dump(
+                {
+                    "outcome": "succeeded",
+                    "artifacts": {"out.txt": "x"},
+                    "cost_usd": 1.23,
+                }
+            )
+        )
+
+        driver = JobDriver(
+            job_dir.name,
+            root=tmp_path,
+            stage_runner=FakeStageRunner(fixtures_dir),
+            heartbeat_interval=0.1,
+        )
+        await driver.run()
+
+        # Read the events.jsonl back and find the cost_accrued event
+        events_path = paths.job_events_jsonl(job_dir.name, root=tmp_path)
+        cost_events = [
+            json.loads(line)
+            for line in events_path.read_text().splitlines()
+            if line and json.loads(line).get("event_type") == "cost_accrued"
+        ]
+        assert len(cost_events) == 1, f"expected 1 cost_accrued event, got {len(cost_events)}"
+        payload = cost_events[0]["payload"]
+        # The CANONICAL key — must be `delta_usd`, not `amount_usd` or `usd`.
+        assert "delta_usd" in payload, (
+            f"driver must emit 'delta_usd' (got payload keys {list(payload.keys())})"
+        )
+        assert payload["delta_usd"] == pytest.approx(1.23)
+        # Negative assertion: the legacy keys must NOT be present.
+        assert "amount_usd" not in payload, "driver regressed to legacy 'amount_usd' key"
+        assert "usd" not in payload, "driver regressed to legacy 'usd' key"
+
     async def test_driver_emits_delta_usd_projection_reads_delta_usd(self, tmp_path: Path) -> None:
         """Round-trip a single cost_accrued event from JobDriver → projection.
 

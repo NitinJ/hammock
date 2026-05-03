@@ -100,31 +100,50 @@ def test_compile_writes_parseable_stage_list_yaml(hammock_root: Path, fake_proje
 
 
 def test_compile_persists_loop_back_max_iterations(hammock_root: Path, fake_project) -> None:
-    """Stage 12.5 (E2): loop_back.max_iterations must round-trip from template
-    YAML through compile to compiled stage-list.yaml.  build-feature has six
-    loop_back stages; each must keep its declared max_iterations.
+    """Stage 12.5 (E2, post-Codex-review): loop_back.max_iterations must
+    round-trip *exactly* from the template YAML through compile to the
+    on-disk stage-list.yaml.  Just asserting ``>= 1`` would silently pass
+    a regression that rewrote every value to 1.  Compare exact values.
+
+    build-feature has six loop_back stages (write/review loops on
+    problem-spec, design-spec, impl-spec).
     """
+    # Read the canonical max_iterations values straight from the bundled
+    # template YAML — this is the source of truth.
+    template = yaml.safe_load((BUNDLED_TEMPLATES_DIR / "build-feature.yaml").read_text())
+    template_lb_by_id: dict[str, int] = {
+        s["id"]: s["loop_back"]["max_iterations"] for s in template["stages"] if s.get("loop_back")
+    }
+    assert len(template_lb_by_id) >= 1
+
     res = _compile_default(hammock_root=hammock_root)
     assert isinstance(res, CompileSuccess)
 
-    # Inspect the compiled in-memory representation
-    looping = [s for s in res.stages if s.loop_back is not None]
-    assert len(looping) >= 1, "build-feature template should have loop_back stages"
-    for s in looping:
-        assert s.loop_back is not None  # narrow for type checker
-        assert s.loop_back.max_iterations >= 1
-        assert s.loop_back.condition  # non-empty
-        assert s.loop_back.to  # non-empty target
-        assert s.loop_back.on_exhaustion is not None
+    # In-memory representation must match exactly
+    compiled_lb = {s.id: s.loop_back for s in res.stages if s.loop_back is not None}
+    assert set(compiled_lb.keys()) == set(template_lb_by_id.keys()), (
+        "compile changed which stages have loop_back"
+    )
+    for sid, expected in template_lb_by_id.items():
+        actual = compiled_lb[sid]
+        assert actual is not None
+        assert actual.max_iterations == expected, (
+            f"max_iterations mismatch for {sid!r}: template={expected}, compiled={actual.max_iterations}"
+        )
+        assert actual.condition  # non-empty
+        assert actual.to  # non-empty target
+        assert actual.on_exhaustion is not None
 
-    # And in the persisted YAML — the round-trip the Job Driver actually reads
+    # On-disk YAML must also match exactly
     parsed = yaml.safe_load(paths.job_stage_list(res.job_slug, root=hammock_root).read_text())
-    yaml_looping = [s for s in parsed["stages"] if s.get("loop_back")]
-    assert len(yaml_looping) == len(looping)
-    for s in yaml_looping:
-        lb = s["loop_back"]
+    yaml_lb_by_id = {s["id"]: s["loop_back"] for s in parsed["stages"] if s.get("loop_back")}
+    assert set(yaml_lb_by_id.keys()) == set(template_lb_by_id.keys())
+    for sid, expected in template_lb_by_id.items():
+        lb = yaml_lb_by_id[sid]
         assert isinstance(lb["max_iterations"], int)
-        assert lb["max_iterations"] >= 1
+        assert lb["max_iterations"] == expected, (
+            f"YAML max_iterations mismatch for {sid!r}: template={expected}, yaml={lb['max_iterations']}"
+        )
         assert "condition" in lb
         assert "to" in lb
         assert "on_exhaustion" in lb
