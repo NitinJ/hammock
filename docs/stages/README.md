@@ -24,4 +24,4 @@ The intent is to give future agents (and humans) enough context that reading `de
 | 9 | [stage-09.md](stage-09.md) | in PR  | TBD |
 | 10 | [stage-10.md](stage-10.md) | in PR  | TBD |
 | 11 | [stage-11.md](stage-11.md) | merged | [#5](https://github.com/NitinJ/hammock/pull/5) |
-| 12 | [stage-12.md](stage-12.md) | in PR  | TBD |
+| 12 | [stage-12.md](stage-12.md) | merged | [#10](https://github.com/NitinJ/hammock/pull/10) |
