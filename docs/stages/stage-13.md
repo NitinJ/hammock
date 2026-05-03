@@ -1,7 +1,8 @@
 # Stage 13 — Form pipeline + HIL forms
 
-**PR:** TBD (open)
+**PR:** [#17](https://github.com/NitinJ/hammock/pull/17) (merged 2026-05-03)
 **Branch:** `feat/stage-13-form-pipeline`
+**Commit on `main`:** `057ca47`
 
 ## What was built
 
