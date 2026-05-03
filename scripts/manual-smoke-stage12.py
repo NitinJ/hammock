@@ -65,8 +65,17 @@ def main() -> int:
 
     print(f"Starting dashboard server (root={root}) …")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "dashboard.app:create_app",
-         "--factory", "--host", "127.0.0.1", "--port", "8765"],
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "dashboard.app:create_app",
+            "--factory",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8765",
+        ],
         env={**__import__("os").environ, "HAMMOCK_ROOT": str(root)},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
