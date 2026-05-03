@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from dashboard.hil.state_machine import InvalidTransitionError, transition
+from dashboard.hil.state_machine import transition
 from dashboard.state.cache import Cache, ChangeKind
 from shared.atomic import atomic_write_json
 from shared.models.hil import HilAnswer, HilItem
@@ -55,12 +55,12 @@ class HilContract:
     cache:
         Live in-memory cache (read source and post-write invalidation target).
     root:
-        Hammock root directory. Defaults to the cache's ``_root`` if not given.
+        Hammock root directory. Defaults to the cache's root if not given.
     """
 
     def __init__(self, *, cache: Cache, root: Path | None = None) -> None:
         self._cache = cache
-        self._root = root if root is not None else cache._root
+        self._root = root if root is not None else cache.root
 
     def get_open_items(self, filter: HilFilter | None = None) -> list[HilItem]:
         """Return HIL items matching *filter* (defaults to all ``awaiting``)."""
@@ -86,9 +86,7 @@ class HilContract:
         if item.status == "answered":
             if item.answer == answer:
                 return item
-            raise ConflictError(
-                f"HIL item {item_id!r} already answered with a different answer"
-            )
+            raise ConflictError(f"HIL item {item_id!r} already answered with a different answer")
 
         # Raises InvalidTransitionError if item.status is "cancelled"
         updated = transition(item, "answered")

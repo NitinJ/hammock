@@ -21,7 +21,6 @@ from shared.models.hil import (
 )
 from shared.paths import hil_item_path
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -122,7 +121,7 @@ def test_get_open_items_filter_by_stage_id(tmp_path: Path) -> None:
 
 
 def test_get_open_items_filter_by_job_slug(tmp_path: Path) -> None:
-    cache, root = _setup(
+    cache, _root = _setup(
         tmp_path,
         job_slug="job-a",
         items=[_ask_item("h1")],

@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from dashboard.hil.orphan_sweeper import OrphanSweeper
 from shared.atomic import atomic_write_json
 from shared.models.hil import AskAnswer, AskQuestion, HilItem
-from shared.paths import hil_dir, hil_item_path
-
+from shared.paths import hil_item_path
 
 TS = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
 
