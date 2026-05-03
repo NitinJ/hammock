@@ -208,7 +208,11 @@ class RealStageRunner:
             mcp_config = mcp_handle.mcp_config if mcp_handle is not None else None
             self._write_session_settings(settings_path, stage_def, mcp_config)
 
-            # Build command: use stage description as the agent's initial prompt
+            # Build command: use stage description as the agent's initial prompt.
+            # `--verbose` is mandatory when combining `-p` (--print) with
+            # `--output-format stream-json`; without it claude refuses to
+            # start with `Error: When using --print, --output-format=stream-json
+            # requires --verbose` and exits, leaving stream.jsonl empty.
             prompt = stage_def.description or stage_def.id
             cmd = [
                 self._claude_binary,
@@ -216,6 +220,7 @@ class RealStageRunner:
                 prompt,
                 "--output-format",
                 "stream-json",
+                "--verbose",
                 "--settings",
                 str(settings_path),
             ]
@@ -224,13 +229,21 @@ class RealStageRunner:
             env = self._build_env(job_dir, stage_def)
 
             stream_path = agent0_dir / "stream.jsonl"
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-                cwd=str(self._project_root),
-                env=env,
-            )
+            # Capture stderr to a log file so claude failures (auth, flag
+            # validation, segfaults) are diagnosable from the job dir
+            # alone — without this, every failure mode is silent.
+            stderr_path = agent0_dir / "stderr.log"
+            stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=stderr_fd,
+                    cwd=str(self._project_root),
+                    env=env,
+                )
+            finally:
+                os.close(stderr_fd)
             assert proc.stdout is not None
 
             # Stream stdout to stream.jsonl line-by-line

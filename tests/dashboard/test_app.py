@@ -103,6 +103,49 @@ class TestHealthEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# SPA serving — `/` returns the Vue bundle, deep links fall back to
+# index.html so client-side routing works, /api/ + /sse/ misses still 404.
+# ---------------------------------------------------------------------------
+
+
+class TestSpaMount:
+    def test_spa_root_serves_index_html(self, tmp_path: Path) -> None:
+        from dashboard.app import _FRONTEND_DIST
+
+        with make_app(tmp_path) as client:
+            response = client.get("/")
+        # If the bundle exists in the dev tree, `/` should return the SPA;
+        # if it doesn't (CI without pnpm build), `/` 404s and only the API
+        # is served. Either is documented behaviour. The assertion below
+        # only fires if the bundle exists, which keeps the test useful
+        # for the dev workflow without forcing CI to pre-build the SPA.
+        if (_FRONTEND_DIST / "index.html").exists():
+            assert response.status_code == 200
+            assert "<!doctype html>" in response.text.lower()
+
+    def test_spa_deep_link_serves_index_html(self, tmp_path: Path) -> None:
+        from dashboard.app import _FRONTEND_DIST
+
+        with make_app(tmp_path) as client:
+            response = client.get("/jobs/some-slug/stages/some-stage")
+        if (_FRONTEND_DIST / "index.html").exists():
+            assert response.status_code == 200
+            assert "<!doctype html>" in response.text.lower()
+
+    def test_unknown_api_path_still_404s(self, tmp_path: Path) -> None:
+        """The SPA catch-all must not swallow misses on /api/ — operators
+        rely on real 404s for API typos."""
+        with make_app(tmp_path) as client:
+            response = client.get("/api/no-such-endpoint")
+        assert response.status_code == 404
+
+    def test_unknown_sse_path_still_404s(self, tmp_path: Path) -> None:
+        with make_app(tmp_path) as client:
+            response = client.get("/sse/no-such-stream")
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Lifespan — app.state population
 # ---------------------------------------------------------------------------
 
