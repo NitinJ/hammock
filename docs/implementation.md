@@ -1294,14 +1294,15 @@ The v1+ deferred-by-design list from the design doc rolls forward unchanged. To 
   on-disk shape the bridge must produce is captured by
   `_resolve_human_gate` in `tests/e2e/test_full_lifecycle.py`.
   *(Surfaced by Stage 16.)*
-- **`RealStageRunner` wired into `job_driver.__main__` + `spawn_driver`.**
-  The class exists from Stage 5 (`tests/job_driver/test_real_stage_runner.py`
-  covers it), but the `python -m job_driver` entry point still requires
-  `--fake-fixtures` and exits with code 2 when absent. A v1+ stage
-  needs to add a runner-selection flag, surface it in `Settings`, and
-  update the dashboard's spawn paths to choose between fake and real.
-  *(Surfaced by Stage 16; blocks the "fresh-machine real-Claude
-  dogfood" path.)*
+- **`RealStageRunner`: per-stage MCP server + Stop hook plumbing in
+  `job_driver.__main__`.** The runner-selection wiring (fake vs. real
+  based on `--fake-fixtures` presence) shipped as the first v1+
+  follow-up, but `RealStageRunner`'s optional `mcp_manager`,
+  `stop_hook_path`, and `hammock_root` arguments are not yet passed
+  from the entry point. Agents running under the real path therefore
+  don't get the dashboard MCP tools (Stage 6) or the Stop-hook
+  output-validation block by default. Plumb both. *(Surfaced by Stage
+  16; partially closed by the runner-selection follow-up.)*
 - **CLI `hammock job submit` should optionally spawn the driver.** Today
   it only compiles + writes the job dir; the operator must then submit
   via the dashboard form to get a driver. Either an explicit

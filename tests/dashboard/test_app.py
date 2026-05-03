@@ -52,6 +52,26 @@ class TestHealthEndpoint:
         parsed = HealthResponse.model_validate(data)
         assert parsed.ok is True
         assert isinstance(parsed.cache_size, int)
+        # Stage 16 follow-up — runner mode + binary surfaced for operator
+        # confirmation. Defaults: real mode (no fixtures set), claude="claude".
+        assert parsed.runner_mode == "real"
+        assert parsed.claude_binary == "claude"
+
+    def test_runner_mode_fake_when_fixtures_set(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        from dashboard.app import create_app
+        from dashboard.settings import Settings
+
+        fixtures = tmp_path / "fakes"
+        fixtures.mkdir()
+        settings = Settings(root=tmp_path, fake_fixtures_dir=fixtures)
+        with TestClient(create_app(settings)) as client:
+            data = client.get("/api/health").json()
+        assert data["runner_mode"] == "fake"
+        # claude_binary is suppressed in fake mode (irrelevant + avoids
+        # implying we'd shell out to it).
+        assert data["claude_binary"] is None
 
     def test_empty_root_cache_size_zero(self, tmp_path: Path) -> None:
         with make_app(tmp_path) as client:

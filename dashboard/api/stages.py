@@ -144,6 +144,10 @@ async def restart_stage(request: Request, job_slug: str, stage_id: str) -> Resta
         except (ValueError, ProcessLookupError, PermissionError):
             pass  # pid file stale or process dead — proceed with restart
 
-    fake_fixtures_dir = settings.fake_fixtures_dir
-    pid = await lifecycle.spawn_driver(job_slug, root=root, fake_fixtures_dir=fake_fixtures_dir)
+    pid = await lifecycle.spawn_driver(
+        job_slug,
+        root=root,
+        fake_fixtures_dir=settings.fake_fixtures_dir,
+        claude_binary=settings.claude_binary,
+    )
     return RestartResponse(job_driver_pid=pid)

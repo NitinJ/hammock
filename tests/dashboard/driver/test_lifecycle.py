@@ -169,3 +169,88 @@ async def test_spawn_driver_grandchild_not_zombied_to_caller(tmp_path: Path) -> 
         os.kill(pid, 15)  # SIGTERM
     except ProcessLookupError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Command-construction tests — verify the cmd passed to _double_fork_exec
+# without actually spawning a process. Coverage gap noted by Codex review of
+# the runner-selection PR: existing tests only exercise the fake-fixture
+# path; the new "no fixtures → real runner" path needs a focused test.
+# ---------------------------------------------------------------------------
+
+
+async def test_spawn_driver_omits_fake_fixtures_when_none(tmp_path: Path) -> None:
+    """fake_fixtures_dir=None → cmd has no `--fake-fixtures` (driver picks
+    RealStageRunner). Patches _double_fork_exec to capture the cmd."""
+    from unittest.mock import patch
+
+    from dashboard.driver import lifecycle as lc
+
+    captured: list[list[str]] = []
+
+    def _capture(cmd: list[str]) -> int:
+        captured.append(cmd)
+        return 99999
+
+    with patch.object(lc, "_double_fork_exec", side_effect=_capture):
+        await spawn_driver("any-slug", root=tmp_path, fake_fixtures_dir=None)
+
+    cmd = captured[0]
+    assert "job_driver" in cmd
+    assert "any-slug" in cmd
+    assert "--fake-fixtures" not in cmd
+
+
+async def test_spawn_driver_includes_claude_binary_when_real(tmp_path: Path) -> None:
+    """Real-mode (no fake fixtures) + claude_binary set → `--claude-binary
+    <path>` is appended."""
+    from unittest.mock import patch
+
+    from dashboard.driver import lifecycle as lc
+
+    captured: list[list[str]] = []
+
+    def _capture(cmd: list[str]) -> int:
+        captured.append(cmd)
+        return 99999
+
+    with patch.object(lc, "_double_fork_exec", side_effect=_capture):
+        await spawn_driver(
+            "any-slug",
+            root=tmp_path,
+            fake_fixtures_dir=None,
+            claude_binary="/opt/claude/bin/claude",
+        )
+
+    cmd = captured[0]
+    assert "--claude-binary" in cmd
+    assert "/opt/claude/bin/claude" in cmd
+
+
+async def test_spawn_driver_skips_claude_binary_in_fake_mode(tmp_path: Path) -> None:
+    """When fake fixtures are passed, claude_binary is irrelevant — don't
+    append it to the cmd."""
+    from unittest.mock import patch
+
+    from dashboard.driver import lifecycle as lc
+
+    fixtures = tmp_path / "fakes"
+    fixtures.mkdir()
+
+    captured: list[list[str]] = []
+
+    def _capture(cmd: list[str]) -> int:
+        captured.append(cmd)
+        return 99999
+
+    with patch.object(lc, "_double_fork_exec", side_effect=_capture):
+        await spawn_driver(
+            "any-slug",
+            root=tmp_path,
+            fake_fixtures_dir=fixtures,
+            claude_binary="/opt/claude/bin/claude",
+        )
+
+    cmd = captured[0]
+    assert "--fake-fixtures" in cmd
+    assert "--claude-binary" not in cmd

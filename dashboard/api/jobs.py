@@ -91,6 +91,7 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
             result.job_slug,
             root=settings.root,
             fake_fixtures_dir=settings.fake_fixtures_dir,
+            claude_binary=settings.claude_binary,
         )
         return JobSubmitResponse(job_slug=result.job_slug, dry_run=False)
 
