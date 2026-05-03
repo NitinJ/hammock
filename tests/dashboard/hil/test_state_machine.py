@@ -19,6 +19,7 @@ def _item(status: str) -> HilItem:
         status=status,  # type: ignore[arg-type]
         question=AskQuestion(text="question?"),
         answer=AskAnswer(text="answer", choice=None) if status == "answered" else None,
+        answered_at=datetime(2026, 5, 1, 1, tzinfo=UTC) if status == "answered" else None,
     )
 
 
@@ -44,6 +45,53 @@ def test_cancelled_is_terminal() -> None:
     item = _item("cancelled")
     with pytest.raises(InvalidTransitionError):
         transition(item, "answered")
+
+
+# ---------------------------------------------------------------------------
+# HilItem terminal invariants (validated at model construction)
+# ---------------------------------------------------------------------------
+
+
+def test_hil_item_answered_requires_answer_and_answered_at() -> None:
+    with pytest.raises(Exception, match="requires a non-null answer"):
+        HilItem(
+            id="x",
+            kind="ask",
+            stage_id="s1",
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            status="answered",
+            question=AskQuestion(text="q?"),
+            answer=None,
+            answered_at=None,
+        )
+
+
+def test_hil_item_awaiting_must_not_have_answer() -> None:
+    with pytest.raises(Exception, match="must not have an answer"):
+        HilItem(
+            id="x",
+            kind="ask",
+            stage_id="s1",
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            status="awaiting",
+            question=AskQuestion(text="q?"),
+            answer=AskAnswer(text="yes", choice=None),
+            answered_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        )
+
+
+def test_hil_item_cancelled_must_not_have_answer() -> None:
+    with pytest.raises(Exception, match="must not have an answer"):
+        HilItem(
+            id="x",
+            kind="ask",
+            stage_id="s1",
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            status="cancelled",
+            question=AskQuestion(text="q?"),
+            answer=AskAnswer(text="yes", choice=None),
+            answered_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
+        )
 
 
 def test_awaiting_self_transition_raises() -> None:

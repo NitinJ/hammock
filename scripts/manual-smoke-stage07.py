@@ -22,7 +22,7 @@ from dashboard.hil.orphan_sweeper import OrphanSweeper
 from dashboard.hil.state_machine import InvalidTransitionError, transition
 from dashboard.state.cache import Cache
 from shared.atomic import atomic_write_json
-from shared.models.hil import AskAnswer, AskQuestion, HilItem, ReviewAnswer, ReviewQuestion
+from shared.models.hil import AskAnswer, AskQuestion, HilItem, ReviewQuestion
 from shared.paths import hil_item_path
 
 TS_STR = "2026-05-01T12:00:00+00:00"

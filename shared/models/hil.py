@@ -110,3 +110,24 @@ class HilItem(BaseModel):
         if self.answer is not None and self.answer.kind != self.kind:
             raise ValueError(f"HilItem.kind={self.kind!r} but answer.kind={self.answer.kind!r}")
         return self
+
+    @model_validator(mode="after")
+    def _terminal_invariants(self) -> Self:
+        """Enforce answered/cancelled terminal state invariants.
+
+        - ``answered`` requires a non-null ``answer`` and ``answered_at``.
+        - ``awaiting`` and ``cancelled`` must have no answer or answered_at.
+        """
+        if self.status == "answered":
+            if self.answer is None:
+                raise ValueError("HilItem.status='answered' requires a non-null answer")
+            if self.answered_at is None:
+                raise ValueError("HilItem.status='answered' requires answered_at")
+        else:
+            if self.answer is not None:
+                raise ValueError(
+                    f"HilItem.status={self.status!r} must not have an answer field set"
+                )
+            if self.answered_at is not None:
+                raise ValueError(f"HilItem.status={self.status!r} must not have answered_at set")
+        return self
