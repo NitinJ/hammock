@@ -29,11 +29,21 @@ hammock before, start here.
 git clone https://github.com/NitinJ/hammock.git
 cd hammock
 uv sync --dev
+
+# Build the dashboard SPA bundle. The FastAPI app serves the Vue app
+# from dashboard/frontend/dist/; without this build, GET / 404s while
+# the JSON API still works.
+cd dashboard/frontend && pnpm install && pnpm build && cd ../..
 ```
 
 `uv sync` creates `.venv/`, installs everything pinned in `uv.lock`, and
 exposes the `hammock` console script under `uv run hammock ...`. To use it
 without `uv run`, activate the venv (`source .venv/bin/activate`).
+
+The frontend build only needs to be re-run when `dashboard/frontend/`
+sources change. The dashboard process loads `dist/` at startup, so if
+you rebuild the bundle you need to restart `python -m dashboard` for it
+to be picked up.
 
 ### Verify the install
 
