@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import secrets
 import sys
 from datetime import UTC, datetime
@@ -57,6 +58,11 @@ from shared.paths import (
 
 _SERVER_NAME = "hammock-dashboard"
 
+# Caller-controlled identifiers (task_id, stage id) flow into filesystem paths
+# via shared.paths helpers. A permissive regex prevents path-traversal
+# (``../foo``) and shell-special characters from reaching ``Path``.
+_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
 
 class MCPToolError(Exception):
     """Raised by tool implementations to surface a structured error to MCP.
@@ -64,6 +70,11 @@ class MCPToolError(Exception):
     FastMCP wraps this into a JSON-RPC error response; CLI agents see a
     typed tool failure rather than an opaque crash.
     """
+
+
+def _validate_slug(label: str, value: str) -> None:
+    if not value or not _SLUG_RE.fullmatch(value):
+        raise MCPToolError(f"invalid {label}: {value!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +109,8 @@ async def open_task(
     now: datetime | None = None,
 ) -> dict[str, str]:
     """Create a ``RUNNING`` task record and return its ``task_id``."""
+    _validate_slug("job_slug", job_slug)
+    _validate_slug("stage_id", stage_id)
     if not task_spec:
         raise MCPToolError("task_spec is required")
     if not worktree_branch:
@@ -134,7 +147,16 @@ async def update_task(
     root: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, bool]:
-    """Update an existing task record. ``status`` must be a ``TaskState``."""
+    """Update an existing task record. ``status`` must be a ``TaskState``.
+
+    Concurrency: assumes single-writer-per-task. Concurrent ``update_task``
+    calls to the same ``task_id`` are last-writer-wins on both ``task.json``
+    and the ``task-result.json`` sidecar; agent-side dispatch is the
+    serialisation point in v0.
+    """
+    _validate_slug("job_slug", job_slug)
+    _validate_slug("stage_id", stage_id)
+    _validate_slug("task_id", task_id)
     try:
         new_state = TaskState(status)
     except ValueError as exc:
@@ -208,6 +230,10 @@ async def open_ask(
     if the item is cancelled before being answered (orphan-sweep scenario)
     or if ``timeout`` elapses with no answer.
     """
+    _validate_slug("job_slug", job_slug)
+    _validate_slug("stage_id", stage_id)
+    if task_id is not None:
+        _validate_slug("task_id", task_id)
     question = _build_question(kind, fields)
     stamp = _now(now)
     item_id = _make_hil_id(kind.replace("-", ""), stamp)
@@ -269,6 +295,7 @@ async def append_stages(
     root: Path | None = None,
 ) -> dict[str, int | bool]:
     """Append ``StageDefinition`` objects to ``stage-list.yaml``."""
+    _validate_slug("job_slug", job_slug)
     if not stages:
         raise MCPToolError("stages must be a non-empty list")
 
@@ -288,6 +315,7 @@ async def append_stages(
     for spec in stages:
         if "id" not in spec:
             raise MCPToolError(f"stage missing 'id': {spec!r}")
+        _validate_slug("stage id", spec["id"])
         if spec["id"] in existing_ids:
             raise MCPToolError(f"duplicate stage id {spec['id']!r}")
         existing_ids.add(spec["id"])

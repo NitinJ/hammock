@@ -29,7 +29,7 @@ from shared.paths import (
 # Helpers --------------------------------------------------------------------
 
 
-JOB = "proj/feat"
+JOB = "proj-feat"
 STAGE = "implement-1"
 
 
@@ -411,3 +411,60 @@ async def test_append_stages_creates_file_when_missing(hammock_root: Path) -> No
     assert res == {"ok": True, "count": 1}
     data = yaml.safe_load(job_stage_list(JOB, root=hammock_root).read_text())
     assert data["stages"][0]["id"] == "first"
+
+
+# Path-injection guards ------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["../escape", "..", "a/b", "x\x00y", "", "-leading", ".hidden"])
+async def test_open_task_rejects_bad_slugs(hammock_root: Path, bad: str) -> None:
+    with pytest.raises(MCPToolError, match="invalid"):
+        await open_task(
+            job_slug=bad,
+            stage_id=STAGE,
+            task_spec="x",
+            worktree_branch="b",
+            root=hammock_root,
+        )
+    with pytest.raises(MCPToolError, match="invalid"):
+        await open_task(
+            job_slug=JOB,
+            stage_id=bad,
+            task_spec="x",
+            worktree_branch="b",
+            root=hammock_root,
+        )
+
+
+async def test_update_task_rejects_path_traversal(hammock_root: Path) -> None:
+    with pytest.raises(MCPToolError, match="invalid task_id"):
+        await update_task(
+            job_slug=JOB,
+            stage_id=STAGE,
+            task_id="../../etc/passwd",
+            status="DONE",
+            root=hammock_root,
+        )
+
+
+async def test_open_ask_rejects_bad_task_id(hammock_root: Path) -> None:
+    with pytest.raises(MCPToolError, match="invalid task_id"):
+        await open_ask(
+            job_slug=JOB,
+            stage_id=STAGE,
+            kind="ask",
+            text="q",
+            task_id="../escape",
+            root=hammock_root,
+            poll_interval=0.02,
+            timeout=0.05,
+        )
+
+
+async def test_append_stages_rejects_bad_stage_id(hammock_root: Path) -> None:
+    with pytest.raises(MCPToolError, match=r"invalid stage id"):
+        await append_stages(
+            job_slug=JOB,
+            stages=[{"id": "../escape", "worker": "agent"}],
+            root=hammock_root,
+        )

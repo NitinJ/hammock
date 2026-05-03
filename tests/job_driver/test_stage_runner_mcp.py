@@ -74,7 +74,7 @@ async def test_real_runner_spawns_and_disposes_mcp(tmp_path: Path, hammock_root:
         project_root=project_root,
         claude_binary=str(fake_claude),
         mcp_manager=mgr,
-        job_slug="proj/feat",
+        job_slug="proj-feat",
         hammock_root=hammock_root,
     )
 
@@ -85,7 +85,7 @@ async def test_real_runner_spawns_and_disposes_mcp(tmp_path: Path, hammock_root:
 
     result = await runner.run(_stage(), job_dir, stage_run_dir)
     assert result.succeeded
-    assert spawn_calls == [("proj/feat", "implement-1")]
+    assert spawn_calls == [("proj-feat", "implement-1")]
     assert len(dispose_calls) == 1
 
 
@@ -101,7 +101,7 @@ async def test_real_runner_writes_mcp_config_into_settings(
         project_root=project_root,
         claude_binary=str(fake_claude),
         mcp_manager=MCPManager(),
-        job_slug="proj/feat",
+        job_slug="proj-feat",
         hammock_root=hammock_root,
     )
 
@@ -117,5 +117,5 @@ async def test_real_runner_writes_mcp_config_into_settings(
     assert "mcpServers" in settings
     assert "hammock-dashboard" in settings["mcpServers"]
     server = settings["mcpServers"]["hammock-dashboard"]
-    assert "proj/feat" in server["args"]
+    assert "proj-feat" in server["args"]
     assert "implement-1" in server["args"]

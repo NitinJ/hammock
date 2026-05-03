@@ -34,7 +34,7 @@ from mcp.client.stdio import stdio_client  # noqa: E402
 
 from shared.paths import hil_dir, job_stage_list, task_json  # noqa: E402
 
-JOB = "smoke/proj"
+JOB = "smoke-proj"
 STAGE = "implement-1"
 
 
