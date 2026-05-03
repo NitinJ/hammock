@@ -270,3 +270,67 @@ async def test_session_env_vars_set(tmp_path: Path) -> None:
     env_text = env_dump.read_text()
     assert "HAMMOCK_JOB_DIR=" in env_text
     assert "HAMMOCK_STAGE_ID=my-stage" in env_text
+
+
+# ---------------------------------------------------------------------------
+# claude CLI flag plumbing — surfaced by post-PR-#21 dogfood
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_claude_invoked_with_verbose_flag(tmp_path: Path) -> None:
+    """`claude -p ... --output-format stream-json` requires `--verbose`.
+
+    Without it, claude (>=2.x) exits immediately with:
+      Error: When using --print, --output-format=stream-json requires --verbose
+    leaving stream.jsonl empty and the stage silently FAILED.
+    """
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    stage_run_dir = tmp_path / "stage-run-1"
+    stage_run_dir.mkdir()
+
+    args_dump = tmp_path / "argv.txt"
+    fixture_path = FIXTURES / "simple_success.jsonl"
+    fake_claude = tmp_path / "fake_argv_claude"
+    fake_claude.write_text(
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > {args_dump}\ncat {fixture_path}\n'
+    )
+    fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IEXEC)
+
+    runner = RealStageRunner(project_root=project_root, claude_binary=str(fake_claude))
+    await runner.run(_make_stage("my-stage"), tmp_path, stage_run_dir)
+
+    args = args_dump.read_text().splitlines()
+    assert "--verbose" in args, f"--verbose missing from claude argv: {args}"
+    assert "--output-format" in args
+    assert "stream-json" in args
+    assert "-p" in args
+
+
+@pytest.mark.asyncio
+async def test_stderr_captured_to_log_file(tmp_path: Path) -> None:
+    """Claude failures (auth, bad flags, segfaults) must be debuggable from
+    the job dir alone — capture stderr to ``agent0/stderr.log`` instead of
+    discarding it to /dev/null."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    stage_run_dir = tmp_path / "stage-run-1"
+    stage_run_dir.mkdir()
+
+    fixture_path = FIXTURES / "simple_success.jsonl"
+    fake_claude = tmp_path / "fake_stderr_claude"
+    # Fake claude prints a recognizable error to stderr, then the fixture
+    # to stdout (so the run still "succeeds" from the runner's view).
+    fake_claude.write_text(
+        f'#!/usr/bin/env bash\necho "DIAGNOSTIC: simulated claude warning" >&2\n'
+        f"cat {fixture_path}\n"
+    )
+    fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IEXEC)
+
+    runner = RealStageRunner(project_root=project_root, claude_binary=str(fake_claude))
+    await runner.run(_make_stage("my-stage"), tmp_path, stage_run_dir)
+
+    stderr_log = stage_run_dir / "agent0" / "stderr.log"
+    assert stderr_log.exists(), "agent0/stderr.log was not created"
+    assert "DIAGNOSTIC: simulated claude warning" in stderr_log.read_text()
