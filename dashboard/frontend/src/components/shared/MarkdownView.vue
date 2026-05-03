@@ -24,9 +24,14 @@ const processor = unified()
   .use(rehypeSanitize)
   .use(rehypeStringify);
 
+let renderToken = 0;
+
 async function render(markdown: string) {
+  const token = ++renderToken;
   const result = await processor.process(markdown);
-  rendered.value = String(result);
+  if (token === renderToken) {
+    rendered.value = String(result);
+  }
 }
 
 watch(() => props.content, render, { immediate: true });

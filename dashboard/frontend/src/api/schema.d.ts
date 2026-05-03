@@ -16,12 +16,15 @@ export type JobState =
 
 export type StageState =
   | "PENDING"
+  | "READY"
   | "RUNNING"
+  | "PARTIALLY_BLOCKED"
+  | "BLOCKED_ON_HUMAN"
   | "ATTENTION_NEEDED"
-  | "COMPLETED"
+  | "WRAPPING_UP"
+  | "SUCCEEDED"
   | "FAILED"
-  | "CANCELLED"
-  | "SKIPPED";
+  | "CANCELLED";
 
 export type TaskState = "OPEN" | "IN_PROGRESS" | "DONE" | "FAILED" | "CANCELLED";
 
@@ -29,7 +32,7 @@ export type HilState = "AWAITING" | "ANSWERED" | "CANCELLED";
 
 export type HilKind = "ask" | "review" | "manual-step";
 
-export type DoctorStatus = "green" | "yellow" | "red" | "unknown";
+export type DoctorStatus = "pass" | "warn" | "fail" | "unknown";
 
 // ── Core / persisted models ────────────────────────────────────────────────
 

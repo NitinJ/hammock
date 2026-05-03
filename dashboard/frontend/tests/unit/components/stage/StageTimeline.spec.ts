@@ -7,7 +7,7 @@ import StageTimeline from "@/components/stage/StageTimeline.vue";
 const mockStages: StageListEntry[] = [
   {
     stage_id: "design",
-    state: "COMPLETED",
+    state: "SUCCEEDED",
     attempt: 1,
     started_at: "2026-05-01T08:00:00Z",
     ended_at: "2026-05-01T08:30:00Z",
@@ -55,8 +55,8 @@ describe("StageTimeline", () => {
         stubs: { RouterLink: { template: "<a><slot /></a>" } },
       },
     });
-    // StateBadge renders COMPLETED as "Completed", RUNNING as "Running"
-    expect(wrapper.text()).toContain("Completed");
+    // StateBadge renders SUCCEEDED as "Succeeded", RUNNING as "Running"
+    expect(wrapper.text()).toContain("Succeeded");
     expect(wrapper.text()).toContain("Running");
   });
 

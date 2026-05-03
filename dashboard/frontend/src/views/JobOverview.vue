@@ -56,6 +56,7 @@
 import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { useJob } from "@/api/queries";
+import { useEventStream } from "@/sse";
 import StateBadge from "@/components/shared/StateBadge.vue";
 import StageTimeline from "@/components/stage/StageTimeline.vue";
 
@@ -63,6 +64,8 @@ const route = useRoute();
 const jobSlug = computed(() => route.params["jobSlug"] as string);
 
 const { data: detail, isPending, isError } = useJob(jobSlug);
+
+useEventStream(`job/${jobSlug.value}` as `job/${string}`);
 
 const stdArtifacts = [
   "problem-spec.md",

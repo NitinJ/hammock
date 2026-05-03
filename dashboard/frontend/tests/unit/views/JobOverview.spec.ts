@@ -42,7 +42,7 @@ const mockJobDetail: JobDetail = {
   stages: [
     {
       stage_id: "design",
-      state: "COMPLETED",
+      state: "SUCCEEDED",
       attempt: 1,
       started_at: "2026-05-01T08:01:00Z",
       ended_at: "2026-05-01T08:30:00Z",

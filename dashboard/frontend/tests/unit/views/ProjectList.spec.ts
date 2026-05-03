@@ -29,7 +29,7 @@ const mockProject: ProjectListItem = {
   total_jobs: 5,
   open_hil_count: 2,
   last_job_at: "2026-05-01T10:00:00Z",
-  doctor_status: "green",
+  doctor_status: "pass",
 };
 
 describe("ProjectList", () => {
@@ -60,7 +60,7 @@ describe("ProjectList", () => {
       },
     });
     await nextTick();
-    expect(wrapper.text()).toContain("green");
+    expect(wrapper.text()).toContain("pass");
   });
 
   it("shows empty state when no projects", async () => {

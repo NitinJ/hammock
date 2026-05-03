@@ -4,17 +4,20 @@
 
     <!-- Scope selector -->
     <div class="flex items-center gap-3">
-      <label class="text-text-secondary text-sm">Scope:</label>
+      <label for="cost-scope" class="text-text-secondary text-sm">Scope:</label>
       <select
+        id="cost-scope"
         v-model="scope"
+        aria-label="Cost scope"
         class="bg-surface border border-border rounded px-3 py-1 text-sm text-text-primary"
       >
         <option value="job">Job</option>
         <option value="project">Project</option>
-        <option value="stage">Stage</option>
       </select>
       <input
+        id="cost-id"
         v-model="scopeId"
+        aria-label="Scope ID"
         placeholder="Enter ID…"
         class="bg-surface border border-border rounded px-3 py-1 text-sm text-text-primary flex-1 max-w-xs"
       />

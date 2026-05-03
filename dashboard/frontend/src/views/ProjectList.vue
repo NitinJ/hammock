@@ -26,11 +26,11 @@
           <span
             :class="[
               'px-2 py-0.5 rounded-full font-medium',
-              p.doctor_status === 'green'
+              p.doctor_status === 'pass'
                 ? 'bg-green-900 text-green-300'
-                : p.doctor_status === 'yellow'
+                : p.doctor_status === 'warn'
                   ? 'bg-amber-900 text-amber-300'
-                  : p.doctor_status === 'red'
+                  : p.doctor_status === 'fail'
                     ? 'bg-red-900 text-red-300'
                     : 'bg-gray-700 text-gray-300',
             ]"

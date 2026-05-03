@@ -4,6 +4,7 @@
     <section>
       <h2 class="text-lg font-semibold text-text-primary mb-3">Active Stages</h2>
       <div v-if="stagesLoading" class="text-text-secondary text-sm">Loading…</div>
+      <div v-else-if="stagesError" class="text-red-400 text-sm">Failed to load active stages.</div>
       <div v-else-if="!activeStages?.length" class="text-text-secondary italic text-sm">
         No active stages right now.
       </div>
@@ -57,6 +58,7 @@
     <section>
       <h2 class="text-lg font-semibold text-text-primary mb-3">Recent Jobs</h2>
       <div v-if="jobsLoading" class="text-text-secondary text-sm">Loading…</div>
+      <div v-else-if="jobsError" class="text-red-400 text-sm">Failed to load jobs.</div>
       <div v-else-if="!recentJobs?.length" class="text-text-secondary italic text-sm">
         No jobs yet.
       </div>
@@ -82,7 +84,7 @@ import { RouterLink } from "vue-router";
 import { useActiveStages, useHilQueue, useJobs } from "@/api/queries";
 import StateBadge from "@/components/shared/StateBadge.vue";
 
-const { data: activeStages, isPending: stagesLoading } = useActiveStages();
+const { data: activeStages, isPending: stagesLoading, isError: stagesError } = useActiveStages();
 const { data: hilItems } = useHilQueue();
-const { data: recentJobs, isPending: jobsLoading } = useJobs();
+const { data: recentJobs, isPending: jobsLoading, isError: jobsError } = useJobs();
 </script>
