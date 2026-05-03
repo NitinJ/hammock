@@ -3,7 +3,7 @@
     <h1 class="text-2xl font-bold text-text-primary">Cost Dashboard</h1>
 
     <!-- Scope selector -->
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 flex-wrap">
       <label for="cost-scope" class="text-text-secondary text-sm">Scope:</label>
       <select
         id="cost-scope"
@@ -13,12 +13,21 @@
       >
         <option value="job">Job</option>
         <option value="project">Project</option>
+        <option value="stage">Stage</option>
       </select>
       <input
         id="cost-id"
         v-model="scopeId"
         aria-label="Scope ID"
-        placeholder="Enter ID…"
+        :placeholder="scope === 'stage' ? 'Stage ID…' : 'Enter ID…'"
+        class="bg-surface border border-border rounded px-3 py-1 text-sm text-text-primary flex-1 max-w-xs"
+      />
+      <input
+        v-if="scope === 'stage'"
+        id="cost-job-slug"
+        v-model="jobSlug"
+        aria-label="Job slug"
+        placeholder="Job slug…"
         class="bg-surface border border-border rounded px-3 py-1 text-sm text-text-primary flex-1 max-w-xs"
       />
     </div>
@@ -89,9 +98,11 @@ const route = useRoute();
 
 const scope = ref<string>((route.query["scope"] as string) ?? "job");
 const scopeId = ref<string>((route.query["id"] as string) ?? "");
+const jobSlug = ref<string>((route.query["job"] as string) ?? "");
 
 const { data: rollup, isPending, isError } = useCosts(
   computed(() => scope.value),
   computed(() => scopeId.value),
+  computed(() => (scope.value === "stage" ? jobSlug.value : null)),
 );
 </script>

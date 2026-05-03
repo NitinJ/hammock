@@ -96,4 +96,50 @@ describe("CostDashboard", () => {
     // toLocaleString formats 12500 as "12,500" in en-US
     expect(wrapper.text()).toMatch(/12[,.]?500/);
   });
+
+  // Stage 12.5 (B1): stage scope requires a job input; the UI must render it
+  it("renders Stage option in scope selector", async () => {
+    const qc = makeClient();
+    const wrapper = mount(CostDashboard, {
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: qc }], createPinia()],
+        stubs: { RouterLink: { template: "<a><slot /></a>" } },
+      },
+    });
+    await nextTick();
+    // The <select> must include the "stage" option
+    const options = wrapper.findAll("option");
+    const optionValues = options.map((o) => o.element.value);
+    expect(optionValues).toContain("stage");
+  });
+
+  it("shows job-slug input when stage scope is selected", async () => {
+    const qc = makeClient();
+    const wrapper = mount(CostDashboard, {
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: qc }], createPinia()],
+        stubs: { RouterLink: { template: "<a><slot /></a>" } },
+      },
+    });
+    // Start with job scope — no job slug input visible for stage
+    const select = wrapper.find("select#cost-scope");
+    await select.setValue("stage");
+    await nextTick();
+    // A second input for Job slug must appear
+    const jobInput = wrapper.find("input#cost-job-slug");
+    expect(jobInput.exists()).toBe(true);
+  });
+
+  it("does NOT show job-slug input when job scope is selected", async () => {
+    const qc = makeClient();
+    const wrapper = mount(CostDashboard, {
+      global: {
+        plugins: [[VueQueryPlugin, { queryClient: qc }], createPinia()],
+        stubs: { RouterLink: { template: "<a><slot /></a>" } },
+      },
+    });
+    await nextTick();
+    const jobInput = wrapper.find("input#cost-job-slug");
+    expect(jobInput.exists()).toBe(false);
+  });
 });
