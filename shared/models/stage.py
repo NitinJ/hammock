@@ -74,7 +74,7 @@ class RequiredOutput(BaseModel):
 
 
 class ArtifactValidator(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
     path: str = Field(min_length=1)
     schema_: str = Field(alias="schema", min_length=1)
 
