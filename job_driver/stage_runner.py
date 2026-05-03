@@ -1,10 +1,11 @@
-"""Stage runner protocol + FakeStageRunner.
+"""Stage runner protocol, FakeStageRunner, and RealStageRunner.
 
-Per design doc § Stage as universal primitive and implementation.md § Stage 4.
+Per design doc § Stage as universal primitive, § Observability, and
+implementation.md §§ Stage 4–5.
 
 ``StageRunner`` is the Protocol; ``FakeStageRunner`` is the test double that
-reads from YAML fixture scripts. ``RealStageRunner`` (Stage 5) swaps in the
-actual ``claude`` subprocess.
+reads from YAML fixture scripts; ``RealStageRunner`` (Stage 5) spawns the
+actual ``claude`` subprocess and extracts stream-json output.
 
 Fixture format (``tests/fixtures/fake-runs/<stage_id>.yaml``):
 
@@ -26,6 +27,8 @@ stages that produce no artifacts in tests).
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -128,3 +131,46 @@ class FakeStageRunner:
             outputs_produced=outputs_produced,
             cost_usd=cost_usd,
         )
+
+
+# ---------------------------------------------------------------------------
+# RealStageRunner
+# ---------------------------------------------------------------------------
+
+
+class RealStageRunner:
+    """Spawns a real ``claude`` subprocess per stage.
+
+    Per design doc § Observability — runs
+    ``claude -p <prompt> --output-format stream-json --settings <path>``,
+    captures stdout line-by-line to ``stream.jsonl``, then calls
+    ``StreamExtractor.extract()`` to derive ``messages.jsonl``,
+    ``tool-uses.jsonl``, ``result.json``, and per-subagent dirs.
+
+    ``stop_hook_path`` — if set, a Stop hook entry pointing to the script is
+    written into the per-session settings file; the hook validates required
+    outputs and blocks session exit on failures.  Stage 6 replaces the
+    generated settings with full specialist resolution.
+
+    ``--channels dashboard`` stub: Stage 6 wires up the real MCP server;
+    Stage 5 omits the flag (no server is running yet).
+    """
+
+    def __init__(
+        self,
+        *,
+        project_root: Path,
+        claude_binary: str = "claude",
+        stop_hook_path: Path | None = None,
+    ) -> None:
+        self._project_root = project_root
+        self._claude_binary = claude_binary
+        self._stop_hook_path = stop_hook_path
+
+    async def run(
+        self,
+        stage_def: StageDefinition,
+        job_dir: Path,
+        stage_run_dir: Path,
+    ) -> StageResult:
+        raise NotImplementedError
