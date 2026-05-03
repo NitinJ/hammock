@@ -87,7 +87,11 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
         )
 
     if not result.dry_run:
-        await spawn_driver(result.job_slug, root=settings.root)
+        await spawn_driver(
+            result.job_slug,
+            root=settings.root,
+            fake_fixtures_dir=settings.fake_fixtures_dir,
+        )
         return JobSubmitResponse(job_slug=result.job_slug, dry_run=False)
 
     stages_out = [s.model_dump(mode="json") for s in result.stages]
