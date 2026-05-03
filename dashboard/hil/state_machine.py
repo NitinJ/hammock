@@ -33,4 +33,9 @@ def transition(item: HilItem, new_status: HilStatus) -> HilItem:
 
     Raises :class:`InvalidTransitionError` if the transition is not allowed.
     """
-    raise NotImplementedError
+    allowed = _ALLOWED.get(item.status, set())
+    if new_status not in allowed:
+        raise InvalidTransitionError(
+            f"cannot transition HIL item from {item.status!r} to {new_status!r}"
+        )
+    return item.model_copy(update={"status": new_status})
