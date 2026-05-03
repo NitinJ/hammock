@@ -46,7 +46,7 @@ describe("AskForm", () => {
   it("getAnswer includes selected choice", async () => {
     const w = mount(AskForm, { props: { question: askQuestion, submitting: false } });
     const radios = w.findAll('input[type="radio"]');
-    await radios[0].setValue("yes");
+    await radios[0]!.setValue("yes");
     const answer = (w.vm as { getAnswer(): unknown }).getAnswer() as { choice: string | null };
     expect(answer.choice).toBe("yes");
   });

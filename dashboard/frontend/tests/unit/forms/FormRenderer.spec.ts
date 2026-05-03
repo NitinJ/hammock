@@ -148,7 +148,7 @@ describe("FormRenderer", () => {
     await w.find(".btn-submit").trigger("click");
     const emitted = w.emitted("submit");
     expect(emitted).toBeTruthy();
-    expect(emitted![0][0]).toMatchObject({ kind: "ask", text: "My answer text" });
+    expect(emitted![0]![0]).toMatchObject({ kind: "ask", text: "My answer text" });
   });
 
   it("does not emit submit when review form has no decision selected", async () => {
