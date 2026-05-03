@@ -37,5 +37,9 @@ export async function fetchTemplate(
   name: string,
   projectSlug?: string,
 ): Promise<UiTemplate | null> {
-  throw new Error("not implemented");
+  const params = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug)}` : "";
+  const res = await fetch(`/api/hil/templates/${encodeURIComponent(name)}${params}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch template ${name}: HTTP ${res.status}`);
+  return res.json() as Promise<UiTemplate>;
 }
