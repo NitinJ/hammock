@@ -71,4 +71,17 @@ describe("useGlobalStore", () => {
     store.setConnected(false);
     expect(store.connected).toBe(false);
   });
+
+  it("ignores LiveSseEvent (no seq field) without updating state (F1)", () => {
+    const store = useGlobalStore();
+    // LiveSseEvent has no 'seq' — applyEvent must narrow the union before accessing seq.
+    const liveEvent = {
+      scope: "job:x",
+      change_kind: "modified" as const,
+      file_kind: "job",
+    } as SseEvent;
+    store.applyEvent(liveEvent);
+    expect(store.lastEventSeq).toBeNull();
+    expect(store.hilAwaitingCount).toBe(0);
+  });
 });

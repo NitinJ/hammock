@@ -25,6 +25,7 @@ envelopes. Forwarding ``events.jsonl`` lines as typed
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator, Iterable
@@ -128,6 +129,14 @@ async def run(
         )
 
     file_offsets: dict[Path, int] = {}
+    # F3: prime offsets from existing files so the first MODIFIED notification
+    # only delivers genuinely new appends, not pre-existing history.
+    for existing in [
+        *cache.root.glob("jobs/*/events.jsonl"),
+        *cache.root.glob("jobs/*/stages/*/events.jsonl"),
+    ]:
+        with contextlib.suppress(OSError):
+            file_offsets[existing] = existing.stat().st_size
 
     async for batch in _watcher:
         _process_batch(cache, pubsub, events_pubsub, file_offsets, batch)
@@ -186,26 +195,30 @@ def _tail_and_publish_events(
         with path.open("rb") as f:
             f.seek(offset)
             new_bytes = f.read()
-            new_offset = offset + len(new_bytes)
     except OSError as e:
         LOG.warning("watcher: cannot tail %s: %s", path, e)
         return
 
-    file_offsets[path] = new_offset
+    # F4: only advance through complete newline-terminated records to avoid
+    # permanently losing bytes from a JSON line that is still being written.
+    last_newline = new_bytes.rfind(b"\n")
+    if last_newline == -1:
+        return  # No complete lines yet; hold the offset.
+    complete_bytes = new_bytes[: last_newline + 1]
+    file_offsets[path] = offset + last_newline + 1
 
-    # Determine scope set once for all events in this tail
+    # Determine scope set once for all events in this tail.
     if classified.kind == "events_jsonl" and classified.job_slug:
         scopes = ["global", f"job:{classified.job_slug}"]
     elif classified.kind == "events_jsonl_stage" and classified.job_slug and classified.stage_id:
-        scopes = [
-            "global",
-            f"job:{classified.job_slug}",
-            f"stage:{classified.job_slug}:{classified.stage_id}",
-        ]
+        # F2: publish stage events ONLY to the stage scope.  Replay for
+        # global / job scopes does not include stage events.jsonl content, so
+        # live publishing there would create a history gap for new subscribers.
+        scopes = [f"stage:{classified.job_slug}:{classified.stage_id}"]
     else:
         return
 
-    for raw_line in new_bytes.decode("utf-8", errors="replace").splitlines():
+    for raw_line in complete_bytes.decode("utf-8", errors="replace").splitlines():
         line = raw_line.strip()
         if not line:
             continue

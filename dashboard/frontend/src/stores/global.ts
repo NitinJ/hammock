@@ -8,6 +8,8 @@ export const useGlobalStore = defineStore("global", () => {
   const connected = ref(false);
 
   function applyEvent(event: SseEvent): void {
+    // F1: SseEvent is a union; LiveSseEvents have no seq — ignore them here.
+    if (!("seq" in event)) return;
     lastEventSeq.value = event.seq;
     if (event.event_type === "hil_opened") {
       hilAwaitingCount.value += 1;

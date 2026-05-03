@@ -213,13 +213,17 @@ async def test_tailer_job_events_jsonl_published_to_events_pubsub(tmp_path: Path
 
     evpath = paths.job_events_jsonl("test-job", root=tmp_path)
     evpath.parent.mkdir(parents=True, exist_ok=True)
-    evpath.write_text(_make_event_line(1, "test-job") + "\n")
 
     sub_global = events_bus.subscribe("global")
     sub_job = events_bus.subscribe("job:test-job")
 
-    batch = {(Change.modified, str(evpath))}
-    await run(cache, change_bus, events_bus, _watcher=_fake_stream([batch]))
+    # Write the file inside the generator so F3 startup-scan does not prime the
+    # offset before the watcher has a chance to see the new content.
+    async def _stream() -> AsyncIterator[set[tuple[Change, str]]]:
+        evpath.write_text(_make_event_line(1, "test-job") + "\n")
+        yield {(Change.modified, str(evpath))}
+
+    await run(cache, change_bus, events_bus, _watcher=_stream())
 
     ev_g = await asyncio.wait_for(anext(sub_global), timeout=1.0)
     ev_j = await asyncio.wait_for(anext(sub_job), timeout=1.0)
@@ -232,8 +236,9 @@ async def test_tailer_job_events_jsonl_published_to_events_pubsub(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_tailer_stage_events_jsonl_published_to_stage_scope(tmp_path: Path) -> None:
-    """Stage 12.5 (A5): stage-level events.jsonl publishes to
-    'global', 'job:<slug>', and 'stage:<slug>:<sid>' scopes.
+    """Stage 12.5 (A5/F2): stage-level events.jsonl publishes ONLY to
+    'stage:<slug>:<sid>' scope — NOT to global or job scope, because replay
+    for those scopes does not cover stage events.jsonl files.
     """
     cache = await Cache.bootstrap(tmp_path)
     change_bus: InProcessPubSub[CacheChange] = InProcessPubSub()
@@ -241,19 +246,23 @@ async def test_tailer_stage_events_jsonl_published_to_stage_scope(tmp_path: Path
 
     evpath = paths.stage_events_jsonl("test-job", "design", root=tmp_path)
     evpath.parent.mkdir(parents=True, exist_ok=True)
-    evpath.write_text(_make_event_line(5, "test-job", stage_id="design") + "\n")
 
     sub_stage = events_bus.subscribe("stage:test-job:design")
     sub_job = events_bus.subscribe("job:test-job")
     sub_other = events_bus.subscribe("stage:test-job:other")
 
-    batch = {(Change.modified, str(evpath))}
-    await run(cache, change_bus, events_bus, _watcher=_fake_stream([batch]))
+    # Write inside the generator so F3 startup-scan does not prime this offset.
+    async def _stream() -> AsyncIterator[set[tuple[Change, str]]]:
+        evpath.write_text(_make_event_line(5, "test-job", stage_id="design") + "\n")
+        yield {(Change.modified, str(evpath))}
+
+    await run(cache, change_bus, events_bus, _watcher=_stream())
 
     ev_s = await asyncio.wait_for(anext(sub_stage), timeout=1.0)
-    ev_j = await asyncio.wait_for(anext(sub_job), timeout=1.0)
     assert ev_s.seq == 5
-    assert ev_j.seq == 5
+    # job scope must NOT receive stage events (replay mismatch — F2)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(anext(sub_job), timeout=0.1)
     # Other stage scope must not receive anything
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(anext(sub_other), timeout=0.1)
@@ -271,18 +280,15 @@ async def test_tailer_events_jsonl_tails_only_new_bytes(tmp_path: Path) -> None:
     evpath = paths.job_events_jsonl("test-job", root=tmp_path)
     evpath.parent.mkdir(parents=True, exist_ok=True)
 
-    # First batch: write seq=1 and process
     line1 = _make_event_line(1, "test-job") + "\n"
-    evpath.write_text(line1)
-    batch1 = {(Change.modified, str(evpath))}
-
-    # Second batch: append seq=2 and process
     line2 = _make_event_line(2, "test-job") + "\n"
 
     sub = events_bus.subscribe("global")
 
+    # Write line1 inside the generator so F3 startup-scan sees an empty dir.
     async def _stream_with_append() -> AsyncIterator[set[tuple[Change, str]]]:
-        yield batch1
+        evpath.write_text(line1)
+        yield {(Change.modified, str(evpath))}
         # Now append the second event
         with evpath.open("a") as f:
             f.write(line2)
@@ -295,5 +301,67 @@ async def test_tailer_events_jsonl_tails_only_new_bytes(tmp_path: Path) -> None:
     assert ev1.seq == 1
     assert ev2.seq == 2  # Only new bytes — no duplicate for seq=1
     # No more events
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(anext(sub), timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_tailer_events_jsonl_no_replay_on_startup(tmp_path: Path) -> None:
+    """F3: events.jsonl content that exists before the watcher starts must NOT
+    be published.  run() primes per-file byte offsets from on-disk sizes so the
+    first MODIFIED notification reads only genuinely new appends.
+    """
+    cache = await Cache.bootstrap(tmp_path)
+    change_bus: InProcessPubSub[CacheChange] = InProcessPubSub()
+    events_bus: InProcessPubSub[Event] = InProcessPubSub()
+
+    evpath = paths.job_events_jsonl("test-job", root=tmp_path)
+    evpath.parent.mkdir(parents=True, exist_ok=True)
+    evpath.write_text(_make_event_line(1, "test-job") + "\n")
+
+    sub = events_bus.subscribe("global")
+
+    # The watcher fires a MODIFIED event for the already-existing file.
+    batch = {(Change.modified, str(evpath))}
+    await run(cache, change_bus, events_bus, _watcher=_fake_stream([batch]))
+
+    # Nothing published — historical content skipped via startup offset priming.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(anext(sub), timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_tailer_events_jsonl_partial_line_not_lost(tmp_path: Path) -> None:
+    """F4: a partial (unterminated) JSON line at the end of a MODIFIED batch is
+    not consumed — the offset advances only through complete newline-terminated
+    records.  The partial record is published after the next MODIFIED event
+    appends the missing newline.
+    """
+    cache = await Cache.bootstrap(tmp_path)
+    change_bus: InProcessPubSub[CacheChange] = InProcessPubSub()
+    events_bus: InProcessPubSub[Event] = InProcessPubSub()
+
+    evpath = paths.job_events_jsonl("test-job", root=tmp_path)
+    evpath.parent.mkdir(parents=True, exist_ok=True)
+
+    line1 = _make_event_line(1, "test-job") + "\n"
+    partial = _make_event_line(2, "test-job")  # no trailing newline
+
+    sub = events_bus.subscribe("global")
+
+    async def _stream_with_partial() -> AsyncIterator[set[tuple[Change, str]]]:
+        evpath.write_text(line1 + partial)  # one complete + one partial record
+        yield {(Change.modified, str(evpath))}
+        # Complete the partial record on disk, then fire another MODIFIED.
+        with evpath.open("a") as f:
+            f.write("\n")
+        yield {(Change.modified, str(evpath))}
+
+    await run(cache, change_bus, events_bus, _watcher=_stream_with_partial())
+
+    ev1 = await asyncio.wait_for(anext(sub), timeout=1.0)
+    ev2 = await asyncio.wait_for(anext(sub), timeout=1.0)
+    assert ev1.seq == 1
+    assert ev2.seq == 2  # Was partial on first batch; recovered on second
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(anext(sub), timeout=0.1)
