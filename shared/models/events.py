@@ -61,6 +61,14 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "task_stuck_detected",
         "task_failure_recorded",
         "nudge_loop_exhausted",
+        # Real-claude e2e precondition track (P4) — visibility for the
+        # worktree lifecycle and per-stage subprocess exit codes.
+        # Without these the e2e test has no contract-level signal for
+        # "the subprocess actually exited cleanly" or "the worktree was
+        # registered/cleaned up".
+        "worktree_created",
+        "worktree_destroyed",
+        "worker_exit",
     }
 )
 

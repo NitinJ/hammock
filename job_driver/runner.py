@@ -479,6 +479,18 @@ class JobDriver:
                 },
             )
             self._write_manifest_for_latest_run(stage_def.id)
+            # P4: emit worker_exit so the wall-clock-killed subprocess
+            # leaves a trail for the e2e test (and operators).
+            self._emit_event(
+                "worker_exit",
+                stage_id=stage_def.id,
+                payload={
+                    "stage_id": stage_def.id,
+                    "exit_code": None,
+                    "succeeded": False,
+                    "reason": "budget overrun (max_wall_clock_min)",
+                },
+            )
             return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
@@ -537,6 +549,23 @@ class JobDriver:
             "stage_state_transition",
             stage_id=stage_def.id,
             payload={"from": "RUNNING", "to": final_state, "cost_usd": result.cost_usd},
+        )
+        # P4 (real-claude e2e precondition track): every successful or
+        # failed runner return produces a worker_exit event. The exit
+        # code is None for FakeStageRunner (no subprocess); RealStageRunner
+        # populates it from proc.returncode. The e2e test asserts this
+        # event has exit_code=0 for every agent stage that ran.
+        worker_exit_payload: dict[str, Any] = {
+            "stage_id": stage_def.id,
+            "exit_code": result.exit_code,
+            "succeeded": result.succeeded,
+        }
+        if result.reason:
+            worker_exit_payload["reason"] = result.reason
+        self._emit_event(
+            "worker_exit",
+            stage_id=stage_def.id,
+            payload=worker_exit_payload,
         )
 
         if result.cost_usd > 0:
@@ -1058,6 +1087,20 @@ class JobDriver:
                 stage_id,
                 exc,
             )
+            return
+        # P4 (real-claude e2e precondition track): visibility for the
+        # worktree lifecycle. Without this, "did we get isolation for
+        # this stage?" is only answerable by `git worktree list` from
+        # outside the system.
+        self._emit_event(
+            "worktree_created",
+            stage_id=stage_id,
+            payload={
+                "stage_id": stage_id,
+                "path": str(wt),
+                "branch": branch,
+            },
+        )
 
     # NOTE on v0 worktree teardown (Codex review of PR #24, HIGH 1):
     #

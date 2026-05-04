@@ -98,6 +98,11 @@ class StageResult:
     reason: str | None = None
     outputs_produced: list[str] = field(default_factory=list)
     cost_usd: float = 0.0
+    # Real-claude e2e precondition track (P4): RealStageRunner populates
+    # this from ``proc.returncode``; FakeStageRunner leaves it None.
+    # JobDriver carries it on the ``worker_exit`` event so the e2e test
+    # can assert "every claude subprocess that ran exited with 0".
+    exit_code: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +384,7 @@ class RealStageRunner:
                 succeeded=succeeded,
                 cost_usd=cost_usd,
                 outputs_produced=[],  # tracked via MCP task records (Stage 6)
+                exit_code=return_code,
             )
         finally:
             if mcp_handle is not None and self._mcp_manager is not None:
