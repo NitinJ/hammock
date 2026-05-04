@@ -184,10 +184,32 @@ def _write_fake_fixtures(fixtures_dir: Path) -> None:
 
 def _register_fake_project(root: Path, *, slug: str, repo_path: Path) -> ProjectConfig:
     """Write a project.json directly. Skips the CLI (which requires gh + a
-    real remote). The compiler only reads project.json + repo_path."""
+    real remote). The compiler only reads project.json + repo_path.
+
+    PR #24 added per-job branch creation on submit (a real registered
+    repo gets `hammock/jobs/<slug>` created off `main`). For this e2e
+    test we want the full submit path exercised, so initialise a real
+    git repo with one commit on `main`.
+    """
+    import subprocess
+
     repo_path.mkdir(parents=True, exist_ok=True)
-    (repo_path / ".git").mkdir(exist_ok=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "test"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
     (repo_path / "CLAUDE.md").write_text("# fake project for e2e\n")
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo_path, check=True, capture_output=True)
     project = ProjectConfig(
         slug=slug,
         name=slug,

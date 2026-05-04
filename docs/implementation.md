@@ -1320,6 +1320,32 @@ The v1+ deferred-by-design list from the design doc rolls forward unchanged. To 
   trap. Removed in the v0 alignment follow-up; reintroduce together
   with a wavefront scheduler in `_execute_stages` when a real template
   needs concurrent stages. *(Surfaced by the v0 alignment audit, Plan #4.)*
+- **Post-PR-merge stage-worktree + stage-branch cleanup.** v0 keeps
+  every stage worktree on disk after terminal stage state (per design
+  intent: workspaces survive until the stage's PR is merged so the
+  operator can inspect / re-run / fix-up). v0 doesn't track PR-merge
+  events, so worktrees and stage branches accumulate until the
+  operator manually prunes them with `git worktree remove <path>` +
+  `git worktree prune` + `git branch -D hammock/stages/<slug>/<id>`.
+  v1+: hook PR-merged events into a cleanup pass that removes the
+  worktree + deletes the stage branch (job branch can be retained or
+  pruned per a configurable policy). *(Surfaced by Codex review of
+  PR #24, the v0 alignment Plans #2 + #8.)*
+- **`resume-context.json` for crash recovery.** Design specifies a
+  per-stage resume context written before each spawn so the next
+  driver process knows what was in flight (open MCP servers, partial
+  artifacts, last seen seq). v0's resume reuses an existing worktree
+  for the same branch but writes no metadata; on operator-driven
+  re-spawn after a crash the new driver re-derives state from
+  events.jsonl + on-disk artifacts. v1+: write `resume-context.json`
+  and consume it on resume. *(Surfaced by Codex review of PR #24.)*
+- **Concurrent submit slug collision avoidance.** `compile_job` derives
+  the slug from `<date>-<title-slug>`; two parallel submits with the
+  same title can collide on the slug + the corresponding job dir,
+  with `mkdir(exist_ok=False)` failing one of them. Pre-existing — not
+  surfaced by stage isolation but worth recording. v1+: retry slug
+  generation with an entropy suffix on `FileExistsError`. *(Surfaced
+  by Codex review of PR #24.)*
 
 The first v1+ stage will reuse this doc's structure: stage numbers continue (Stage 17, 18, ...) but tagged `v1.*`. The deferred items themselves don't have a fixed order; expect to pick whichever is most pressing once dogfooding reveals which ones are missed first.
 

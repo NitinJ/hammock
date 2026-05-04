@@ -146,6 +146,10 @@ def remove_worktree(
     uncommitted changes — by design, since a stage that didn't
     succeed loses its uncommitted state on cleanup.
 
+    ``force=False`` makes the call propagate the underlying
+    ``CalledProcessError`` if git refuses (e.g. dirty tree); the
+    directory is **not** removed in that case.
+
     Raises :class:`ValueError` if *path* doesn't look like a
     Hammock-managed worktree (safety rail: never delete the operator's
     project tree).
@@ -165,15 +169,24 @@ def remove_worktree(
         if force:
             cmd.append("--force")
         cmd.append(str(path))
-        # `git worktree remove` deletes the directory and unregisters.
-        # Fall through to manual cleanup below — git can refuse if
-        # the directory was already partially removed externally.
-        with contextlib.suppress(subprocess.CalledProcessError):
+        if force:
+            # With --force: any git refusal is something we can clean up
+            # behind via `shutil.rmtree` below (e.g. directory partially
+            # removed externally).
+            with contextlib.suppress(subprocess.CalledProcessError):
+                _git(repo, *cmd)
+        else:
+            # Without --force: surface git's refusal (e.g. dirty tree)
+            # to the caller and leave the directory in place. Codex
+            # review of PR #24 caught that the original implementation
+            # silently rmtree'd anyway, defeating the safety knob.
             _git(repo, *cmd)
 
-    if path.exists():
+    if force and path.exists():
         # Belt-and-braces: ensure the directory is gone even if `git
-        # worktree remove` left bits behind.
+        # worktree remove --force` left bits behind. Only runs in the
+        # force path; the not-force path leaves the dir alone after a
+        # git refusal.
         shutil.rmtree(path, ignore_errors=True)
 
     # Always run prune so the registry stays clean even after manual

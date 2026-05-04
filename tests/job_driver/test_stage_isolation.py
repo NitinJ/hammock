@@ -152,13 +152,11 @@ async def test_jobdriver_creates_stage_branch(tmp_path: Path) -> None:
     assert branch_exists(repo, f"hammock/stages/{job_slug}/design")
 
 
-async def test_jobdriver_creates_worktree_for_stage(tmp_path: Path) -> None:
-    """Worktree lands at the expected path during the stage run.
-
-    The fake fixture's ``check_worktree_exists`` hook (a write of a
-    sentinel file inside the worktree) is the cleanest way to prove
-    the stage really ran inside the worktree path.
-    """
+async def test_jobdriver_keeps_worktree_after_succeeded(tmp_path: Path) -> None:
+    """Codex review of PR #24, HIGH 1: worktrees survive terminal stage
+    state (success or failure) so operators can inspect / re-run /
+    fix-up the agent's checkout. v0 has no PR-merge tracking; auto
+    cleanup is deferred to v1+."""
     root, repo, job_slug = _seed_full_job(tmp_path)
     fixtures = tmp_path / "fixtures"
 
@@ -170,16 +168,13 @@ async def test_jobdriver_creates_worktree_for_stage(tmp_path: Path) -> None:
     )
     await driver.run()
 
-    # After run, the worktree should be torn down (terminal state).
     expected_wt = paths.stage_dir(job_slug, "design", root=root) / "worktree"
-    assert not expected_wt.exists(), "worktree should be removed after terminal stage state"
-
-    # And the branch should still be present (forensic value).
+    assert expected_wt.exists(), "worktree must survive SUCCEEDED for inspection / re-run"
     assert branch_exists(repo, f"hammock/stages/{job_slug}/design")
 
 
-async def test_jobdriver_removes_worktree_on_failed_stage(tmp_path: Path) -> None:
-    """Even on FAILED, the worktree is cleaned up."""
+async def test_jobdriver_keeps_worktree_after_failed_stage(tmp_path: Path) -> None:
+    """FAILED state: worktree kept for forensics."""
     root, repo, job_slug = _seed_full_job(tmp_path, fixture={"outcome": "failed", "reason": "boom"})
     fixtures = tmp_path / "fixtures"
 
@@ -192,9 +187,40 @@ async def test_jobdriver_removes_worktree_on_failed_stage(tmp_path: Path) -> Non
     await driver.run()
 
     expected_wt = paths.stage_dir(job_slug, "design", root=root) / "worktree"
-    assert not expected_wt.exists()
-    # Branch survives for forensics.
+    assert expected_wt.exists(), "worktree must survive FAILED for forensics"
     assert branch_exists(repo, f"hammock/stages/{job_slug}/design")
+
+
+async def test_jobdriver_branch_mismatch_is_fatal(tmp_path: Path) -> None:
+    """Codex review of PR #24, HIGH 2: a stale worktree at the
+    expected path but checked out to a *different* branch must be
+    fatal — silent fall-through would run claude in the wrong branch
+    and silently bypass isolation."""
+    from dashboard.code.branches import create_stage_branch
+    from dashboard.code.worktrees import add_worktree
+
+    root, repo, job_slug = _seed_full_job(tmp_path)
+    fixtures = tmp_path / "fixtures"
+
+    # Pre-seed a worktree at the expected path on a *different* stage
+    # branch (simulates an aborted prior submit / operator manual edit).
+    create_stage_branch(repo, job_slug, "different-stage")
+    pre_wt = paths.stage_dir(job_slug, "design", root=root) / "worktree"
+    add_worktree(repo, pre_wt, f"hammock/stages/{job_slug}/different-stage")
+
+    driver = JobDriver(
+        job_slug,
+        root=root,
+        stage_runner=FakeStageRunner(fixtures),
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    # The stage failed loudly rather than silently using the wrong worktree.
+    final = JobConfig.model_validate_json(
+        (paths.job_dir(job_slug, root=root) / "job.json").read_text()
+    )
+    assert final.state == JobState.FAILED
 
 
 async def test_jobdriver_skips_isolation_when_repo_not_git(tmp_path: Path) -> None:
@@ -251,9 +277,9 @@ async def test_jobdriver_skips_isolation_when_repo_not_git(tmp_path: Path) -> No
 
 
 async def test_jobdriver_resume_reuses_existing_worktree(tmp_path: Path) -> None:
-    """If a worktree already exists at the expected path (e.g. from a
-    previous attempt that crashed before cleanup), JobDriver reuses
-    it instead of erroring out."""
+    """If a worktree already exists at the expected path on the *same*
+    branch (e.g. crash before terminal state), JobDriver reuses it
+    instead of erroring out."""
     root, repo, job_slug = _seed_full_job(tmp_path)
     fixtures = tmp_path / "fixtures"
 
@@ -273,8 +299,6 @@ async def test_jobdriver_resume_reuses_existing_worktree(tmp_path: Path) -> None
         stage_runner=FakeStageRunner(fixtures),
         heartbeat_interval=0.1,
     )
-    # Should not raise on re-creation attempt.
+    # Should not raise on re-use; terminal state keeps the worktree.
     await driver.run()
-
-    # Cleaned up after terminal state.
-    assert not pre_wt.exists()
+    assert pre_wt.exists()

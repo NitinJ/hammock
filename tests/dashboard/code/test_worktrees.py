@@ -143,6 +143,21 @@ def test_remove_worktree_force_handles_dirty_tree(tmp_path: Path) -> None:
     assert not wt.exists()
 
 
+def test_remove_worktree_force_false_propagates_dirty_refusal(tmp_path: Path) -> None:
+    """Codex review of PR #24: ``force=False`` must actually honour
+    the flag. Earlier code suppressed the CalledProcessError and then
+    rmtree'd anyway, defeating the safety knob entirely."""
+    repo, wt = _seed_with_stage_branch(tmp_path)
+    add_worktree(repo, wt, "hammock/stages/j1/design")
+    (wt / "scratch.txt").write_text("dirty\n")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        remove_worktree(repo, wt, force=False)
+    # And the directory survives the refusal.
+    assert wt.exists()
+    assert (wt / "scratch.txt").exists()
+
+
 def test_remove_worktree_missing_raises_unless_missing_ok(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     nonexistent = tmp_path / "hammock-root" / "jobs" / "ghost" / "stages" / "g" / "worktree"

@@ -3,9 +3,9 @@
 Per `docs/v0-alignment-report.md` Plan #2 + #8 (paired): Hammock owns
 job and stage branches. The shape:
 
-- ``hammock/<job_slug>``                — created at job submit, off the
+- ``hammock/jobs/<job_slug>``           — created at job submit, off the
                                           project's default branch.
-- ``hammock/<job_slug>/<stage_id>``     — created at stage start, off
+- ``hammock/stages/<job_slug>/<stage_id>`` — created at stage start, off
                                           the job branch.
 - All branches under the ``hammock/`` namespace are greppable for
   forensics and cleanup.
@@ -96,10 +96,11 @@ def test_create_job_branch_is_idempotent_when_already_exists(tmp_path: Path) -> 
 
 
 def test_create_job_branch_rejects_non_hammock_slug_collision(tmp_path: Path) -> None:
-    """If a branch named `hammock/<slug>` exists but doesn't point where
-    the job branch should — i.e. base has moved — that's a collision the
-    caller must resolve. The current implementation reuses any existing
-    `hammock/<slug>`; this test pins the policy as 'reuse, do not move'."""
+    """If a branch named `hammock/jobs/<slug>` exists but doesn't point
+    where the job branch should — i.e. base has moved — that's a
+    collision the caller must resolve. The current implementation
+    reuses any existing `hammock/jobs/<slug>`; this test pins the
+    policy as 'reuse, do not move'."""
     repo = _init_repo(tmp_path / "repo")
     # Pre-create a branch at a different commit
     subprocess.run(

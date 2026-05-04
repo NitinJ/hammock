@@ -97,13 +97,25 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
         # v0 alignment Plan #2 + #8: create the per-job branch in the
         # project's repo before spawning the driver. Best-effort: if the
         # repo isn't a real git repo (some test fixtures point at fake
-        # paths), log a warning and continue. Real registrations always
-        # have a real repo.
-        _create_job_branch_best_effort(
-            project_slug=body.project_slug,
-            job_slug=result.job_slug,
-            root=settings.root,
-        )
+        # paths), log a warning and continue. For a registered real
+        # repo, surface git failures as a structured 500 so the
+        # operator sees them (Codex review of PR #24, MEDIUM 2).
+        try:
+            _create_job_branch_best_effort(
+                project_slug=body.project_slug,
+                job_slug=result.job_slug,
+                root=settings.root,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"failed to create hammock/jobs/{result.job_slug} in "
+                    f"{body.project_slug!r}: {exc}. The job dir is on disk "
+                    "but no driver was spawned. Investigate the git error and "
+                    "either re-submit or spawn the driver manually."
+                ),
+            ) from exc
         await spawn_driver(
             result.job_slug,
             root=settings.root,
@@ -124,17 +136,23 @@ def _create_job_branch_best_effort(
 ) -> None:
     """Read project.json + create ``hammock/jobs/<slug>`` in the repo.
 
-    Failure modes (logged, never raised):
+    Codex review of PR #24 narrowed the best-effort posture: only the
+    "this isn't a git repo at all" case is silenced (synthetic test
+    fixtures, v0 fake-fixture flows). Real git failures against a
+    *registered* repo (permissions, refs/locks, disk-full) propagate
+    so the operator can act on them — silent degradation to
+    unisolated execution is the wrong default for a real job.
 
-    - project.json missing or unreadable
-    - repo_path doesn't exist on disk
-    - repo_path isn't a git repo (fake-fixture test scenarios)
-    - git command failure for any other reason
+    Silenced (logged, not raised):
 
-    A real registration verifies the repo at register time, so in
-    production this should always succeed. The best-effort posture is
-    purely to keep the existing test suite (which uses synthetic
-    repo paths) and the v0 fake-fixture flows working.
+    - project.json missing or unreadable.
+    - repo_path doesn't exist on disk.
+    - repo_path isn't a git repo (no ``.git/``).
+
+    Propagates:
+
+    - Any ``CalledProcessError`` from ``git branch`` against an
+      otherwise-valid registered repo (the operator needs to see it).
     """
     try:
         project = ProjectConfig.model_validate_json(
@@ -157,12 +175,5 @@ def _create_job_branch_best_effort(
         )
         return
 
-    try:
-        create_job_branch(repo, job_slug, base=project.default_branch)
-    except subprocess.CalledProcessError as exc:
-        log.warning(
-            "failed to create hammock/jobs/%s in %s: %s — stages will lack isolation",
-            job_slug,
-            repo,
-            exc,
-        )
+    # Real registered repo: any git failure here is operator-actionable.
+    create_job_branch(repo, job_slug, base=project.default_branch)

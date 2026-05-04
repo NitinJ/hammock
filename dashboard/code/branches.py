@@ -85,7 +85,7 @@ def list_hammock_branches(repo: Path) -> list[str]:
 
 
 def create_job_branch(repo: Path, job_slug: str, *, base: str = "main") -> str:
-    """Create ``hammock/<job_slug>`` off *base*. Idempotent.
+    """Create ``hammock/jobs/<job_slug>`` off *base*. Idempotent.
 
     If the branch already exists, returns its name without modifying it
     — preserving any work that was committed on a prior submit attempt.
@@ -105,7 +105,7 @@ def create_stage_branch(
     *,
     parent: str | None = None,
 ) -> str:
-    """Create ``hammock/<job_slug>/<stage_id>`` off the job branch
+    """Create ``hammock/stages/<job_slug>/<stage_id>`` off the job branch
     (or *parent* if supplied). Idempotent.
 
     Raises :class:`BranchNotFoundError` if the parent branch doesn't

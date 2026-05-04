@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -443,7 +444,6 @@ class JobDriver:
                 },
             )
             self._write_manifest_for_latest_run(stage_def.id)
-            self._teardown_stage_isolation(stage_def.id)
             return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
@@ -457,7 +457,6 @@ class JobDriver:
                 stage_id=stage_def.id,
                 payload={"from": "RUNNING", "to": "CANCELLED"},
             )
-            self._teardown_stage_isolation(stage_def.id)
             return None
 
         # If the runner raised, propagate so the caller can fail the job.
@@ -526,7 +525,6 @@ class JobDriver:
                 payload=payload,
             )
 
-        self._teardown_stage_isolation(stage_def.id)
         return result
 
     # ------------------------------------------------------------------
@@ -907,10 +905,6 @@ class JobDriver:
         # effort: if no run dir exists (e.g. predicate failure before
         # _run_single_stage created it), the helper logs and returns.
         self._write_manifest_for_latest_run(stage_def.id)
-        # v0 alignment Plan #2 + #8: tear down the stage worktree
-        # whenever we route through _fail_stage (covers exception +
-        # predicate failure paths).
-        self._teardown_stage_isolation(stage_def.id)
 
     def _write_manifest_for_latest_run(self, stage_id: str) -> None:
         """Write the integrity manifest for the latest run dir of *stage_id*.
@@ -971,57 +965,74 @@ class JobDriver:
         """Create the stage branch + worktree before the runner starts.
 
         Idempotent: a worktree that already exists for the same branch
-        (e.g. resume after crash) is reused. Best-effort: **any**
-        failure (missing parent branch, git error, worktree conflict,
-        permissions) logs and skips isolation. The stage then runs
-        against the project root, which keeps existing test fixtures
-        and not-yet-isolated workflows working.
+        (e.g. resume after crash) is reused.
+
+        Failure handling — Codex review of PR #24 narrowed the catch
+        from a blanket ``Exception`` to a specific list because the
+        original posture silently masked permission errors, disk-full,
+        and (most dangerously) ``WorktreeExistsError`` for *branch
+        mismatches* (which would have left a stale dir for the wrong
+        branch and silently run claude in it):
+
+        - ``BranchNotFoundError`` (parent branch missing — synthetic
+          test repos) → log + skip isolation.
+        - ``subprocess.CalledProcessError`` (low-level git failures
+          like a partially-initialised repo) → log + skip.
+        - ``WorktreeExistsError`` for a *branch mismatch* → **fatal**:
+          re-raise so the JobDriver fails the stage rather than running
+          in a stale worktree.
+        - Anything else (PermissionError, OSError, etc.) → re-raise.
         """
         repo = self._project_repo()
         if repo is None:
             return
-        try:
-            from dashboard.code.branches import create_stage_branch
-            from dashboard.code.worktrees import (
-                WorktreeExistsError,
-                add_worktree,
-            )
+        from dashboard.code.branches import BranchNotFoundError, create_stage_branch
+        from dashboard.code.worktrees import WorktreeExistsError, add_worktree
 
+        try:
             branch = create_stage_branch(repo, self.job_slug, stage_id)
-            wt = self._stage_worktree_path(stage_id)
-            try:
-                add_worktree(repo, wt, branch, reuse_existing=True)
-            except WorktreeExistsError as exc:
-                # Existing worktree for a different branch — wiring bug;
-                # fail-soft for v0 (run in project root) and log loudly.
-                log.error("stage worktree conflict for %s/%s: %s", self.job_slug, stage_id, exc)
-        except Exception as exc:
+        except BranchNotFoundError as exc:
             log.warning(
-                "stage isolation failed for %s/%s: %s — running in-place",
+                "stage isolation skipped for %s/%s: parent branch missing (%s)",
                 self.job_slug,
                 stage_id,
                 exc,
             )
-
-    def _teardown_stage_isolation(self, stage_id: str) -> None:
-        """Remove the stage worktree on terminal stage state.
-
-        Branch survives — kept on disk for forensics until the human or
-        a v1+ cleanup pass deletes it. Best-effort: any failure logs
-        but never masks the actual stage outcome.
-        """
-        repo = self._project_repo()
-        if repo is None:
             return
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "stage isolation skipped for %s/%s: git error creating stage branch (%s)",
+                self.job_slug,
+                stage_id,
+                exc,
+            )
+            return
+
         wt = self._stage_worktree_path(stage_id)
         try:
-            from dashboard.code.worktrees import remove_worktree
-
-            remove_worktree(repo, wt, missing_ok=True)
-        except Exception as exc:
+            add_worktree(repo, wt, branch, reuse_existing=True)
+        except WorktreeExistsError:
+            # Branch mismatch — stale worktree for a different branch.
+            # Re-raise so the JobDriver fails the stage loudly. Silent
+            # fall-through here would run claude in the wrong branch.
+            raise
+        except subprocess.CalledProcessError as exc:
             log.warning(
-                "failed to remove stage worktree for %s/%s: %s",
+                "stage isolation skipped for %s/%s: git error adding worktree (%s)",
                 self.job_slug,
                 stage_id,
                 exc,
             )
+
+    # NOTE on v0 worktree teardown (Codex review of PR #24, HIGH 1):
+    #
+    # Earlier drafts of this PR removed the stage worktree at every
+    # terminal stage state (success, failure, cancel, wall-clock,
+    # exception). Per `docs/design.md` § Code plane the workspace is
+    # supposed to survive until the stage's PR is merged so an
+    # operator can inspect the agent's state, fix it up, or re-run
+    # the stage from the same checkout. v0 doesn't have PR-merge
+    # tracking, so we keep ALL worktrees post-stage and defer the
+    # automatic cleanup pass to a v1+ task documented in
+    # `docs/implementation.md § 9`. Operators clean up manually with
+    # `git worktree remove <path>` + `git worktree prune`.

@@ -142,3 +142,41 @@ def test_submit_continues_when_repo_is_not_a_git_repo(tmp_path: Path) -> None:
                 },
             )
     assert resp.status_code == 201
+
+
+def test_submit_propagates_git_error_for_registered_repo(tmp_path: Path) -> None:
+    """Codex review of PR #24, MEDIUM 2: against a registered (real)
+    git repo, a git failure during job-branch creation must be
+    operator-actionable — not silently degraded to unisolated
+    execution. The submit returns 5xx so the operator sees it."""
+    root = tmp_path / "hammock-root"
+    root.mkdir()
+    repo = _init_real_repo(tmp_path / "real-repo")
+    # Register the project pointing at a base branch that does not
+    # exist in the repo. `git branch hammock/jobs/<slug> nonexistent`
+    # fails with exit code 128, which now propagates to the submit
+    # response.
+    project = ProjectConfig(
+        slug="real-proj",
+        name="real-proj",
+        repo_path=str(repo),
+        remote_url="https://github.com/example/real-proj",
+        default_branch="nonexistent-branch",
+        created_at=datetime.now(UTC),
+    )
+    atomic_write_json(paths.project_json("real-proj", root=root), project)
+    overrides = paths.project_overrides_root(repo)
+    (overrides / "job-template-overrides").mkdir(parents=True, exist_ok=True)
+
+    with _make_client(root) as client:
+        with patch("dashboard.api.jobs.spawn_driver", new_callable=AsyncMock):
+            resp = client.post(
+                "/api/jobs",
+                json={
+                    "project_slug": "real-proj",
+                    "job_type": "fix-bug",
+                    "title": "x",
+                    "request_text": "y",
+                },
+            )
+    assert resp.status_code >= 500
