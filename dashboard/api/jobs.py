@@ -7,16 +7,23 @@ Cancel / restart / chat POST sub-resources land in Stage 15.
 
 from __future__ import annotations
 
+import logging
+import subprocess
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from dashboard.code.branches import create_job_branch
 from dashboard.compiler.compile import compile_job
 from dashboard.driver.lifecycle import spawn_driver
 from dashboard.state import projections
 from dashboard.state.projections import JobDetail, JobListItem
-from shared.models import JobState
+from shared import paths
+from shared.models import JobState, ProjectConfig
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -87,6 +94,16 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
         )
 
     if not result.dry_run:
+        # v0 alignment Plan #2 + #8: create the per-job branch in the
+        # project's repo before spawning the driver. Best-effort: if the
+        # repo isn't a real git repo (some test fixtures point at fake
+        # paths), log a warning and continue. Real registrations always
+        # have a real repo.
+        _create_job_branch_best_effort(
+            project_slug=body.project_slug,
+            job_slug=result.job_slug,
+            root=settings.root,
+        )
         await spawn_driver(
             result.job_slug,
             root=settings.root,
@@ -97,3 +114,55 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
 
     stages_out = [s.model_dump(mode="json") for s in result.stages]
     return JobSubmitResponse(job_slug=result.job_slug, dry_run=True, stages=stages_out)
+
+
+def _create_job_branch_best_effort(
+    *,
+    project_slug: str,
+    job_slug: str,
+    root: Path | None,
+) -> None:
+    """Read project.json + create ``hammock/jobs/<slug>`` in the repo.
+
+    Failure modes (logged, never raised):
+
+    - project.json missing or unreadable
+    - repo_path doesn't exist on disk
+    - repo_path isn't a git repo (fake-fixture test scenarios)
+    - git command failure for any other reason
+
+    A real registration verifies the repo at register time, so in
+    production this should always succeed. The best-effort posture is
+    purely to keep the existing test suite (which uses synthetic
+    repo paths) and the v0 fake-fixture flows working.
+    """
+    try:
+        project = ProjectConfig.model_validate_json(
+            paths.project_json(project_slug, root=root).read_text()
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        log.warning(
+            "could not read project.json for %s: %s — skipping job-branch creation",
+            project_slug,
+            exc,
+        )
+        return
+
+    repo = Path(project.repo_path)
+    if not (repo / ".git").exists():
+        log.warning(
+            "%s is not a git repo — skipping job-branch creation for %s",
+            repo,
+            job_slug,
+        )
+        return
+
+    try:
+        create_job_branch(repo, job_slug, base=project.default_branch)
+    except subprocess.CalledProcessError as exc:
+        log.warning(
+            "failed to create hammock/jobs/%s in %s: %s — stages will lack isolation",
+            job_slug,
+            repo,
+            exc,
+        )

@@ -369,6 +369,13 @@ class JobDriver:
         # missing latest.
         self._update_latest_symlink(stage_def.id, stage_run_dir.name)
 
+        # v0 alignment Plan #2 + #8: pre-stage isolation. Create the
+        # stage branch off the job branch, then check it out into a
+        # worktree under <job_dir>/stages/<sid>/worktree/. Best-effort:
+        # if the project repo isn't a real git repo, skip isolation
+        # and run the stage in-place (fake-fixture flows; tests).
+        self._setup_stage_isolation(stage_def.id)
+
         # Persist RUNNING state
         stage_run = StageRun(
             stage_id=stage_def.id,
@@ -436,6 +443,7 @@ class JobDriver:
                 },
             )
             self._write_manifest_for_latest_run(stage_def.id)
+            self._teardown_stage_isolation(stage_def.id)
             return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
@@ -449,6 +457,7 @@ class JobDriver:
                 stage_id=stage_def.id,
                 payload={"from": "RUNNING", "to": "CANCELLED"},
             )
+            self._teardown_stage_isolation(stage_def.id)
             return None
 
         # If the runner raised, propagate so the caller can fail the job.
@@ -517,6 +526,7 @@ class JobDriver:
                 payload=payload,
             )
 
+        self._teardown_stage_isolation(stage_def.id)
         return result
 
     # ------------------------------------------------------------------
@@ -897,6 +907,10 @@ class JobDriver:
         # effort: if no run dir exists (e.g. predicate failure before
         # _run_single_stage created it), the helper logs and returns.
         self._write_manifest_for_latest_run(stage_def.id)
+        # v0 alignment Plan #2 + #8: tear down the stage worktree
+        # whenever we route through _fail_stage (covers exception +
+        # predicate failure paths).
+        self._teardown_stage_isolation(stage_def.id)
 
     def _write_manifest_for_latest_run(self, stage_id: str) -> None:
         """Write the integrity manifest for the latest run dir of *stage_id*.
@@ -917,6 +931,96 @@ class JobDriver:
         except Exception as exc:
             log.warning(
                 "failed to write archive manifest for %s/%s: %s",
+                self.job_slug,
+                stage_id,
+                exc,
+            )
+
+    # ------------------------------------------------------------------
+    # Stage isolation (v0 alignment Plan #2 + #8)
+    # ------------------------------------------------------------------
+
+    def _project_repo(self) -> Path | None:
+        """Resolve the project's repo path from job.json → project.json.
+
+        Returns ``None`` if the project file is missing/unreadable or
+        the repo isn't a git repo (fake-fixture / synthetic test
+        fixtures). Callers treat ``None`` as "skip isolation".
+        """
+        try:
+            from shared.models import ProjectConfig
+
+            cfg = self._read_job_config()
+            project_path = paths.project_json(cfg.project_slug, root=self.root)
+            if not project_path.exists():
+                return None
+            project = ProjectConfig.model_validate_json(project_path.read_text())
+            repo = Path(project.repo_path)
+        except (FileNotFoundError, ValidationError, json.JSONDecodeError, OSError) as exc:
+            log.warning("could not resolve project repo for %s: %s", self.job_slug, exc)
+            return None
+        if not (repo / ".git").exists():
+            return None
+        return repo
+
+    def _stage_worktree_path(self, stage_id: str) -> Path:
+        """Per-stage worktree path under the job dir."""
+        return paths.stage_dir(self.job_slug, stage_id, root=self.root) / "worktree"
+
+    def _setup_stage_isolation(self, stage_id: str) -> None:
+        """Create the stage branch + worktree before the runner starts.
+
+        Idempotent: a worktree that already exists for the same branch
+        (e.g. resume after crash) is reused. Best-effort: **any**
+        failure (missing parent branch, git error, worktree conflict,
+        permissions) logs and skips isolation. The stage then runs
+        against the project root, which keeps existing test fixtures
+        and not-yet-isolated workflows working.
+        """
+        repo = self._project_repo()
+        if repo is None:
+            return
+        try:
+            from dashboard.code.branches import create_stage_branch
+            from dashboard.code.worktrees import (
+                WorktreeExistsError,
+                add_worktree,
+            )
+
+            branch = create_stage_branch(repo, self.job_slug, stage_id)
+            wt = self._stage_worktree_path(stage_id)
+            try:
+                add_worktree(repo, wt, branch, reuse_existing=True)
+            except WorktreeExistsError as exc:
+                # Existing worktree for a different branch — wiring bug;
+                # fail-soft for v0 (run in project root) and log loudly.
+                log.error("stage worktree conflict for %s/%s: %s", self.job_slug, stage_id, exc)
+        except Exception as exc:
+            log.warning(
+                "stage isolation failed for %s/%s: %s — running in-place",
+                self.job_slug,
+                stage_id,
+                exc,
+            )
+
+    def _teardown_stage_isolation(self, stage_id: str) -> None:
+        """Remove the stage worktree on terminal stage state.
+
+        Branch survives — kept on disk for forensics until the human or
+        a v1+ cleanup pass deletes it. Best-effort: any failure logs
+        but never masks the actual stage outcome.
+        """
+        repo = self._project_repo()
+        if repo is None:
+            return
+        wt = self._stage_worktree_path(stage_id)
+        try:
+            from dashboard.code.worktrees import remove_worktree
+
+            remove_worktree(repo, wt, missing_ok=True)
+        except Exception as exc:
+            log.warning(
+                "failed to remove stage worktree for %s/%s: %s",
                 self.job_slug,
                 stage_id,
                 exc,
