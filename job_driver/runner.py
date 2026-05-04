@@ -905,6 +905,12 @@ class JobDriver:
 
         The driver returns control to its caller (typically ``main()``); the
         dashboard re-spawns the driver after the human action lands on disk.
+
+        P5 (real-claude e2e precondition track): in addition to the
+        stage.json + job.json transitions, create a HilItem so
+        ``POST /api/hil/{id}/answer`` can resolve the freshly-blocked
+        stage. Without this the operator (and the e2e test) had nothing
+        to answer against.
         """
         # Persist stage as BLOCKED_ON_HUMAN (creates stage.json if absent).
         sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
@@ -932,6 +938,42 @@ class JobDriver:
             stage_id=stage_def.id,
             payload={"to": "BLOCKED_ON_HUMAN", "reason": reason},
         )
+
+        # P5: create + persist the HilItem so the answer endpoint can
+        # resolve it. Best-effort with narrow except so a write failure
+        # doesn't block the stage/job state transitions above.
+        try:
+            from shared.hil_factory import create_stage_block_hil_item
+
+            item = create_stage_block_hil_item(
+                job_slug=self.job_slug,
+                stage_id=stage_def.id,
+                instructions=(
+                    f"Stage {stage_def.id!r} is blocked on a human. "
+                    f"Reason: {reason}. Resolve the gate (write the required "
+                    f"output and/or answer this HIL item) so the driver can "
+                    f"resume."
+                ),
+                root=self.root,
+                now=self._now(),
+            )
+            self._emit_event(
+                "hil_item_opened",
+                stage_id=stage_def.id,
+                payload={
+                    "item_id": item.id,
+                    "stage_id": stage_def.id,
+                    "kind": item.kind,
+                },
+            )
+        except OSError as exc:
+            log.warning(
+                "could not write HilItem for stage block %s/%s: %s",
+                self.job_slug,
+                stage_def.id,
+                exc,
+            )
+
         self._write_job_state(JobState.BLOCKED_ON_HUMAN)
         log.info(
             "Job %s blocked on human (stage=%s, reason=%s)", self.job_slug, stage_def.id, reason

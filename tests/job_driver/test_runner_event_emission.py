@@ -122,9 +122,7 @@ def _read_events(root: Path, job_slug: str) -> list[Event]:
     p = paths.job_events_jsonl(job_slug, root=root)
     if not p.exists():
         return []
-    return [
-        Event.model_validate_json(line) for line in p.read_text().splitlines() if line.strip()
-    ]
+    return [Event.model_validate_json(line) for line in p.read_text().splitlines() if line.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +132,7 @@ async def test_jobdriver_emits_worktree_created(tmp_path: Path) -> None:
     """After the JobDriver calls add_worktree, a ``worktree_created``
     event reaches events.jsonl with the worktree path + branch in the
     payload — the e2e test asserts on this for outcome #13."""
-    root, repo, job_slug = _seed_one_stage_job(tmp_path)
+    root, _repo, job_slug = _seed_one_stage_job(tmp_path)
     fixtures = tmp_path / "fixtures"
 
     driver = JobDriver(
