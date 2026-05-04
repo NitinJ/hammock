@@ -335,9 +335,7 @@ def test_input_outside_job_dir_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("description", ["", None, "   "])
-def test_blank_description_falls_back_to_id(
-    tmp_path: Path, description: str | None
-) -> None:
+def test_blank_description_falls_back_to_id(tmp_path: Path, description: str | None) -> None:
     prompt = build_stage_prompt(
         _stage(sid="fallback-id", description=description),
         job_prompt="x",

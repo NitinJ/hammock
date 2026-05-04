@@ -76,9 +76,7 @@ def build_stage_prompt(
     outputs = stage_def.exit_condition.required_outputs or []
     if outputs:
         parts.extend(["", "## Required outputs", ""])
-        parts.extend(
-            _render_outputs(outputs, stage_def.exit_condition.artifact_validators)
-        )
+        parts.extend(_render_outputs(outputs, stage_def.exit_condition.artifact_validators))
 
     parts.extend(
         [
@@ -96,9 +94,7 @@ def build_stage_prompt(
     return "\n".join(parts)
 
 
-def _render_inputs(
-    paths: list[str], job_dir: Path, max_bytes: int
-) -> list[str]:
+def _render_inputs(paths: list[str], job_dir: Path, max_bytes: int) -> list[str]:
     out: list[str] = []
     job_dir_resolved = job_dir.resolve()
     for relpath in paths:

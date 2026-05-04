@@ -48,9 +48,7 @@ from shared.models.project import ProjectConfig
 # ``hammock`` is a namespace package (no __init__.py); resolve the
 # bundled Stop-hook script via importlib.resources so tests + production
 # both find it regardless of how Hammock is installed.
-_BUNDLED_STOP_HOOK: Path = Path(
-    str(_pkg_files("hammock") / "hooks" / "validate-stage-exit.sh")
-)
+_BUNDLED_STOP_HOOK: Path = Path(str(_pkg_files("hammock") / "hooks" / "validate-stage-exit.sh"))
 
 
 def _setup_logging() -> None:

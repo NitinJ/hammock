@@ -160,6 +160,14 @@ class JobDriver:
     # Stage execution loop
     # ------------------------------------------------------------------
 
+    # P3 (real-claude e2e precondition track): expander stages append
+    # new entries to ``stage-list.yaml`` at runtime; the driver must
+    # re-read after each successful expander so the appended stages
+    # actually execute. Cap the total stages a single job can reach
+    # so a runaway expander surfaces as a hard error rather than an
+    # infinite loop.
+    _MAX_STAGES_PER_JOB: int = 1000
+
     async def _execute_stages(self) -> None:
         stages = self._read_stages()
         # loop_back iteration counters: keyed by (review_stage_id, target_stage_id)
@@ -341,6 +349,27 @@ class JobDriver:
                             reason=f"loop_back max_iterations exhausted ({stage_def.id} → {lb.to})",
                         )
                         return
+
+            # P3: dynamic expansion. After a successful expander stage,
+            # re-read stage-list.yaml so any newly-appended entries get
+            # picked up. Expanders may only append; they must not
+            # reorder or remove existing entries (the loop trusts
+            # per-stage state for "is this done?", not list order, so
+            # removed entries are inert — but reordering would break
+            # loop_back targeting).
+            if stage_def.is_expander:
+                stages = self._read_stages()
+                if len(stages) > self._MAX_STAGES_PER_JOB:
+                    log.error(
+                        "stage-list expansion exceeded %d entries; aborting",
+                        self._MAX_STAGES_PER_JOB,
+                    )
+                    self._fail_stage(
+                        stage_def,
+                        reason=f"runaway expander: stage list grew past {self._MAX_STAGES_PER_JOB}",
+                    )
+                    self._write_job_state(JobState.FAILED)
+                    return
             i += 1
 
         # All stages done — verify final-stage outputs exist before COMPLETED.
