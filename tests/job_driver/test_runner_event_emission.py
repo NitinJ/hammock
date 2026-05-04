@@ -196,6 +196,55 @@ async def test_jobdriver_emits_worker_exit_on_stage_failure(tmp_path: Path) -> N
     assert exits[0].payload["succeeded"] is False
 
 
+async def test_jobdriver_emits_worker_exit_on_runner_exception(tmp_path: Path) -> None:
+    """Codex review on PR #28: when StageRunner.run() raises, the
+    worker_exit event must still fire so the e2e contract holds."""
+
+    class _CrashingRunner:
+        async def run(
+            self,
+            stage_def: StageDefinition,
+            job_dir: Path,
+            stage_run_dir: Path,
+        ) -> StageResult:
+            del stage_def, job_dir, stage_run_dir
+            raise RuntimeError("simulated runner crash")
+
+    root, _repo, job_slug = _seed_one_stage_job(tmp_path)
+    driver = JobDriver(
+        job_slug,
+        root=root,
+        stage_runner=_CrashingRunner(),
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    events = _read_events(root, job_slug)
+    exits = [e for e in events if e.event_type == "worker_exit"]
+    assert len(exits) == 1
+    payload = exits[0].payload
+    assert payload["succeeded"] is False
+    assert "simulated runner crash" in (payload.get("reason") or "")
+
+
+async def test_worktree_created_payload_path_is_absolute(tmp_path: Path) -> None:
+    """Codex review on PR #28: lock the path-format contract so the
+    e2e test doesn't churn on absolute-vs-relative ambiguity."""
+    root, _repo, job_slug = _seed_one_stage_job(tmp_path)
+    fixtures = tmp_path / "fixtures"
+    driver = JobDriver(
+        job_slug,
+        root=root,
+        stage_runner=FakeStageRunner(fixtures),
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    events = _read_events(root, job_slug)
+    created = next(e for e in events if e.event_type == "worktree_created")
+    assert Path(created.payload["path"]).is_absolute()
+
+
 async def test_real_stage_runner_populates_exit_code() -> None:
     """RealStageRunner must set ``StageResult.exit_code`` from
     proc.returncode so worker_exit carries the real number, not None."""

@@ -507,7 +507,24 @@ class JobDriver:
             return None
 
         # If the runner raised, propagate so the caller can fail the job.
-        result: StageResult = stage_task.result()
+        # Codex review on PR #28: emit worker_exit with succeeded=False
+        # before re-raising — otherwise a crashing subprocess leaves no
+        # trail in events.jsonl (the e2e test contract is "every claude
+        # subprocess that ran emitted a worker_exit event").
+        try:
+            result: StageResult = stage_task.result()
+        except BaseException as exc:
+            self._emit_event(
+                "worker_exit",
+                stage_id=stage_def.id,
+                payload={
+                    "stage_id": stage_def.id,
+                    "exit_code": None,
+                    "succeeded": False,
+                    "reason": f"runner exception: {exc!r}",
+                },
+            )
+            raise
 
         # Budget post-check: a runner that reports success but blew the
         # spend cap is still a budget-overrun failure (workers cannot
@@ -942,9 +959,14 @@ class JobDriver:
         # P5: create + persist the HilItem so the answer endpoint can
         # resolve it. Best-effort with narrow except so a write failure
         # doesn't block the stage/job state transitions above.
-        try:
-            from shared.hil_factory import create_stage_block_hil_item
+        # Split try blocks (codex review on PR #28): a HilItem that
+        # persisted but whose hil_item_opened event failed to emit is
+        # NOT a "could not write HilItem" condition — the dashboard
+        # watcher tailer will pick the item up off disk regardless.
+        from shared.hil_factory import create_stage_block_hil_item
 
+        item = None
+        try:
             item = create_stage_block_hil_item(
                 job_slug=self.job_slug,
                 stage_id=stage_def.id,
@@ -957,15 +979,6 @@ class JobDriver:
                 root=self.root,
                 now=self._now(),
             )
-            self._emit_event(
-                "hil_item_opened",
-                stage_id=stage_def.id,
-                payload={
-                    "item_id": item.id,
-                    "stage_id": stage_def.id,
-                    "kind": item.kind,
-                },
-            )
         except OSError as exc:
             log.warning(
                 "could not write HilItem for stage block %s/%s: %s",
@@ -973,6 +986,23 @@ class JobDriver:
                 stage_def.id,
                 exc,
             )
+        if item is not None:
+            try:
+                self._emit_event(
+                    "hil_item_opened",
+                    stage_id=stage_def.id,
+                    payload={
+                        "item_id": item.id,
+                        "stage_id": stage_def.id,
+                        "kind": item.kind,
+                    },
+                )
+            except OSError as exc:
+                log.warning(
+                    "HilItem %s persisted but hil_item_opened event emit failed: %s",
+                    item.id,
+                    exc,
+                )
 
         self._write_job_state(JobState.BLOCKED_ON_HUMAN)
         log.info(
