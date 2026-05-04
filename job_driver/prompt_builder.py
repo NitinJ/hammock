@@ -122,12 +122,27 @@ def build_stage_prompt(
             "",
             "- `git` — full git CLI in the working directory (worktree).",
             "- `gh` — GitHub CLI, already authenticated. Use it to push branches "
-            "(`git push -u origin <branch>` works via gh's credential helper) and "
-            "to open PRs (`gh pr create --title ... --body ...`). When your stage "
-            "produces a PR or merge artefact, OPEN A REAL PR via `gh pr create` and "
-            "include the PR URL it returns in your stage output (e.g. summary.md, "
-            "pr-merge-summary.md). Do NOT fabricate URLs.",
+            "and open PRs.",
             "- `pytest` / language toolchains — run inline as needed for verification.",
+            "",
+            "### Branch + PR protocol (MANDATORY for stages that produce code changes "
+            "or merge artefacts)",
+            "",
+            "If your stage's description, output filenames, or required outputs "
+            "mention any of: PR, pull request, merge, push, branch, commit — you "
+            "MUST do all of the following before exiting:",
+            "",
+            "1. Make the code changes in the working directory.",
+            "2. `git add` + `git commit` with a meaningful message.",
+            "3. `git push -u origin HEAD` (works via gh's git credential helper).",
+            "4. `gh pr create --title <title> --body <body> --base main` to open a "
+            "real PR. Capture the URL it prints to stdout.",
+            "5. Include the captured PR URL in every required output that documents "
+            "the PR/merge work (e.g. summary.md, pr-merge-summary.md, "
+            "implementation-summary.md). Use the literal URL gh returned.",
+            "",
+            "Never fabricate or guess a URL. If `gh pr create` fails, surface the "
+            "stderr verbatim in the output rather than continuing as if it succeeded.",
             "",
         ]
     )

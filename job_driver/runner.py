@@ -730,7 +730,29 @@ class JobDriver:
             for s in existing_data["stages"]
             if isinstance(s, dict)
         }
-        appended = 0
+        # Insert AFTER the expander stage's review triple (and any other
+        # stages the template put adjacent to the expander), but BEFORE
+        # downstream stages like run-integration-tests + write-summary
+        # which depend on the appended stages running first. Concretely:
+        # find the LAST occurrence of any review-{stage_def.id}-* stage,
+        # and insert after that. If no such review stage exists, fall
+        # back to inserting right after the expander itself.
+        review_prefix = f"review-{stage_def.id}-"
+        insert_idx = None
+        for idx, s in enumerate(existing_data["stages"]):
+            if not isinstance(s, dict):
+                continue
+            sid = s.get("id")
+            if sid == stage_def.id:
+                insert_idx = idx + 1
+            elif sid and isinstance(sid, str) and sid.startswith(review_prefix):
+                insert_idx = idx + 1
+        if insert_idx is None:
+            # Expander not in the list (shouldn't happen) — fall back
+            # to appending at the end.
+            insert_idx = len(existing_data["stages"])
+
+        new_stages: list[dict[str, object]] = []
         for stage_spec in plan_stages:
             if not isinstance(stage_spec, dict):
                 continue
@@ -738,19 +760,21 @@ class JobDriver:
             if not sid or sid in existing_ids:
                 continue
             existing_ids.add(sid)
-            existing_data["stages"].append(stage_spec)
-            appended += 1
-        if appended == 0:
+            new_stages.append(stage_spec)
+        if not new_stages:
             return
+
+        existing_data["stages"][insert_idx:insert_idx] = new_stages
         from shared.atomic import atomic_write_text
 
         atomic_write_text(
             stage_list_path, yaml.safe_dump(existing_data, sort_keys=False)
         )
         log.info(
-            "expander %s: merged %d stages from plan.yaml into stage-list.yaml",
+            "expander %s: merged %d stages from plan.yaml into stage-list.yaml at index %d",
             stage_def.id,
-            appended,
+            len(new_stages),
+            insert_idx,
         )
 
     def _read_stages(self) -> list[StageDefinition]:
