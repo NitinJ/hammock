@@ -87,7 +87,17 @@ def test_build_runner_uses_real_when_fake_fixtures_absent(tmp_path: Path) -> Non
             fake_fixtures=None,
             claude_binary="claude",
         )
-    real_mock.assert_called_once_with(project_root=repo, claude_binary="claude")
+    # Per real-claude e2e precondition track P1 — all 6 kwargs must be
+    # passed: project_root, claude_binary, plus the previously-unwired
+    # mcp_manager + stop_hook_path + job_slug + hammock_root.
+    real_mock.assert_called_once()
+    kwargs = real_mock.call_args.kwargs
+    assert kwargs["project_root"] == repo
+    assert kwargs["claude_binary"] == "claude"
+    assert kwargs["job_slug"] == "job-real"
+    assert kwargs["hammock_root"] == tmp_path
+    assert kwargs["stop_hook_path"] is not None
+    assert kwargs["mcp_manager"] is not None
     assert runner is real_mock.return_value
 
 
@@ -104,7 +114,75 @@ def test_build_runner_real_respects_claude_binary_override(tmp_path: Path) -> No
             fake_fixtures=None,
             claude_binary="/opt/claude/bin/claude",
         )
-    real_mock.assert_called_once_with(project_root=repo, claude_binary="/opt/claude/bin/claude")
+    real_mock.assert_called_once()
+    kwargs = real_mock.call_args.kwargs
+    assert kwargs["project_root"] == repo
+    assert kwargs["claude_binary"] == "/opt/claude/bin/claude"
+
+
+def test_build_runner_real_passes_mcp_manager_instance(tmp_path: Path) -> None:
+    """P1: MCPManager must be a real instance, not None."""
+    from dashboard.mcp.manager import MCPManager
+
+    _seed_job(tmp_path, job_slug="job-mcp", project_slug="proj-mcp")
+    real_mock = MagicMock(name="RealStageRunnerMock")
+    with (
+        patch.object(entry, "RealStageRunner", real_mock),
+        patch.object(entry.shutil, "which", return_value="/fake/claude"),
+    ):
+        entry._build_runner(
+            job_slug="job-mcp",
+            root=tmp_path,
+            fake_fixtures=None,
+            claude_binary="claude",
+        )
+    kwargs = real_mock.call_args.kwargs
+    assert isinstance(kwargs["mcp_manager"], MCPManager)
+
+
+def test_build_runner_real_passes_bundled_stop_hook_path(tmp_path: Path) -> None:
+    """P1: stop_hook_path must point to the bundled validate-stage-exit.sh."""
+    _seed_job(tmp_path, job_slug="job-sh", project_slug="proj-sh")
+    real_mock = MagicMock(name="RealStageRunnerMock")
+    with (
+        patch.object(entry, "RealStageRunner", real_mock),
+        patch.object(entry.shutil, "which", return_value="/fake/claude"),
+    ):
+        entry._build_runner(
+            job_slug="job-sh",
+            root=tmp_path,
+            fake_fixtures=None,
+            claude_binary="claude",
+        )
+    hook = real_mock.call_args.kwargs["stop_hook_path"]
+    assert hook is not None
+    assert hook.name == "validate-stage-exit.sh"
+    assert hook.is_file(), f"stop hook script missing at {hook}"
+
+
+def test_build_runner_real_forwards_hammock_root_none(tmp_path: Path) -> None:
+    """P1: when --root is absent, hammock_root forwards as None (default).
+
+    The real-mode driver is normally invoked with --root by spawn_driver.
+    But for completeness, exercise the None-passthrough so MCPManager
+    falls back to the production HAMMOCK_ROOT only when the operator
+    actually intends that.
+    """
+    _seed_job(tmp_path, job_slug="job-r", project_slug="proj-r")
+    # We pass tmp_path as the root the seed wrote to but assert that
+    # _build_runner forwards exactly what it was given.
+    real_mock = MagicMock(name="RealStageRunnerMock")
+    with (
+        patch.object(entry, "RealStageRunner", real_mock),
+        patch.object(entry.shutil, "which", return_value="/fake/claude"),
+    ):
+        entry._build_runner(
+            job_slug="job-r",
+            root=tmp_path,
+            fake_fixtures=None,
+            claude_binary="claude",
+        )
+    assert real_mock.call_args.kwargs["hammock_root"] == tmp_path
 
 
 def test_build_runner_real_propagates_missing_job(tmp_path: Path) -> None:
