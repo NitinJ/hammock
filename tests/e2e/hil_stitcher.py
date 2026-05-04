@@ -138,6 +138,17 @@ async def stitch_hil_gate(
         if item is not None:
             item_id = item.id
             answer_payload = _default_manual_step_answer()
+            # The dashboard's cache is populated at lifespan startup; HIL
+            # items written by the JobDriver after that point only reach
+            # cache via the filesystem watcher (off in test mode) or a
+            # rescan. Force a rescan from disk so the answer endpoint
+            # sees the fresh item — caught during the real-claude e2e
+            # dogfood: cache miss → 404.
+            app_obj = getattr(app_client, "app", None)
+            cache = getattr(getattr(app_obj, "state", None), "cache", None)
+            scan = getattr(cache, "_scan", None)
+            if callable(scan):
+                scan(root)
             resp = app_client.post(f"/api/hil/{item.id}/answer", json=answer_payload)
             answer_called = True
             if resp.status_code != 200:
