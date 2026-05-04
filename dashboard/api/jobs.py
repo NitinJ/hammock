@@ -7,16 +7,23 @@ Cancel / restart / chat POST sub-resources land in Stage 15.
 
 from __future__ import annotations
 
+import logging
+import subprocess
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from dashboard.code.branches import create_job_branch
 from dashboard.compiler.compile import compile_job
 from dashboard.driver.lifecycle import spawn_driver
 from dashboard.state import projections
 from dashboard.state.projections import JobDetail, JobListItem
-from shared.models import JobState
+from shared import paths
+from shared.models import JobState, ProjectConfig
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -87,6 +94,28 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
         )
 
     if not result.dry_run:
+        # v0 alignment Plan #2 + #8: create the per-job branch in the
+        # project's repo before spawning the driver. Best-effort: if the
+        # repo isn't a real git repo (some test fixtures point at fake
+        # paths), log a warning and continue. For a registered real
+        # repo, surface git failures as a structured 500 so the
+        # operator sees them (Codex review of PR #24, MEDIUM 2).
+        try:
+            _create_job_branch_best_effort(
+                project_slug=body.project_slug,
+                job_slug=result.job_slug,
+                root=settings.root,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"failed to create hammock/jobs/{result.job_slug} in "
+                    f"{body.project_slug!r}: {exc}. The job dir is on disk "
+                    "but no driver was spawned. Investigate the git error and "
+                    "either re-submit or spawn the driver manually."
+                ),
+            ) from exc
         await spawn_driver(
             result.job_slug,
             root=settings.root,
@@ -97,3 +126,54 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
 
     stages_out = [s.model_dump(mode="json") for s in result.stages]
     return JobSubmitResponse(job_slug=result.job_slug, dry_run=True, stages=stages_out)
+
+
+def _create_job_branch_best_effort(
+    *,
+    project_slug: str,
+    job_slug: str,
+    root: Path | None,
+) -> None:
+    """Read project.json + create ``hammock/jobs/<slug>`` in the repo.
+
+    Codex review of PR #24 narrowed the best-effort posture: only the
+    "this isn't a git repo at all" case is silenced (synthetic test
+    fixtures, v0 fake-fixture flows). Real git failures against a
+    *registered* repo (permissions, refs/locks, disk-full) propagate
+    so the operator can act on them — silent degradation to
+    unisolated execution is the wrong default for a real job.
+
+    Silenced (logged, not raised):
+
+    - project.json missing or unreadable.
+    - repo_path doesn't exist on disk.
+    - repo_path isn't a git repo (no ``.git/``).
+
+    Propagates:
+
+    - Any ``CalledProcessError`` from ``git branch`` against an
+      otherwise-valid registered repo (the operator needs to see it).
+    """
+    try:
+        project = ProjectConfig.model_validate_json(
+            paths.project_json(project_slug, root=root).read_text()
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        log.warning(
+            "could not read project.json for %s: %s — skipping job-branch creation",
+            project_slug,
+            exc,
+        )
+        return
+
+    repo = Path(project.repo_path)
+    if not (repo / ".git").exists():
+        log.warning(
+            "%s is not a git repo — skipping job-branch creation for %s",
+            repo,
+            job_slug,
+        )
+        return
+
+    # Real registered repo: any git failure here is operator-actionable.
+    create_job_branch(repo, job_slug, base=project.default_branch)

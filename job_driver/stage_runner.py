@@ -280,6 +280,14 @@ class RealStageRunner:
             env = self._build_env(job_dir, stage_def)
 
             stream_path = agent0_dir / "stream.jsonl"
+            # v0 alignment Plan #2 + #8: discover the per-stage worktree
+            # at the convention path
+            # ``<job_dir>/stages/<sid>/worktree`` and use it as the
+            # subprocess cwd instead of the project root. This is what
+            # gives parallel stages real isolation. If the JobDriver
+            # didn't set one up (fake-fixture flows; non-git project
+            # repos), fall back to the project root.
+            cwd = self._cwd_for_stage(stage_def, stage_run_dir)
             # Capture stderr to a log file so claude failures (auth, flag
             # validation, segfaults) are diagnosable from the job dir
             # alone — without this, every failure mode is silent.
@@ -290,7 +298,7 @@ class RealStageRunner:
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=stderr_fd,
-                    cwd=str(self._project_root),
+                    cwd=str(cwd),
                     env=env,
                 )
             finally:
@@ -345,6 +353,26 @@ class RealStageRunner:
         finally:
             if mcp_handle is not None and self._mcp_manager is not None:
                 self._mcp_manager.dispose(mcp_handle)
+
+    def _cwd_for_stage(self, stage_def: StageDefinition, stage_run_dir: Path) -> Path:
+        """Pick the cwd for the claude subprocess.
+
+        v0 alignment Plan #2 + #8: prefer the per-stage worktree at
+        ``<job_dir>/stages/<sid>/worktree`` (set up by the JobDriver
+        before this method is called). Fall back to ``project_root``
+        when no worktree exists — fake-fixture tests, projects whose
+        repo isn't a git repo, or any path the JobDriver couldn't
+        isolate.
+
+        ``stage_run_dir`` looks like ``<job>/stages/<sid>/run-N`` so
+        ``stage_run_dir.parent / "worktree"`` is the convention path
+        (``<job>/stages/<sid>/worktree``).
+        """
+        del stage_def  # symmetry only; future overrides may use it
+        worktree = stage_run_dir.parent / "worktree"
+        if worktree.is_dir():
+            return worktree
+        return self._project_root
 
     def _write_session_settings(
         self,

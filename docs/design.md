@@ -3230,24 +3230,24 @@ This section pins down how hammock interacts with git and GitHub: the branch top
 ### The three primitives map to git
 
 ```
-Job   ──▶  one branch off main:           job/<slug>
-Stage ──▶  one branch off job, one PR:    job/<slug>/stage/<sid>
-Task  ──▶  one branch off stage:          job/<slug>/stage/<sid>/task/<tid>
+Job   ──▶  one branch off main:           hammock/jobs/<slug>
+Stage ──▶  one branch off job, one PR:    hammock/stages/<slug>/<sid>
+Task  ──▶  one branch off stage:          hammock/tasks/<slug>/<sid>/<tid>
 ```
 
 A Job is a high-level user intent that produces a sequence of Stages. Each Stage is run by an Agent0 that owns one branch and ultimately opens one PR. Tasks within a stage are dispatched by Agent0 to SubAgents; each Task has its own branch and worktree so SubAgents can work in parallel without stepping on each other.
 
-The branch names are long but self-documenting and collision-free. Git accepts slashes in branch names.
+The branch names are self-documenting and collision-free. **Disjoint sub-namespaces** (`hammock/jobs/...`, `hammock/stages/...`, `hammock/tasks/...`) are required because git's ref tree cannot hold both `hammock/x` (file) and `hammock/x/y` (dir at the same path). An earlier draft used `job/<slug>/stage/<sid>` but git rejected `job/foo/stage/bar` whenever `job/foo` already existed as a branch. The disjoint-prefix layout sidesteps the conflict and preserves grep-ability of all hammock-managed branches via `git branch | grep '^hammock/'`.
 
 ### Branch topology
 
 ```
 main
-└── job/<slug>                                     # Hammock creates at job start
-    ├── job/<slug>/stage/<sid>                     # Hammock creates per stage
-    │   ├── job/<slug>/stage/<sid>/task/<tid_a>    # Agent0 creates per task
-    │   └── job/<slug>/stage/<sid>/task/<tid_b>
-    └── job/<slug>/stage/<next_sid>
+└── hammock/jobs/<slug>                              # Hammock creates at job start
+    ├── hammock/stages/<slug>/<sid>                  # Hammock creates per stage
+    │   ├── hammock/tasks/<slug>/<sid>/<tid_a>       # Agent0 creates per task
+    │   └── hammock/tasks/<slug>/<sid>/<tid_b>
+    └── hammock/stages/<slug>/<next_sid>
 ```
 
 Each stage branch is born from the *current tip* of the job branch at the moment Agent0 spawns. Stage N-1's merged work is therefore automatically present in stage N's starting commit — no special "rebase before starting" dance needed.

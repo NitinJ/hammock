@@ -395,6 +395,65 @@ pnpm install
 pnpm build
 ```
 
+### Stage isolation — stale worktrees and branch cleanup
+
+Each stage attempt is checked out into a per-stage worktree at
+`<HAMMOCK_ROOT>/jobs/<job_slug>/stages/<stage_id>/worktree/` on a
+branch named `hammock/stages/<job_slug>/<stage_id>` (job branch is
+`hammock/jobs/<job_slug>`). v0 keeps these on disk after the stage
+reaches a terminal state so the operator can inspect or re-run from
+the same checkout. They accumulate until you prune them.
+
+**Inspect what's outstanding:**
+
+```bash
+# List all hammock-managed branches in the project repo
+git -C /path/to/project branch | grep '^[ *]\+hammock/'
+
+# List registered worktrees
+git -C /path/to/project worktree list
+```
+
+**Prune everything for a finished job:**
+
+```bash
+# 1. Remove worktrees (force handles dirty trees)
+for d in ~/.hammock/jobs/<slug>/stages/*/worktree; do
+    git -C /path/to/project worktree remove --force "$d"
+done
+
+# 2. Sweep the worktree registry
+git -C /path/to/project worktree prune
+
+# 3. Delete the stage branches
+git -C /path/to/project branch | grep "hammock/stages/<slug>/" \
+  | xargs git -C /path/to/project branch -D
+
+# 4. (Optional) Delete the job branch
+git -C /path/to/project branch -D hammock/jobs/<slug>
+```
+
+**Submit returned `500 — failed to create hammock/jobs/<slug>`:**
+
+The project's repo is real but Hammock couldn't create the job
+branch. Check:
+
+- The default branch named in `project.json` actually exists
+  (`git branch | grep <default-branch>`).
+- The repo isn't locked by another process
+  (`ls /path/to/project/.git/index.lock`).
+- A previous submit didn't already create
+  `hammock/jobs/<slug>` at a tip you don't expect — re-running submit
+  is idempotent (it reuses the existing branch); prune first if you
+  need a clean state.
+
+**Worktree at expected path is on the *wrong* branch:**
+
+The driver fails the stage rather than silently running in the wrong
+checkout. Recover by removing the stale worktree
+(`git -C /path/to/project worktree remove --force <path>`) and
+re-spawning the driver from the dashboard's stage live view.
+
 ---
 
 ## 9. Manual dogfood — run hammock on hammock

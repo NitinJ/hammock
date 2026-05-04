@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -368,6 +369,13 @@ class JobDriver:
         # temp name and os.replace() it over latest, so readers never see a
         # missing latest.
         self._update_latest_symlink(stage_def.id, stage_run_dir.name)
+
+        # v0 alignment Plan #2 + #8: pre-stage isolation. Create the
+        # stage branch off the job branch, then check it out into a
+        # worktree under <job_dir>/stages/<sid>/worktree/. Best-effort:
+        # if the project repo isn't a real git repo, skip isolation
+        # and run the stage in-place (fake-fixture flows; tests).
+        self._setup_stage_isolation(stage_def.id)
 
         # Persist RUNNING state
         stage_run = StageRun(
@@ -921,3 +929,110 @@ class JobDriver:
                 stage_id,
                 exc,
             )
+
+    # ------------------------------------------------------------------
+    # Stage isolation (v0 alignment Plan #2 + #8)
+    # ------------------------------------------------------------------
+
+    def _project_repo(self) -> Path | None:
+        """Resolve the project's repo path from job.json → project.json.
+
+        Returns ``None`` if the project file is missing/unreadable or
+        the repo isn't a git repo (fake-fixture / synthetic test
+        fixtures). Callers treat ``None`` as "skip isolation".
+        """
+        try:
+            from shared.models import ProjectConfig
+
+            cfg = self._read_job_config()
+            project_path = paths.project_json(cfg.project_slug, root=self.root)
+            if not project_path.exists():
+                return None
+            project = ProjectConfig.model_validate_json(project_path.read_text())
+            repo = Path(project.repo_path)
+        except (FileNotFoundError, ValidationError, json.JSONDecodeError, OSError) as exc:
+            log.warning("could not resolve project repo for %s: %s", self.job_slug, exc)
+            return None
+        if not (repo / ".git").exists():
+            return None
+        return repo
+
+    def _stage_worktree_path(self, stage_id: str) -> Path:
+        """Per-stage worktree path under the job dir."""
+        return paths.stage_dir(self.job_slug, stage_id, root=self.root) / "worktree"
+
+    def _setup_stage_isolation(self, stage_id: str) -> None:
+        """Create the stage branch + worktree before the runner starts.
+
+        Idempotent: a worktree that already exists for the same branch
+        (e.g. resume after crash) is reused.
+
+        Failure handling — Codex review of PR #24 narrowed the catch
+        from a blanket ``Exception`` to a specific list because the
+        original posture silently masked permission errors, disk-full,
+        and (most dangerously) ``WorktreeExistsError`` for *branch
+        mismatches* (which would have left a stale dir for the wrong
+        branch and silently run claude in it):
+
+        - ``BranchNotFoundError`` (parent branch missing — synthetic
+          test repos) → log + skip isolation.
+        - ``subprocess.CalledProcessError`` (low-level git failures
+          like a partially-initialised repo) → log + skip.
+        - ``WorktreeExistsError`` for a *branch mismatch* → **fatal**:
+          re-raise so the JobDriver fails the stage rather than running
+          in a stale worktree.
+        - Anything else (PermissionError, OSError, etc.) → re-raise.
+        """
+        repo = self._project_repo()
+        if repo is None:
+            return
+        from dashboard.code.branches import BranchNotFoundError, create_stage_branch
+        from dashboard.code.worktrees import WorktreeExistsError, add_worktree
+
+        try:
+            branch = create_stage_branch(repo, self.job_slug, stage_id)
+        except BranchNotFoundError as exc:
+            log.warning(
+                "stage isolation skipped for %s/%s: parent branch missing (%s)",
+                self.job_slug,
+                stage_id,
+                exc,
+            )
+            return
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "stage isolation skipped for %s/%s: git error creating stage branch (%s)",
+                self.job_slug,
+                stage_id,
+                exc,
+            )
+            return
+
+        wt = self._stage_worktree_path(stage_id)
+        try:
+            add_worktree(repo, wt, branch, reuse_existing=True)
+        except WorktreeExistsError:
+            # Branch mismatch — stale worktree for a different branch.
+            # Re-raise so the JobDriver fails the stage loudly. Silent
+            # fall-through here would run claude in the wrong branch.
+            raise
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "stage isolation skipped for %s/%s: git error adding worktree (%s)",
+                self.job_slug,
+                stage_id,
+                exc,
+            )
+
+    # NOTE on v0 worktree teardown (Codex review of PR #24, HIGH 1):
+    #
+    # Earlier drafts of this PR removed the stage worktree at every
+    # terminal stage state (success, failure, cancel, wall-clock,
+    # exception). Per `docs/design.md` § Code plane the workspace is
+    # supposed to survive until the stage's PR is merged so an
+    # operator can inspect the agent's state, fix it up, or re-run
+    # the stage from the same checkout. v0 doesn't have PR-merge
+    # tracking, so we keep ALL worktrees post-stage and defer the
+    # automatic cleanup pass to a v1+ task documented in
+    # `docs/implementation.md § 9`. Operators clean up manually with
+    # `git worktree remove <path>` + `git worktree prune`.
