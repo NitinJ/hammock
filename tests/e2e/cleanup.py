@@ -96,13 +96,24 @@ def _read_total_cost(root: Path) -> float | None:
 
 
 def _delete_branch(repo_slug: str, branch: str, runner: CmdRunner) -> None:
+    """Delete *branch* from the remote via the GitHub API.
+
+    We use ``gh api -X DELETE /repos/<slug>/git/refs/heads/<branch>``
+    rather than ``git push --delete`` because the latter requires the
+    teardown process to be inside (or have its cwd configured for) a
+    clone whose ``origin`` points at the test repo. The cleanup
+    fixture runs from the pytest process's cwd, which is the *hammock
+    dev repo* (origin = the hammock platform itself), so a naked
+    ``git push --delete origin <branch>`` would silently target the
+    wrong remote and report "remote ref does not exist".
+    """
     result = runner(
         [
-            "git",
-            "push",
-            "--delete",
-            "origin",
-            branch,
+            "gh",
+            "api",
+            "-X",
+            "DELETE",
+            f"repos/{repo_slug}/git/refs/heads/{branch}",
         ]
     )
     if result.returncode != 0:
@@ -112,6 +123,57 @@ def _delete_branch(repo_slug: str, branch: str, runner: CmdRunner) -> None:
             result.returncode,
             result.stderr.strip(),
         )
+
+
+def _close_open_prs(repo_slug: str, runner: CmdRunner) -> None:
+    """Close every open PR on *repo_slug* — call from teardown.
+
+    Across reuse-the-same-repo runs, agents open real PRs against
+    main. If we don't close them on teardown, the next run inherits
+    a wall of stale open PRs and (worse) the branches behind them
+    can't be deleted via ``DELETE /git/refs/heads/<branch>`` because
+    GitHub blocks branch-deletion on branches with open PRs.
+    Best-effort; logs and continues on any failure.
+    """
+    list_result = runner(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo_slug,
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--jq",
+            ".[].number",
+            "--limit",
+            "100",
+        ]
+    )
+    if list_result.returncode != 0:
+        log.warning(
+            "could not list PRs for %s: rc=%d stderr=%s",
+            repo_slug,
+            list_result.returncode,
+            list_result.stderr.strip(),
+        )
+        return
+    for line in list_result.stdout.splitlines():
+        num = line.strip()
+        if not num:
+            continue
+        close_result = runner(
+            ["gh", "pr", "close", num, "--repo", repo_slug, "--delete-branch"]
+        )
+        if close_result.returncode != 0:
+            log.warning(
+                "PR #%s close failed: rc=%d stderr=%s — continuing",
+                num,
+                close_result.returncode,
+                close_result.stderr.strip(),
+            )
 
 
 def teardown(
@@ -133,7 +195,11 @@ def teardown(
     else:
         log.info("run cost: $%.4f total (cost_summary.json)", total)
 
-    # 2. Branch diff + delete.
+    # 2. Close any PRs the agent opened (must precede branch deletion:
+    # GitHub refuses to delete a branch with an open PR pointing at it).
+    _close_open_prs(repo_slug, runner)
+
+    # 3. Branch diff + delete.
     current = _list_remote_branches(repo_slug, runner)
     new_branches = current - snapshot.pre_branches
     for branch in sorted(new_branches):

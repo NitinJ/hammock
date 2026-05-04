@@ -104,6 +104,8 @@ def test_teardown_deletes_only_new_branches(tmp_path: Path) -> None:
     snap = RunSnapshot(pre_branches=set(pre))
     # First call inside teardown fetches current branches.
     runner.expect(("gh", "api"), stdout=_gh_branch_listing(post))
+    # PR-close pre-step: empty list (no PRs to close in this scenario).
+    runner.expect(("gh", "pr", "list"), stdout="")
 
     teardown(
         root=tmp_path / "root",
@@ -113,8 +115,14 @@ def test_teardown_deletes_only_new_branches(tmp_path: Path) -> None:
         runner=runner,
     )
 
-    delete_calls = [c for c in runner.calls if c.args[:3] == ["git", "push", "--delete"]]
-    deleted = {c.args[-1] for c in delete_calls}
+    delete_calls = [
+        c
+        for c in runner.calls
+        if c.args[:2] == ["gh", "api"]
+        and "DELETE" in c.args
+        and any("git/refs/heads/" in a for a in c.args)
+    ]
+    deleted = {a.split("git/refs/heads/", 1)[1] for c in delete_calls for a in c.args if "git/refs/heads/" in a}
     assert deleted == {"hammock/jobs/abc", "hammock/stages/abc/x"}
 
 
@@ -205,7 +213,7 @@ def test_teardown_removes_root_when_flag_unset(tmp_path: Path) -> None:
 
 
 def test_teardown_continues_on_branch_delete_failure(tmp_path: Path, caplog: object) -> None:
-    """A failing ``git push --delete`` for one branch logs but doesn't
+    """A failing ``gh api -X DELETE`` for one branch logs but doesn't
     block the others. (Race with concurrent ops on the test repo.)"""
     import pytest as _pytest
 
@@ -214,9 +222,16 @@ def test_teardown_continues_on_branch_delete_failure(tmp_path: Path, caplog: obj
         ("gh", "api"),
         stdout=_gh_branch_listing(["main", "hammock/a", "hammock/b"]),
     )
+    runner.expect(("gh", "pr", "list"), stdout="")
     # Make the first delete fail; the second should still run.
     runner.expect(
-        ("git", "push", "--delete", "origin", "hammock/a"),
+        (
+            "gh",
+            "api",
+            "-X",
+            "DELETE",
+            "repos/me/e2e-test/git/refs/heads/hammock/a",
+        ),
         returncode=1,
         stderr="remote rejected",
     )
@@ -231,7 +246,13 @@ def test_teardown_continues_on_branch_delete_failure(tmp_path: Path, caplog: obj
             runner=runner,
         )
 
-    delete_calls = [c for c in runner.calls if c.args[:3] == ["git", "push", "--delete"]]
+    delete_calls = [
+        c
+        for c in runner.calls
+        if c.args[:2] == ["gh", "api"]
+        and "DELETE" in c.args
+        and any("git/refs/heads/" in a for a in c.args)
+    ]
     assert len(delete_calls) == 2  # both attempted
 
     warnings = " ".join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
