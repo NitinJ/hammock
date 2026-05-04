@@ -62,9 +62,19 @@ class Budget(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Stream-side `max_turns` enforcement is deferred (claude CLI has no
+    # `--max-turns` flag in v0; counting assistant messages from the
+    # stream is the v1+ remainder). The cap is still recorded here so
+    # templates can declare it and the next stage of work can pick it up
+    # without a model change. See `docs/v0-alignment-report.md` Plan #1
+    # + `docs/implementation.md § 9`.
     max_turns: int | None = Field(default=None, gt=0)
     max_budget_usd: float | None = Field(default=None, gt=0)
-    max_wall_clock_min: int | None = Field(default=None, gt=0)
+    # Widened from `int | None` to `float | None` so operators (and tests)
+    # can express sub-minute caps. Pydantic v2 wouldn't coerce a float
+    # into the int field, which made fine-grained wall-clock enforcement
+    # impossible to test deterministically.
+    max_wall_clock_min: float | None = Field(default=None, gt=0)
 
 
 class RequiredOutput(BaseModel):
@@ -138,8 +148,13 @@ class StageDefinition(BaseModel):
     loop_back: LoopBack | None = None
 
     presentation: PresentationBlock | None = None
-    parallel_with: list[str] | None = None
     is_expander: bool = False
+    # Note: `parallel_with` (stage-level parallel dispatch) was specified in
+    # an earlier draft but never honoured by the JobDriver, which iterates
+    # stages strictly sequentially. The field + validator were removed for
+    # v0 to avoid a contract trap; reintroduce together with a wavefront
+    # scheduler in `_execute_stages` when a real template needs it. See
+    # `docs/v0-alignment-report.md` Plan #4 + `docs/implementation.md § 9`.
 
 
 class StageRun(BaseModel):

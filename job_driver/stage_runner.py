@@ -219,6 +219,13 @@ class RealStageRunner:
                 "--settings",
                 str(settings_path),
             ]
+            # v0 alignment Plan #1: pass the stage's spend cap to claude
+            # so the agent self-aborts on overshoot. The JobDriver's
+            # post-check is the safety net; this is the cheap primary
+            # defence. claude documents `--max-budget-usd <amount>`
+            # (only works with --print, which we already pass).
+            if stage_def.budget.max_budget_usd is not None:
+                cmd += ["--max-budget-usd", str(stage_def.budget.max_budget_usd)]
 
             # Build subprocess environment with Hammock context for the hook
             env = self._build_env(job_dir, stage_def)

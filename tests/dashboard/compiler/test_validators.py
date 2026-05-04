@@ -9,7 +9,6 @@ from dashboard.compiler.validators import (
     validate_known_validators,
     validate_loop_back_targets,
     validate_no_path_traversal,
-    validate_parallel_with,
     validate_plan,
     validate_predicates,
     validate_unique_ids,
@@ -36,7 +35,6 @@ def _stage(
     optional_inputs: list[str] | None = None,
     outputs: list[str] | None = None,
     loop_back: LoopBack | None = None,
-    parallel_with: list[str] | None = None,
     presentation: PresentationBlock | None = None,
     runs_if: str | None = None,
 ) -> StageDefinition:
@@ -49,7 +47,6 @@ def _stage(
         budget=Budget(max_turns=10),
         exit_condition=ExitCondition(),
         loop_back=loop_back,
-        parallel_with=parallel_with,
         presentation=presentation,
         runs_if=runs_if,
     )
@@ -150,35 +147,6 @@ def test_loop_back_forward_reference_fails() -> None:
     fs = validate_loop_back_targets(plan)
     assert len(fs) == 1
     assert "not an earlier stage" in fs[0].message
-
-
-# ---------------------------------------------------------------------------
-# parallel_with
-# ---------------------------------------------------------------------------
-
-
-def test_parallel_with_symmetric_passes() -> None:
-    plan = [
-        _stage("a", parallel_with=["b"]),
-        _stage("b", parallel_with=["a"]),
-    ]
-    assert validate_parallel_with(plan) == []
-
-
-def test_parallel_with_asymmetric_fails() -> None:
-    plan = [
-        _stage("a", parallel_with=["b"]),
-        _stage("b"),  # no back-reference
-    ]
-    fs = validate_parallel_with(plan)
-    assert len(fs) == 1
-    assert "asymmetric" in fs[0].message
-
-
-def test_parallel_with_unknown_id_fails() -> None:
-    plan = [_stage("a", parallel_with=["does-not-exist"])]
-    fs = validate_parallel_with(plan)
-    assert any("unknown stage id" in f.message for f in fs)
 
 
 # ---------------------------------------------------------------------------

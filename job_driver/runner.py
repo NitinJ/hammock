@@ -385,18 +385,55 @@ class JobDriver:
 
         log.info("Running stage %s (attempt %d)", stage_def.id, attempt)
 
-        # Race the stage runner against the cancel event
+        # Race the stage runner against the cancel event AND the
+        # wall-clock budget cap (v0 alignment Plan #1). The runner is
+        # the worker; the parent process holds the kill switch, so
+        # workers cannot disable their own budgets per design.
         stage_task = asyncio.create_task(self._stage_runner.run(stage_def, job_dir, stage_run_dir))
         cancel_task = asyncio.create_task(self._cancel_event.wait())
+        wall_clock_task: asyncio.Task[None] | None = None
+        wait_set: set[asyncio.Task[Any]] = {stage_task, cancel_task}
+        if stage_def.budget.max_wall_clock_min is not None:
+            wall_clock_seconds = float(stage_def.budget.max_wall_clock_min) * 60.0
+            wall_clock_task = asyncio.create_task(asyncio.sleep(wall_clock_seconds))
+            wait_set.add(wall_clock_task)
 
         done, pending = await asyncio.wait(
-            {stage_task, cancel_task},
+            wait_set,
             return_when=asyncio.FIRST_COMPLETED,
         )
 
         for task in pending:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+        if wall_clock_task is not None and wall_clock_task in done:
+            # Wall-clock cap fired before the stage finished. Mark the
+            # stage FAILED with a structured budget-overrun reason.
+            stage_run = stage_run.model_copy(
+                update={
+                    "state": StageState.FAILED,
+                    "ended_at": self._now(),
+                    "restart_count": attempt - 1,
+                }
+            )
+            self._write_stage_run(stage_def.id, stage_run)
+            self._emit_event(
+                "stage_state_transition",
+                stage_id=stage_def.id,
+                payload={
+                    "from": "RUNNING",
+                    "to": "FAILED",
+                    "reason": "budget overrun (max_wall_clock_min)",
+                },
+            )
+            try:
+                from job_driver.archive import write_manifest
+
+                write_manifest(stage_run_dir)
+            except Exception as exc:
+                log.warning("manifest write failed: %s", exc)
+            return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
             # Cancellation won — clean up stage state
@@ -414,6 +451,26 @@ class JobDriver:
         # If the runner raised, propagate so the caller can fail the job.
         result: StageResult = stage_task.result()
 
+        # Budget post-check: a runner that reports success but blew the
+        # spend cap is still a budget-overrun failure (workers cannot
+        # disable their own budgets). claude --max-budget-usd is the
+        # primary defence inside RealStageRunner; this catches the
+        # remainder (FakeStageRunner runs and any Real-runner overshoot
+        # claude couldn't preempt).
+        if (
+            stage_def.budget.max_budget_usd is not None
+            and result.cost_usd > stage_def.budget.max_budget_usd
+        ):
+            result = StageResult(
+                succeeded=False,
+                reason=(
+                    f"budget overrun (max_budget_usd: spent ${result.cost_usd:.4f}, "
+                    f"cap ${stage_def.budget.max_budget_usd:.4f})"
+                ),
+                outputs_produced=result.outputs_produced,
+                cost_usd=result.cost_usd,
+            )
+
         final_state = StageState.SUCCEEDED if result.succeeded else StageState.FAILED
         stage_run = stage_run.model_copy(
             update={
@@ -425,6 +482,22 @@ class JobDriver:
             }
         )
         self._write_stage_run(stage_def.id, stage_run)
+
+        # Run-archive integrity manifest (v0 alignment Plan #5). Written
+        # for every closed stage attempt, success or failure, so replay
+        # tooling has a per-run digest record. Failure to write the
+        # manifest must not mask the stage outcome.
+        try:
+            from job_driver.archive import write_manifest
+
+            write_manifest(stage_run_dir)
+        except Exception as exc:
+            log.warning(
+                "failed to write archive manifest for %s/%s: %s",
+                self.job_slug,
+                stage_def.id,
+                exc,
+            )
         self._emit_event(
             "stage_state_transition",
             stage_id=stage_def.id,
@@ -490,6 +563,24 @@ class JobDriver:
             "job_state_transition",
             payload={"from": str(old_state), "to": str(state)},
         )
+        # Terminal-state hook: persist JobCostSummary to job-summary.json.
+        # Per `JobCostSummary` docstring + v0 alignment audit Plan #6 — the
+        # file was promised by the model but never written. Lazy import
+        # avoids a circular at module load (cost_summary imports `paths`,
+        # which is fine; this just keeps the runner module surface tight).
+        if state in (JobState.COMPLETED, JobState.FAILED, JobState.ABANDONED):
+            from job_driver.cost_summary import write_job_summary
+
+            try:
+                write_job_summary(
+                    self.job_slug,
+                    job_id=updated.job_id,
+                    project_slug=updated.project_slug,
+                    root=self.root,
+                    completed_at=self._now(),
+                )
+            except Exception as exc:
+                log.warning("failed to write job-summary.json for %s: %s", self.job_slug, exc)
 
     def _read_stages(self) -> list[StageDefinition]:
         stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)

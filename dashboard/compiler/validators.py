@@ -37,7 +37,6 @@ def validate_plan(stages: list[StageDefinition]) -> list[ValidationFailure]:
     failures.extend(validate_unique_ids(stages))
     failures.extend(validate_dag_closure(stages))
     failures.extend(validate_loop_back_targets(stages))
-    failures.extend(validate_parallel_with(stages))
     failures.extend(validate_predicates(stages))
     failures.extend(validate_human_stages_have_presentation(stages))
     failures.extend(validate_no_path_traversal(stages))
@@ -108,36 +107,6 @@ def validate_loop_back_targets(stages: list[StageDefinition]) -> list[Validation
                     )
                 )
         seen_before.add(s.id)
-    return failures
-
-
-def validate_parallel_with(stages: list[StageDefinition]) -> list[ValidationFailure]:
-    """Every ``parallel_with`` reference is symmetric and references existing ids."""
-    failures: list[ValidationFailure] = []
-    by_id = {s.id: s for s in stages}
-    for s in stages:
-        if not s.parallel_with:
-            continue
-        for ref in s.parallel_with:
-            if ref not in by_id:
-                failures.append(
-                    ValidationFailure(
-                        "parallel_with",
-                        s.id,
-                        f"parallel_with references unknown stage id {ref!r}",
-                    )
-                )
-                continue
-            other = by_id[ref]
-            if not other.parallel_with or s.id not in other.parallel_with:
-                failures.append(
-                    ValidationFailure(
-                        "parallel_with",
-                        s.id,
-                        f"parallel_with relation is asymmetric: {s.id!r} references "
-                        f"{ref!r} but {ref!r} does not reference back",
-                    )
-                )
     return failures
 
 
