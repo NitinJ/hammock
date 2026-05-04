@@ -389,6 +389,14 @@ class JobDriver:
         # wall-clock budget cap (v0 alignment Plan #1). The runner is
         # the worker; the parent process holds the kill switch, so
         # workers cannot disable their own budgets per design.
+        #
+        # Tie-breaking policy (Codex review LOW 4): when stage and
+        # wall-clock complete simultaneously, **wall-clock wins** —
+        # the wall-clock branch is checked before the stage-result
+        # branch below. Rationale: a stage that just barely beat the
+        # cap is indistinguishable from one that just barely missed it
+        # by clock skew; safer to fail-closed on the cap than to admit
+        # a marginal overrun.
         stage_task = asyncio.create_task(self._stage_runner.run(stage_def, job_dir, stage_run_dir))
         cancel_task = asyncio.create_task(self._cancel_event.wait())
         wall_clock_task: asyncio.Task[None] | None = None
@@ -427,12 +435,7 @@ class JobDriver:
                     "reason": "budget overrun (max_wall_clock_min)",
                 },
             )
-            try:
-                from job_driver.archive import write_manifest
-
-                write_manifest(stage_run_dir)
-            except Exception as exc:
-                log.warning("manifest write failed: %s", exc)
+            self._write_manifest_for_latest_run(stage_def.id)
             return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
@@ -483,21 +486,10 @@ class JobDriver:
         )
         self._write_stage_run(stage_def.id, stage_run)
 
-        # Run-archive integrity manifest (v0 alignment Plan #5). Written
-        # for every closed stage attempt, success or failure, so replay
-        # tooling has a per-run digest record. Failure to write the
-        # manifest must not mask the stage outcome.
-        try:
-            from job_driver.archive import write_manifest
-
-            write_manifest(stage_run_dir)
-        except Exception as exc:
-            log.warning(
-                "failed to write archive manifest for %s/%s: %s",
-                self.job_slug,
-                stage_def.id,
-                exc,
-            )
+        # Run-archive integrity manifest (v0 alignment Plan #5; centralised
+        # via _write_manifest_for_latest_run after Codex review of PR #23
+        # so exception-routed failures via _fail_stage land one too).
+        self._write_manifest_for_latest_run(stage_def.id)
         self._emit_event(
             "stage_state_transition",
             stage_id=stage_def.id,
@@ -512,10 +504,17 @@ class JobDriver:
             # key with both the spec and the projection reader, which had
             # silently been folding to 0 because driver, projection, and spec
             # all named the field differently.
+            #
+            # Codex review of PR #23: include ``agent_ref`` so the
+            # ``by_agent`` rollup in JobCostSummary actually populates
+            # (without it, every job's by_agent was structurally empty).
+            payload: dict[str, Any] = {"delta_usd": result.cost_usd}
+            if stage_def.agent_ref:
+                payload["agent_ref"] = stage_def.agent_ref
             self._emit_event(
                 "cost_accrued",
                 stage_id=stage_def.id,
-                payload={"delta_usd": result.cost_usd},
+                payload=payload,
             )
 
         return result
@@ -892,3 +891,33 @@ class JobDriver:
             stage_id=stage_def.id,
             payload={"to": "FAILED", "reason": reason},
         )
+        # Codex review of PR #23: manifest is the integrity contract for
+        # every closed stage attempt — including ones that closed via
+        # exception or predicate failure routed through here. Best-
+        # effort: if no run dir exists (e.g. predicate failure before
+        # _run_single_stage created it), the helper logs and returns.
+        self._write_manifest_for_latest_run(stage_def.id)
+
+    def _write_manifest_for_latest_run(self, stage_id: str) -> None:
+        """Write the integrity manifest for the latest run dir of *stage_id*.
+
+        No-op (with a debug log) when the run dir doesn't exist yet —
+        e.g. a stage that failed at the predicate stage before its run
+        dir was created. Failure to write the manifest must never mask
+        the stage outcome, so all errors are caught + logged.
+        """
+        latest = paths.stage_run_latest(self.job_slug, stage_id, root=self.root)
+        if not latest.exists():
+            log.debug("no stage run dir for %s — skipping manifest write", stage_id)
+            return
+        try:
+            from job_driver.archive import write_manifest
+
+            write_manifest(latest)
+        except Exception as exc:
+            log.warning(
+                "failed to write archive manifest for %s/%s: %s",
+                self.job_slug,
+                stage_id,
+                exc,
+            )

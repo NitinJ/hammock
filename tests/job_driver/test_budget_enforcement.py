@@ -143,6 +143,11 @@ async def test_cost_overrun_fails_stage(tmp_path: Path) -> None:
     Even if the runner declares `succeeded=True`, an over-budget run
     must be a first-class error per design — workers cannot disable
     their own budgets, including by lying about cost.
+
+    Codex review LOW 5: also assert that the stage.json after the
+    override preserves the *actual* cost spent (so the cost rollup
+    stays truthful) and the outputs the runner produced (so any
+    forensic reading of the artifact set is accurate).
     """
     fixtures = tmp_path / "fixtures"
     fixtures.mkdir()
@@ -161,6 +166,10 @@ async def test_cost_overrun_fails_stage(tmp_path: Path) -> None:
 
     sr = _read_stage(job_dir, "spendy")
     assert sr.state == StageState.FAILED
+    # Real spend persisted, not zeroed — the rollup must be truthful.
+    assert sr.cost_accrued == 5.0
+    # Outputs the runner produced are recorded — forensic value.
+    assert sr.outputs_produced == ["o.txt"]
 
 
 async def test_under_cost_cap_succeeds(tmp_path: Path) -> None:
@@ -221,6 +230,44 @@ async def test_real_runner_passes_max_budget_usd_to_claude(tmp_path: Path) -> No
     # Following positional arg should be the cap value
     idx = args.index("--max-budget-usd")
     assert args[idx + 1] == "2.5"
+
+
+async def test_wall_clock_wins_tie_with_stage_completion(tmp_path: Path) -> None:
+    """Codex review LOW 4 — when the stage and wall-clock cap complete
+    simultaneously (`delay_seconds == max_wall_clock_min * 60`), the
+    wall-clock branch is checked first and wins. Documented policy:
+    fail-closed on the cap rather than admit a marginal overrun.
+
+    This is hard to make perfectly deterministic without a clock
+    injector, but in practice the stage and watchdog tasks both
+    resolve in the same event-loop tick when delays match, and
+    asyncio.wait(FIRST_COMPLETED) returns both in `done`; the
+    branch order in `_run_single_stage` then breaks the tie.
+    """
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    # delay == cap (in seconds): both tasks finish in the same tick.
+    cap_min = 0.02  # 1.2 s
+    cap_seconds = cap_min * 60.0
+    (fixtures / "edge.yaml").write_text(
+        yaml.dump(
+            {"outcome": "succeeded", "delay_seconds": cap_seconds, "artifacts": {"o.txt": "."}}
+        )
+    )
+    job_dir = _seed_job(
+        tmp_path,
+        [_stage("edge", output="o.txt", budget=Budget(max_wall_clock_min=cap_min))],
+    )
+
+    driver = JobDriver(
+        "j", root=tmp_path, stage_runner=FakeStageRunner(fixtures), heartbeat_interval=0.1
+    )
+    await driver.run()
+
+    sr = _read_stage(job_dir, "edge")
+    # Wall-clock branch ran first — stage marked FAILED with the
+    # documented cap-name reason rather than SUCCEEDED.
+    assert sr.state == StageState.FAILED
 
 
 async def test_real_runner_omits_max_budget_when_unset(tmp_path: Path) -> None:

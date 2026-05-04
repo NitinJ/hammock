@@ -165,3 +165,123 @@ async def test_failed_stage_also_writes_manifest(tmp_path: Path) -> None:
 
     manifest_path = paths.stage_run_dir("j-mfst", "s", 1, root=tmp_path) / "manifest.json"
     assert manifest_path.exists()
+
+
+async def test_runner_exception_path_writes_manifest(tmp_path: Path) -> None:
+    """Codex review MEDIUM 2 — when the runner raises (not a clean
+    `outcome: failed`, but an actual exception), JobDriver routes
+    through `_fail_stage` which previously skipped the manifest. After
+    centralising the manifest write, this path lands one too."""
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    _seed_job(tmp_path)
+
+    class _ExplodingRunner:
+        async def run(self, stage_def, job_dir, stage_run_dir):
+            raise RuntimeError("simulated runner crash")
+
+    driver = JobDriver(
+        "j-mfst",
+        root=tmp_path,
+        stage_runner=_ExplodingRunner(),  # type: ignore[arg-type]
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    # _run_single_stage created run-1 and the runner raised inside it.
+    manifest_path = paths.stage_run_dir("j-mfst", "s", 1, root=tmp_path) / "manifest.json"
+    assert manifest_path.exists(), "exception-routed _fail_stage must still write the manifest"
+
+
+async def test_wall_clock_overrun_writes_manifest(tmp_path: Path) -> None:
+    """Codex review LOW 3 — wall-clock-overrun path also writes the manifest.
+
+    The fake stage sleeps past its (sub-minute) wall-clock cap; the
+    JobDriver's watchdog wins and writes manifest before returning.
+    """
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "s.yaml").write_text(
+        yaml.dump({"outcome": "succeeded", "delay_seconds": 5.0, "artifacts": {"o.txt": "."}})
+    )
+    job_dir = tmp_path / "jobs" / "j-mfst"
+    job_dir.mkdir(parents=True)
+    cfg = JobConfig(
+        job_id="jid",
+        job_slug="j-mfst",
+        project_slug="p",
+        job_type="fix-bug",
+        created_at=datetime.now(UTC),
+        created_by="t",
+        state=JobState.SUBMITTED,
+    )
+    atomic_write_json(job_dir / "job.json", cfg)
+    # Stage with a sub-minute cap (0.02 min ≈ 1.2 s).
+    capped_stage = StageDefinition(
+        id="s",
+        worker="agent",
+        agent_ref="x",
+        inputs=InputSpec(required=[], optional=None),
+        outputs=OutputSpec(required=["o.txt"]),
+        budget=Budget(max_wall_clock_min=0.02),
+        exit_condition=ExitCondition(required_outputs=[RequiredOutput(path="o.txt")]),
+    )
+    (job_dir / "stage-list.yaml").write_text(
+        yaml.dump({"stages": [json.loads(capped_stage.model_dump_json())]})
+    )
+
+    driver = JobDriver(
+        "j-mfst",
+        root=tmp_path,
+        stage_runner=FakeStageRunner(fixtures),
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    manifest_path = paths.stage_run_dir("j-mfst", "s", 1, root=tmp_path) / "manifest.json"
+    assert manifest_path.exists(), "wall-clock-overrun branch must write the manifest"
+
+
+async def test_budget_overrun_post_check_writes_manifest(tmp_path: Path) -> None:
+    """Codex review LOW 3 — budget-overrun post-check path also writes
+    the manifest (not just the wall-clock branch)."""
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "s.yaml").write_text(
+        yaml.dump({"outcome": "succeeded", "cost_usd": 5.0, "artifacts": {"o.txt": "."}})
+    )
+    job_dir = tmp_path / "jobs" / "j-mfst"
+    job_dir.mkdir(parents=True)
+    cfg = JobConfig(
+        job_id="jid",
+        job_slug="j-mfst",
+        project_slug="p",
+        job_type="fix-bug",
+        created_at=datetime.now(UTC),
+        created_by="t",
+        state=JobState.SUBMITTED,
+    )
+    atomic_write_json(job_dir / "job.json", cfg)
+    capped_stage = StageDefinition(
+        id="s",
+        worker="agent",
+        agent_ref="x",
+        inputs=InputSpec(required=[], optional=None),
+        outputs=OutputSpec(required=["o.txt"]),
+        budget=Budget(max_budget_usd=1.0),
+        exit_condition=ExitCondition(required_outputs=[RequiredOutput(path="o.txt")]),
+    )
+    (job_dir / "stage-list.yaml").write_text(
+        yaml.dump({"stages": [json.loads(capped_stage.model_dump_json())]})
+    )
+
+    driver = JobDriver(
+        "j-mfst",
+        root=tmp_path,
+        stage_runner=FakeStageRunner(fixtures),
+        heartbeat_interval=0.1,
+    )
+    await driver.run()
+
+    manifest_path = paths.stage_run_dir("j-mfst", "s", 1, root=tmp_path) / "manifest.json"
+    assert manifest_path.exists(), "budget-overrun post-check branch must write the manifest"

@@ -51,3 +51,34 @@ def test_stage_definition_rejects_parallel_with_field() -> None:
 def test_stage_definition_has_no_parallel_with_attribute() -> None:
     stage = StageDefinition(**_minimal_stage_kwargs())
     assert not hasattr(stage, "parallel_with")
+
+
+def test_yaml_loaded_stage_with_parallel_with_is_rejected() -> None:
+    """Codex review LOW 1 — assert that a stage *parsed from YAML*
+    (the surface every compile-time path uses) carrying `parallel_with`
+    is rejected by `StageDefinition.model_validate`. This is the same
+    code path the Plan Compiler exercises for every stage in a template
+    or per-project override (`dashboard/compiler/compile.py` calls
+    `StageDefinition.model_validate(...)` on every stage block)."""
+    import yaml
+    from pydantic import ValidationError
+
+    yaml_blob = """
+id: a
+worker: agent
+agent_ref: x
+inputs:
+  required: []
+  optional: null
+outputs:
+  required: []
+budget:
+  max_turns: 5
+exit_condition:
+  required_outputs: null
+parallel_with: [b]
+"""
+    parsed = yaml.safe_load(yaml_blob)
+    with pytest.raises(ValidationError) as exc:
+        StageDefinition.model_validate(parsed)
+    assert "parallel_with" in str(exc.value)

@@ -117,6 +117,13 @@ async def test_completed_job_writes_summary_with_total_cost(tmp_path: Path) -> N
     assert set(summary.by_stage.keys()) == {"a", "b"}
     assert summary.by_stage["a"].total_usd == 0.25
     assert summary.by_stage["b"].total_usd == 0.50
+    # by_agent — Codex review of PR #23 caught this was structurally
+    # always empty because the runner emitted cost_accrued events
+    # without `agent_ref`. Now: each stage's agent_ref appears with the
+    # stage's spend.
+    assert set(summary.by_agent.keys()) == {"writer", "reviewer"}
+    assert summary.by_agent["writer"].total_usd == 0.25
+    assert summary.by_agent["reviewer"].total_usd == 0.50
 
 
 async def test_failed_job_also_writes_summary(tmp_path: Path) -> None:
