@@ -82,10 +82,27 @@ def assert_job_completed(root: Path, job_slug: str) -> None:
 
 
 def assert_all_stages_succeeded(root: Path, job_slug: str) -> None:
+    """Every stage that ran must be SUCCEEDED.
+
+    Stages skipped via ``runs_if=false`` produce no ``stage.json`` (by
+    driver design — see ``_execute_stages``); they are not failures.
+    The outcome contract is "no stage that ran failed", which is the
+    union of (a) every stage.json says SUCCEEDED, (b) every absent
+    stage.json was conditionally skipped. Outcome #3 separately
+    enforces "no FAILED/CANCELLED".
+    """
     for sd in _read_stage_defs(root, job_slug):
         sr = _read_stage_run(root, job_slug, sd.id)
         if sr is None:
-            raise AssertionError(f"stage {sd.id!r}: no stage.json on disk")
+            # No stage.json — either conditionally skipped (runs_if=false)
+            # or never reached. The latter is impossible when the job
+            # state is COMPLETED, so we trust the dispatch-skip path.
+            if sd.runs_if is None:
+                raise AssertionError(
+                    f"stage {sd.id!r}: no stage.json on disk and no runs_if "
+                    "predicate — stage was never reached but job COMPLETED"
+                )
+            continue
         if sr.state != StageState.SUCCEEDED:
             raise AssertionError(f"stage {sd.id!r}: state={sr.state.value} (expected SUCCEEDED)")
 
