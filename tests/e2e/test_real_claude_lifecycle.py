@@ -124,6 +124,13 @@ async def test_real_claude_full_lifecycle(tmp_path: Path) -> None:
         project_slug = _register_project_via_cli(root, clone_dir)
         job_slug = _submit_job_via_cli(root, project_slug=project_slug, job_type=cfg.job_type)
 
+        # The CLI submits + compiles but does NOT spawn the driver
+        # (the dashboard's POST /api/jobs handler is what wires that
+        # in production). The test owns spawning here so the lifecycle
+        # actually starts; subsequent re-spawns happen in
+        # _drive_to_terminal after each gate stitch.
+        await spawn_driver(job_slug, root=root)
+
         # 5. Drive to terminal — stitch HIL gates, re-spawn driver,
         # poll on-disk state. pytest-timeout enforces wall-clock.
         settings = Settings(root=root, run_background_tasks=False)
