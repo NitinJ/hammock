@@ -164,7 +164,14 @@ def bootstrap_test_repo(
     # PR #29: typed values (booleans, nulls, integers) need ``-F``;
     # ``-f`` is string-only and silently misencodes them. Nested keys
     # use bracket syntax (``parent[child]=value``).
-    runner(
+    #
+    # Soft-fail on 403: GitHub's free tier rejects branch protection on
+    # *private* repos with "Upgrade to GitHub Pro or make this repository
+    # public" (live during dogfood on PR #29). The e2e test stitches HIL
+    # gates programmatically — it never auto-merges — so protection is
+    # cosmetic for correctness. We log a warning and continue; operators
+    # on Pro tier get full parity.
+    protection_result = runner(
         [
             "gh",
             "api",
@@ -188,8 +195,16 @@ def bootstrap_test_repo(
             "-F",
             "allow_deletions=false",
         ],
-        check=True,
+        check=False,
     )
+    if protection_result.returncode != 0:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "branch protection setup skipped (rc=%d): %s",
+            protection_result.returncode,
+            protection_result.stderr.strip() or protection_result.stdout.strip(),
+        )
 
     return RepoBootstrapResult(
         created=True, repo_url=repo_url, repo_slug=slug, default_branch="main"
