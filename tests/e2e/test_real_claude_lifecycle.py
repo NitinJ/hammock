@@ -141,25 +141,17 @@ async def test_real_claude_full_lifecycle(tmp_path: Path) -> None:
             for fn in OUTCOMES.values():
                 fn(root, job_slug)
 
-            # Outcome #11 (branches present) depends on GitHub credentials
-            # being plumbed into the spawned claude subprocess so it can
-            # push to the remote. Soft-warn until that wiring lands
-            # (open-decision #2 in the spec); the rest of the contract is
-            # already verified above.
-            try:
-                assert_branches_exist(
-                    repo_slug,
-                    list_remote_branches=lambda slug: _list_remote_branches(slug),
-                    job_slug=job_slug,
-                )
-            except AssertionError as exc:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "outcome #11 (branches present) deferred: %s — needs GITHUB_TOKEN "
-                    "plumbing into the spawned claude subprocess (open-decision #2)",
-                    exc,
-                )
+            # Outcome #11 (branches present in the remote). The spawned
+            # claude inherits the operator's PATH + HOME, so ``gh`` is
+            # authenticated and ``gh auth setup-git`` configures the
+            # git credential helper used for HTTPS pushes. Hard
+            # assertion — if claude didn't push, that's a real bug to
+            # fix in the prompt or the agent specialist.
+            assert_branches_exist(
+                repo_slug,
+                list_remote_branches=lambda slug: _list_remote_branches(slug),
+                job_slug=job_slug,
+            )
     finally:
         # 7. Unconditional teardown.
         teardown(

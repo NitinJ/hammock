@@ -118,6 +118,17 @@ def build_stage_prompt(
             f"and use git here. Required outputs (above) are NOT written here — they go "
             f"to the JOB DIR at `{job_dir}`.",
             "",
+            "## Tools available",
+            "",
+            "- `git` — full git CLI in the working directory (worktree).",
+            "- `gh` — GitHub CLI, already authenticated. Use it to push branches "
+            "(`git push -u origin <branch>` works via gh's credential helper) and "
+            "to open PRs (`gh pr create --title ... --body ...`). When your stage "
+            "produces a PR or merge artefact, OPEN A REAL PR via `gh pr create` and "
+            "include the PR URL it returns in your stage output (e.g. summary.md, "
+            "pr-merge-summary.md). Do NOT fabricate URLs.",
+            "- `pytest` / language toolchains — run inline as needed for verification.",
+            "",
         ]
     )
 

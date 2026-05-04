@@ -310,14 +310,14 @@ def test_outcomes_registry_covers_spec_assertions() -> None:
     """The OUTCOMES registry exposes every helper so the test driver can
     iterate them. This locks the contract: 11 helpers shipped (the
     branch + project-config-dependent ones live outside, see spec)."""
-    # Outcomes #5 (stop_hook_fired) and #6 (summary_md_has_url) are
-    # intentionally not in OUTCOMES; see the deferred-outcome comment
-    # in outcomes.py.
+    # Only outcome #5 (stop_hook_fired) is intentionally not in OUTCOMES;
+    # see the deferred-outcome comment in outcomes.py.
     expected = {
         "job_completed",
         "all_stages_succeeded",
         "no_failed_or_cancelled",
         "required_outputs_exist",
+        "summary_md_has_url",
         "agent_artifacts_present",
         "event_stream_well_formed",
         "worktree_created_event",
@@ -325,4 +325,3 @@ def test_outcomes_registry_covers_spec_assertions() -> None:
     }
     assert expected <= OUTCOMES.keys()
     assert "stop_hook_fired" not in OUTCOMES
-    assert "summary_md_has_url" not in OUTCOMES
