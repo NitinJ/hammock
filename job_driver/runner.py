@@ -141,6 +141,14 @@ class JobDriver:
             # Touch heartbeat at startup
             self._touch_heartbeat()
 
+            # Job-level git isolation (idempotent): create + push
+            # ``hammock/jobs/<slug>`` so per-stage isolation has a
+            # parent branch to fork from. Without this, every
+            # _setup_stage_isolation call raises BranchNotFoundError
+            # and falls through to the in-place worktree (no events,
+            # no remote branches).
+            self._setup_job_isolation()
+
             # Start background tasks
             hb_task = asyncio.create_task(self._heartbeat_loop())
             poll_task = asyncio.create_task(self._command_poll_loop())
@@ -359,6 +367,16 @@ class JobDriver:
             # loop_back targeting). The cap is enforced inside
             # _read_stages so a runaway expander never reaches Pydantic.
             if stage_def.is_expander:
+                # Auto-merge the expander's ``plan.yaml`` into
+                # ``stage-list.yaml`` if it exists. The expander's
+                # contract is to write a Plan; the driver glues that
+                # into the live stage list so the appended stages
+                # actually execute. Discovered during the real-claude
+                # e2e dogfood: agents write plan.yaml correctly but
+                # don't always call the ``append_stages`` MCP tool, so
+                # without this merge the appended stages never run and
+                # the job ends after the expander triple.
+                self._merge_plan_yaml_into_stage_list(stage_def)
                 try:
                     stages = self._read_stages()
                 except ValueError as exc:
@@ -668,6 +686,104 @@ class JobDriver:
                 )
             except Exception as exc:
                 log.warning("failed to write job-summary.json for %s: %s", self.job_slug, exc)
+
+    def _merge_plan_yaml_into_stage_list(self, stage_def: StageDefinition) -> None:
+        """For an expander stage, append ``<job_dir>/plan.yaml``'s stages
+        to ``stage-list.yaml``.
+
+        The expander stage's contract is to produce a ``Plan`` (typically
+        as ``plan.yaml``); the driver is responsible for gluing that into
+        the live stage list so subsequent stages execute. This used to
+        rely on the agent calling the ``append_stages`` MCP tool, but
+        compliance is uneven (real-claude e2e dogfood: agent wrote
+        plan.yaml correctly without calling the tool, so the appended
+        stages never ran).
+
+        Skips entries already present in ``stage-list.yaml`` (de-duped
+        by ``id``) so calling both this merge and ``append_stages``
+        yields the same result.
+        """
+        plan_path = self._job_dir() / "plan.yaml"
+        if not plan_path.is_file():
+            return
+        try:
+            plan_data = yaml.safe_load(plan_path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            log.warning(
+                "could not parse %s for expander merge: %s — skipping",
+                plan_path,
+                exc,
+            )
+            return
+        plan_stages = plan_data.get("stages") or []
+        if not isinstance(plan_stages, list) or not plan_stages:
+            return
+
+        stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
+        try:
+            existing_data = yaml.safe_load(stage_list_path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            log.warning(
+                "could not parse stage-list.yaml for expander merge: %s — skipping",
+                exc,
+            )
+            return
+        if not isinstance(existing_data, dict) or not isinstance(existing_data.get("stages"), list):
+            return
+
+        existing_ids = {s.get("id") for s in existing_data["stages"] if isinstance(s, dict)}
+        # Insert AFTER the expander stage's review triple (and any other
+        # stages the template put adjacent to the expander), but BEFORE
+        # downstream stages like run-integration-tests + write-summary
+        # which depend on the appended stages running first. Concretely:
+        # find the LAST occurrence of any review-* stage that pairs with
+        # the expander, and insert after that. If no such review stage
+        # exists, fall back to inserting right after the expander itself.
+        #
+        # The bundled templates name reviewer stages by stripping the
+        # leading verb (``write-``) from the producer stage's id:
+        # ``write-impl-plan-spec`` → ``review-impl-plan-spec-{agent,human}``.
+        # We try both forms (with and without ``write-``) so templates
+        # that don't follow the verb-prefix convention still work.
+        review_prefixes: set[str] = {f"review-{stage_def.id}-"}
+        if stage_def.id.startswith("write-"):
+            review_prefixes.add(f"review-{stage_def.id[len('write-') :]}-")
+        insert_idx = None
+        for idx, s in enumerate(existing_data["stages"]):
+            if not isinstance(s, dict):
+                continue
+            sid = s.get("id")
+            if sid == stage_def.id or (
+                sid and isinstance(sid, str) and any(sid.startswith(p) for p in review_prefixes)
+            ):
+                insert_idx = idx + 1
+        if insert_idx is None:
+            # Expander not in the list (shouldn't happen) — fall back
+            # to appending at the end.
+            insert_idx = len(existing_data["stages"])
+
+        new_stages: list[dict[str, object]] = []
+        for stage_spec in plan_stages:
+            if not isinstance(stage_spec, dict):
+                continue
+            sid = stage_spec.get("id")
+            if not sid or sid in existing_ids:
+                continue
+            existing_ids.add(sid)
+            new_stages.append(stage_spec)
+        if not new_stages:
+            return
+
+        existing_data["stages"][insert_idx:insert_idx] = new_stages
+        from shared.atomic import atomic_write_text
+
+        atomic_write_text(stage_list_path, yaml.safe_dump(existing_data, sort_keys=False))
+        log.info(
+            "expander %s: merged %d stages from plan.yaml into stage-list.yaml at index %d",
+            stage_def.id,
+            len(new_stages),
+            insert_idx,
+        )
 
     def _read_stages(self) -> list[StageDefinition]:
         stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
@@ -1107,6 +1223,62 @@ class JobDriver:
         """Per-stage worktree path under the job dir."""
         return paths.stage_dir(self.job_slug, stage_id, root=self.root) / "worktree"
 
+    def _push_branch_best_effort(self, repo: Path, branch: str) -> None:
+        """``git push -u origin <branch>`` — never raises.
+
+        The hammock job/stage branches need to be visible in the remote
+        so downstream tooling (and the e2e outcome-#11 assertion) can
+        inspect them. Failure is logged but never aborts the stage —
+        synthetic-fixture tests run against repos with no remote, and
+        permission-denied / network errors should not break a job
+        whose work has already been committed locally.
+        """
+        try:
+            subprocess.run(
+                ["git", "push", "-u", "origin", branch],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "could not push %s for %s: %s",
+                branch,
+                self.job_slug,
+                (exc.stderr or "").strip() or exc,
+            )
+        except FileNotFoundError:  # git missing
+            log.warning("git not found on PATH; cannot push %s", branch)
+
+    def _setup_job_isolation(self) -> None:
+        """Create + push ``hammock/jobs/<slug>`` once at job start.
+
+        Without this, every call to :meth:`_setup_stage_isolation` raises
+        ``BranchNotFoundError`` (parent missing) and silently skips —
+        the e2e dogfood found that 0 stage branches were created and
+        no ``worktree_created`` events ever fired.
+
+        Idempotent: re-running on resume is a no-op when the branch
+        already exists locally; the push is also idempotent against
+        a remote that already has the branch.
+        """
+        repo = self._project_repo()
+        if repo is None:
+            return
+        from dashboard.code.branches import create_job_branch
+
+        try:
+            branch = create_job_branch(repo, self.job_slug)
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "job isolation skipped for %s: git error (%s)",
+                self.job_slug,
+                exc,
+            )
+            return
+        self._push_branch_best_effort(repo, branch)
+
     def _setup_stage_isolation(self, stage_id: str) -> None:
         """Create the stage branch + worktree before the runner starts.
 
@@ -1183,6 +1355,11 @@ class JobDriver:
                 "branch": branch,
             },
         )
+        # Outcome #11: at least one stage branch under
+        # hammock/stages/<slug>/* must reach the remote so external
+        # tooling can list them. Push best-effort — the local branch is
+        # the source of truth, the remote copy is observability.
+        self._push_branch_best_effort(repo, branch)
 
     # NOTE on v0 worktree teardown (Codex review of PR #24, HIGH 1):
     #

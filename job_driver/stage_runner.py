@@ -289,6 +289,18 @@ class RealStageRunner:
                 "--verbose",
                 "--settings",
                 str(settings_path),
+                # Bypass interactive permission prompts. claude -p (print
+                # mode) auto-denies on prompt, which silently blocks every
+                # Write/Edit/Bash outside the session's default
+                # working-dir scope (notably writes to the JOB_DIR — the
+                # hammock storage area outside the worktree). Without this
+                # flag, agents loop on Stop-hook rejections forever
+                # (caught during the real-claude e2e dogfood). The session
+                # is already sandboxed: a fresh tmp HAMMOCK_ROOT, a per-
+                # stage worktree, and a Stop hook validating outputs —
+                # that's the right safety boundary for hammock work.
+                "--permission-mode",
+                "bypassPermissions",
             ]
             # v0 alignment Plan #1: pass the stage's spend cap to claude
             # so the agent self-aborts on overshoot. The JobDriver's

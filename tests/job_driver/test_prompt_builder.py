@@ -229,41 +229,13 @@ def test_returns_str() -> None:
 # -- Snapshot test --------------------------------------------------------
 
 
-SNAPSHOT_EXPECTED = """\
-# Stage: write-impl-plan
-
-Decompose the task into actionable steps.
-
-## Job context
-
-Add the SSE endpoint per the design doc.
-
-## Required inputs
-
-### spec.md
-
-# Spec
-
-Add SSE.
-
-## Required outputs
-
-- impl-plan.md (validated by: plan-schema)
-
-## Working directory
-
-{cwd}
-
-Write outputs to paths relative to the working directory unless the
-contract says otherwise.
-"""
-
-
 def test_snapshot_pin_for_canonical_stage(tmp_path: Path) -> None:
-    """Pin the rendered prompt for a canonical stage definition.
+    """Lock the rendered prompt's stable section headings + ordering.
 
-    Future regressions show as a focused diff rather than a behaviour
-    change masquerading as a passing test.
+    Loosened from byte-for-byte snapshot to structural assertions in
+    PR #29 dogfood: the byte-snapshot churned every time we tightened
+    the agent-facing wording (e.g. naming the JOB DIR explicitly so
+    claude doesn't write outputs into the worktree).
     """
     (tmp_path / "spec.md").write_text("# Spec\n\nAdd SSE.")
     cwd = tmp_path / "wt"
@@ -281,7 +253,28 @@ def test_snapshot_pin_for_canonical_stage(tmp_path: Path) -> None:
         job_dir=tmp_path,
         cwd=cwd,
     )
-    assert prompt == SNAPSHOT_EXPECTED.format(cwd=str(cwd))
+    # Stage header + description.
+    assert "# Stage: write-impl-plan" in prompt
+    assert "Decompose the task into actionable steps." in prompt
+    # Job context section + content.
+    assert "## Job context" in prompt
+    assert "Add the SSE endpoint per the design doc." in prompt
+    # Inputs section + inlined file content.
+    assert "## Required inputs" in prompt
+    assert "### spec.md" in prompt
+    assert "Add SSE." in prompt
+    # Outputs section: name, schema, AND absolute job_dir path.
+    assert "## Required outputs" in prompt
+    assert "impl-plan.md" in prompt
+    assert "plan-schema" in prompt
+    assert str(tmp_path) in prompt  # job_dir is named so claude knows where
+    # Working directory section: cwd named, distinguished from job_dir.
+    assert "## Working directory" in prompt
+    assert str(cwd) in prompt
+    # Section ordering — pin the agent's reading order.
+    assert prompt.index("## Job context") < prompt.index("## Required inputs")
+    assert prompt.index("## Required inputs") < prompt.index("## Required outputs")
+    assert prompt.index("## Required outputs") < prompt.index("## Working directory")
 
 
 # -- Pure-function check (no side effects) --------------------------------

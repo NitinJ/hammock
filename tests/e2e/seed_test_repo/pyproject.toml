@@ -1,0 +1,16 @@
+[project]
+name = "e2e-test-repo"
+version = "0.0.1"
+description = "Hammock real-claude e2e test repo seed"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+# Bound the rootdir so pytest doesn't walk up into the parent hammock
+# pyproject (which configures asyncio + strict-markers + extra rootdir
+# rules that don't apply to this tiny demo project).
+minversion = "8.0"
+testpaths = ["."]
+addopts = ["-q"]

@@ -88,18 +88,60 @@ def build_stage_prompt(
 
     outputs = stage_def.exit_condition.required_outputs or []
     if outputs:
-        parts.extend(["", "## Required outputs", ""])
-        parts.extend(_render_outputs(outputs, stage_def.exit_condition.artifact_validators))
+        parts.extend(
+            [
+                "",
+                "## Required outputs (write to absolute paths under the JOB DIR)",
+                "",
+                f"Write each required output as a file under the job dir: `{job_dir}`. "
+                "These are Hammock artefacts, not code changes — they go to the job's "
+                "storage directory, NOT the working directory.",
+                "",
+            ]
+        )
+        parts.extend(
+            _render_outputs(
+                outputs,
+                stage_def.exit_condition.artifact_validators,
+                job_dir=job_dir,
+            )
+        )
 
     parts.extend(
         [
             "",
-            "## Working directory",
+            "## Working directory (for code edits / git / running commands)",
             "",
             str(cwd),
             "",
-            "Write outputs to paths relative to the working directory unless the",
-            "contract says otherwise.",
+            f"This is a per-stage git worktree of the project repo. Edit code, run tests, "
+            f"and use git here. Required outputs (above) are NOT written here — they go "
+            f"to the JOB DIR at `{job_dir}`.",
+            "",
+            "## Tools available",
+            "",
+            "- `git` — full git CLI in the working directory (worktree).",
+            "- `gh` — GitHub CLI, already authenticated. Use it to push branches and open PRs.",
+            "- `pytest` / language toolchains — run inline as needed for verification.",
+            "",
+            "### Branch + PR protocol (MANDATORY for stages that produce code changes "
+            "or merge artefacts)",
+            "",
+            "If your stage's description, output filenames, or required outputs "
+            "mention any of: PR, pull request, merge, push, branch, commit — you "
+            "MUST do all of the following before exiting:",
+            "",
+            "1. Make the code changes in the working directory.",
+            "2. `git add` + `git commit` with a meaningful message.",
+            "3. `git push -u origin HEAD` (works via gh's git credential helper).",
+            "4. `gh pr create --title <title> --body <body> --base main` to open a "
+            "real PR. Capture the URL it prints to stdout.",
+            "5. Include the captured PR URL in every required output that documents "
+            "the PR/merge work (e.g. summary.md, pr-merge-summary.md, "
+            "implementation-summary.md). Use the literal URL gh returned.",
+            "",
+            "Never fabricate or guess a URL. If `gh pr create` fails, surface the "
+            "stderr verbatim in the output rather than continuing as if it succeeded.",
             "",
         ]
     )
@@ -157,18 +199,97 @@ def _render_inputs(
     return out
 
 
+# Schema hints surface the *required field set* + critical constraints
+# so the agent doesn't invent extra fields that the production
+# Pydantic validators (``extra='forbid'``) reject. Caught during the
+# real-claude e2e dogfood: claude wrote review-verdict-schema with 7
+# helpful-but-rejected fields like ``strengths``, ``issues``,
+# ``approval_conditions``. Adding these hints to the prompt is the
+# minimum-scope fix; a v1+ pass can synthesise from
+# ``model_json_schema()`` automatically.
+_SCHEMA_HINTS: dict[str, str] = {
+    "non-empty": "Any non-empty file content.",
+    "review-verdict-schema": (
+        "Strict JSON. Allowed fields ONLY:\n"
+        "  - verdict: 'approved' | 'needs-revision' | 'rejected'\n"
+        "  - summary: 1-3 sentence string\n"
+        "  - unresolved_concerns: list of objects, each with\n"
+        "      {severity: 'blocker'|'major'|'minor', concern: string, location: string}\n"
+        "  - addressed_in_this_iteration: list of strings (empty on iteration 1)\n"
+        "Schema uses extra='forbid' — DO NOT add other fields like 'reviewer',\n"
+        "'strengths', 'issues', 'minor_suggestions', 'approval_conditions',\n"
+        "'loop_back_required', 'reviewed_artifact'. Put any feedback inline in\n"
+        "``summary`` or as entries in ``unresolved_concerns``."
+    ),
+    "plan-schema": (
+        "Strict YAML or JSON. Top-level field ONLY: ``stages`` (a list).\n"
+        "Each stage object has these fields, with these constraints:\n"
+        "  - id: string (lower-case-with-hyphens, unique within the plan)\n"
+        "  - description: string | null\n"
+        "  - worker: literal 'agent' | 'human' (NOTHING ELSE)\n"
+        "  - agent_ref: string | null  (required iff worker=='agent';\n"
+        "      e.g. 'bug-report-writer', 'impl-spec-writer', 'impl-coder')\n"
+        "  - agent_config_overrides: object | null\n"
+        "  - inputs: object {required: [str], optional: [str] | null}\n"
+        "  - outputs: object {required: [str]}\n"
+        "  - budget: object — at least one of {max_turns: int>0,\n"
+        "      max_budget_usd: float>0, max_wall_clock_min: float>0}\n"
+        "  - exit_condition: object {required_outputs: [{path, validators}],\n"
+        "      artifact_validators: [{path, schema}]}\n"
+        "  - runs_if, loop_back, presentation: optional / null\n"
+        "  - is_expander: bool (default false)\n"
+        "extra='forbid'. Concrete one-stage example (yaml):\n"
+        "  stages:\n"
+        "    - id: implement-fix\n"
+        "      description: Apply the bug fix per the impl spec.\n"
+        "      worker: agent\n"
+        "      agent_ref: impl-coder\n"
+        "      inputs: { required: [impl-spec.md], optional: null }\n"
+        "      outputs: { required: [implementation-summary.md] }\n"
+        "      budget: { max_turns: 30, max_budget_usd: 3 }\n"
+        "      exit_condition:\n"
+        "        required_outputs:\n"
+        "          - path: implementation-summary.md\n"
+        "            validators: [non-empty]"
+    ),
+    "integration-test-report-schema": (
+        "Strict JSON. Allowed fields ONLY:\n"
+        "  - verdict: 'passed' | 'failed' | 'errored'\n"
+        "  - summary: string\n"
+        "  - test_command: string (the command that was run)\n"
+        "  - total_count: int >= 0\n"
+        "  - passed_count: int >= 0\n"
+        "  - failed_count: int >= 0\n"
+        "  - skipped_count: int >= 0\n"
+        "  - failures: list of {test_name, file_path, error_summary}\n"
+        "  - duration_seconds: float >= 0\n"
+        "Counts must satisfy passed_count + failed_count + skipped_count == total_count.\n"
+        "verdict='passed' requires failed_count == 0. extra='forbid'."
+    ),
+}
+
+
 def _render_outputs(
     outputs: list[RequiredOutput],
     validators: list[ArtifactValidator] | None,
+    *,
+    job_dir: Path | None = None,
 ) -> list[str]:
     schema_by_path: dict[str, str] = {}
     for v in validators or []:
         schema_by_path[v.path] = v.schema_
     lines: list[str] = []
     for out in outputs:
+        full_path = f"{job_dir}/{out.path}" if job_dir is not None else out.path
         schema = schema_by_path.get(out.path)
         if schema:
-            lines.append(f"- {out.path} (validated by: {schema})")
+            lines.append(f"- {full_path}  (validated by: {schema})")
+            hint = _SCHEMA_HINTS.get(schema)
+            if hint:
+                # Indent every line so the hint reads as a sub-block of
+                # the bullet above it.
+                for hint_line in hint.splitlines():
+                    lines.append(f"    {hint_line}")
         else:
-            lines.append(f"- {out.path}")
+            lines.append(f"- {full_path}")
     return lines
