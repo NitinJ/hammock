@@ -88,18 +88,35 @@ def build_stage_prompt(
 
     outputs = stage_def.exit_condition.required_outputs or []
     if outputs:
-        parts.extend(["", "## Required outputs", ""])
-        parts.extend(_render_outputs(outputs, stage_def.exit_condition.artifact_validators))
+        parts.extend(
+            [
+                "",
+                "## Required outputs (write to absolute paths under the JOB DIR)",
+                "",
+                f"Write each required output as a file under the job dir: `{job_dir}`. "
+                "These are Hammock artefacts, not code changes — they go to the job's "
+                "storage directory, NOT the working directory.",
+                "",
+            ]
+        )
+        parts.extend(
+            _render_outputs(
+                outputs,
+                stage_def.exit_condition.artifact_validators,
+                job_dir=job_dir,
+            )
+        )
 
     parts.extend(
         [
             "",
-            "## Working directory",
+            "## Working directory (for code edits / git / running commands)",
             "",
             str(cwd),
             "",
-            "Write outputs to paths relative to the working directory unless the",
-            "contract says otherwise.",
+            f"This is a per-stage git worktree of the project repo. Edit code, run tests, "
+            f"and use git here. Required outputs (above) are NOT written here — they go "
+            f"to the JOB DIR at `{job_dir}`.",
             "",
         ]
     )
@@ -160,15 +177,20 @@ def _render_inputs(
 def _render_outputs(
     outputs: list[RequiredOutput],
     validators: list[ArtifactValidator] | None,
+    *,
+    job_dir: Path | None = None,
 ) -> list[str]:
     schema_by_path: dict[str, str] = {}
     for v in validators or []:
         schema_by_path[v.path] = v.schema_
     lines: list[str] = []
     for out in outputs:
+        full_path = (
+            f"{job_dir}/{out.path}" if job_dir is not None else out.path
+        )
         schema = schema_by_path.get(out.path)
         if schema:
-            lines.append(f"- {out.path} (validated by: {schema})")
+            lines.append(f"- {full_path}  (validated by: {schema})")
         else:
-            lines.append(f"- {out.path}")
+            lines.append(f"- {full_path}")
     return lines

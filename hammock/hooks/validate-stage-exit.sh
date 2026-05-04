@@ -34,13 +34,21 @@ while IFS= read -r rel_path; do
 done <<< "$REQUIRED_OUTPUTS"
 
 if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "Stage exit blocked: required outputs not found in job dir."
-    echo "Missing files:"
-    for f in "${missing[@]}"; do
-        echo "  - $f"
-    done
-    echo ""
-    echo "Please create the missing outputs before the session exits."
+    # Claude Code surfaces hook *stderr* (not stdout) as feedback to the
+    # agent; writing to stdout produces "No stderr output" with no detail.
+    {
+        echo "Stage exit blocked: required outputs not found in job dir."
+        echo ""
+        echo "Job dir (write declared outputs here, NOT in the working directory):"
+        echo "  $JOB_DIR"
+        echo ""
+        echo "Missing files:"
+        for f in "${missing[@]}"; do
+            echo "  - $JOB_DIR/$f"
+        done
+        echo ""
+        echo "Create each missing file at the absolute path shown above and exit again."
+    } >&2
     exit 2
 fi
 
