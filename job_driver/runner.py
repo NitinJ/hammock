@@ -141,6 +141,14 @@ class JobDriver:
             # Touch heartbeat at startup
             self._touch_heartbeat()
 
+            # Job-level git isolation (idempotent): create + push
+            # ``hammock/jobs/<slug>`` so per-stage isolation has a
+            # parent branch to fork from. Without this, every
+            # _setup_stage_isolation call raises BranchNotFoundError
+            # and falls through to the in-place worktree (no events,
+            # no remote branches).
+            self._setup_job_isolation()
+
             # Start background tasks
             hb_task = asyncio.create_task(self._heartbeat_loop())
             poll_task = asyncio.create_task(self._command_poll_loop())
@@ -1215,6 +1223,62 @@ class JobDriver:
         """Per-stage worktree path under the job dir."""
         return paths.stage_dir(self.job_slug, stage_id, root=self.root) / "worktree"
 
+    def _push_branch_best_effort(self, repo: Path, branch: str) -> None:
+        """``git push -u origin <branch>`` — never raises.
+
+        The hammock job/stage branches need to be visible in the remote
+        so downstream tooling (and the e2e outcome-#11 assertion) can
+        inspect them. Failure is logged but never aborts the stage —
+        synthetic-fixture tests run against repos with no remote, and
+        permission-denied / network errors should not break a job
+        whose work has already been committed locally.
+        """
+        try:
+            subprocess.run(
+                ["git", "push", "-u", "origin", branch],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "could not push %s for %s: %s",
+                branch,
+                self.job_slug,
+                (exc.stderr or "").strip() or exc,
+            )
+        except FileNotFoundError:  # git missing
+            log.warning("git not found on PATH; cannot push %s", branch)
+
+    def _setup_job_isolation(self) -> None:
+        """Create + push ``hammock/jobs/<slug>`` once at job start.
+
+        Without this, every call to :meth:`_setup_stage_isolation` raises
+        ``BranchNotFoundError`` (parent missing) and silently skips —
+        the e2e dogfood found that 0 stage branches were created and
+        no ``worktree_created`` events ever fired.
+
+        Idempotent: re-running on resume is a no-op when the branch
+        already exists locally; the push is also idempotent against
+        a remote that already has the branch.
+        """
+        repo = self._project_repo()
+        if repo is None:
+            return
+        from dashboard.code.branches import create_job_branch
+
+        try:
+            branch = create_job_branch(repo, self.job_slug)
+        except subprocess.CalledProcessError as exc:
+            log.warning(
+                "job isolation skipped for %s: git error (%s)",
+                self.job_slug,
+                exc,
+            )
+            return
+        self._push_branch_best_effort(repo, branch)
+
     def _setup_stage_isolation(self, stage_id: str) -> None:
         """Create the stage branch + worktree before the runner starts.
 
@@ -1291,6 +1355,11 @@ class JobDriver:
                 "branch": branch,
             },
         )
+        # Outcome #11: at least one stage branch under
+        # hammock/stages/<slug>/* must reach the remote so external
+        # tooling can list them. Push best-effort — the local branch is
+        # the source of truth, the remote copy is observability.
+        self._push_branch_best_effort(repo, branch)
 
     # NOTE on v0 worktree teardown (Codex review of PR #24, HIGH 1):
     #

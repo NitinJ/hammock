@@ -127,8 +127,20 @@ def assert_no_failed_or_cancelled(root: Path, job_slug: str) -> None:
 
 
 def assert_required_outputs_exist(root: Path, job_slug: str) -> None:
+    """Every stage that ran must have its declared required outputs on disk.
+
+    Stages skipped via ``runs_if=false`` produce no stage.json AND no
+    outputs (by driver design). For those, the output absence is not a
+    failure — the stage didn't run. We detect skipped stages the same
+    way outcome #2 does: no stage.json on disk plus a ``runs_if``
+    predicate present.
+    """
     job_dir = paths.job_dir(job_slug, root=root)
     for sd in _read_stage_defs(root, job_slug):
+        sr = _read_stage_run(root, job_slug, sd.id)
+        if sr is None and sd.runs_if is not None:
+            # Conditionally skipped — no outputs expected.
+            continue
         for out in sd.exit_condition.required_outputs or []:
             if not (job_dir / out.path).exists():
                 raise AssertionError(
