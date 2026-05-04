@@ -17,12 +17,16 @@ Runner selection:
   ``claude`` binary defaults to ``claude`` in ``$PATH``; override with
   ``--claude-binary``.
 
-The real-runner path here does not yet wire the per-stage MCP server
-(Stage 6 ``MCPManager``) or the Stop hook script. Both are implemented
-inside ``RealStageRunner``; passing them from this entry point is a
-follow-up. Today the real path runs ``claude`` with the bundled
-session settings only, so MCP tools available to agents land in a
-later wiring stage.
+P1 (real-claude e2e precondition track) wires four previously-missing
+RealStageRunner kwargs through this entry point:
+
+- ``mcp_manager`` — fresh ``MCPManager`` per driver process; agents
+  get the full Hammock tool surface for the duration of the job.
+- ``stop_hook_path`` — bundled ``hammock/hooks/validate-stage-exit.sh``
+  so artifact validation runs at the end of every stage instead of
+  being silently skipped.
+- ``job_slug`` + ``hammock_root`` — required so the per-stage MCP
+  server descriptor knows which job + which root it's serving.
 """
 
 from __future__ import annotations
@@ -31,13 +35,20 @@ import asyncio
 import logging
 import shutil
 import sys
+from importlib.resources import files as _pkg_files
 from pathlib import Path
 
+from dashboard.mcp.manager import MCPManager
 from job_driver.runner import JobDriver
 from job_driver.stage_runner import FakeStageRunner, RealStageRunner, StageRunner
 from shared import paths
 from shared.models.job import JobConfig
 from shared.models.project import ProjectConfig
+
+# ``hammock`` is a namespace package (no __init__.py); resolve the
+# bundled Stop-hook script via importlib.resources so tests + production
+# both find it regardless of how Hammock is installed.
+_BUNDLED_STOP_HOOK: Path = Path(str(_pkg_files("hammock") / "hooks" / "validate-stage-exit.sh"))
 
 
 def _setup_logging() -> None:
@@ -82,7 +93,14 @@ def _build_runner(
             "and not a file). Install Claude Code, set HAMMOCK_CLAUDE_BINARY "
             "to the absolute path of the binary, or pass --claude-binary."
         )
-    return RealStageRunner(project_root=project_root, claude_binary=claude_binary)
+    return RealStageRunner(
+        project_root=project_root,
+        claude_binary=claude_binary,
+        mcp_manager=MCPManager(),
+        stop_hook_path=_BUNDLED_STOP_HOOK,
+        job_slug=job_slug,
+        hammock_root=root,
+    )
 
 
 def main() -> None:
