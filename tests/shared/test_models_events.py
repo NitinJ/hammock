@@ -36,3 +36,16 @@ def test_event_types_taxonomy_locked() -> None:
         "cost_accrued",
     }
     assert must_have <= EVENT_TYPES
+
+
+def test_event_types_includes_real_claude_e2e_additions() -> None:
+    """Real-claude e2e precondition track P4: the test asserts on these
+    in its outcomes; the data lives only in process-local state today
+    and never reaches events.jsonl. Adding them to the canonical set
+    is the first step toward emission."""
+    must_have = {
+        "worktree_created",
+        "worktree_destroyed",
+        "worker_exit",
+    }
+    assert must_have <= EVENT_TYPES

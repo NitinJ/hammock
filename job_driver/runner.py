@@ -479,6 +479,18 @@ class JobDriver:
                 },
             )
             self._write_manifest_for_latest_run(stage_def.id)
+            # P4: emit worker_exit so the wall-clock-killed subprocess
+            # leaves a trail for the e2e test (and operators).
+            self._emit_event(
+                "worker_exit",
+                stage_id=stage_def.id,
+                payload={
+                    "stage_id": stage_def.id,
+                    "exit_code": None,
+                    "succeeded": False,
+                    "reason": "budget overrun (max_wall_clock_min)",
+                },
+            )
             return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
@@ -495,7 +507,24 @@ class JobDriver:
             return None
 
         # If the runner raised, propagate so the caller can fail the job.
-        result: StageResult = stage_task.result()
+        # Codex review on PR #28: emit worker_exit with succeeded=False
+        # before re-raising — otherwise a crashing subprocess leaves no
+        # trail in events.jsonl (the e2e test contract is "every claude
+        # subprocess that ran emitted a worker_exit event").
+        try:
+            result: StageResult = stage_task.result()
+        except BaseException as exc:
+            self._emit_event(
+                "worker_exit",
+                stage_id=stage_def.id,
+                payload={
+                    "stage_id": stage_def.id,
+                    "exit_code": None,
+                    "succeeded": False,
+                    "reason": f"runner exception: {exc!r}",
+                },
+            )
+            raise
 
         # Budget post-check: a runner that reports success but blew the
         # spend cap is still a budget-overrun failure (workers cannot
@@ -537,6 +566,23 @@ class JobDriver:
             "stage_state_transition",
             stage_id=stage_def.id,
             payload={"from": "RUNNING", "to": final_state, "cost_usd": result.cost_usd},
+        )
+        # P4 (real-claude e2e precondition track): every successful or
+        # failed runner return produces a worker_exit event. The exit
+        # code is None for FakeStageRunner (no subprocess); RealStageRunner
+        # populates it from proc.returncode. The e2e test asserts this
+        # event has exit_code=0 for every agent stage that ran.
+        worker_exit_payload: dict[str, Any] = {
+            "stage_id": stage_def.id,
+            "exit_code": result.exit_code,
+            "succeeded": result.succeeded,
+        }
+        if result.reason:
+            worker_exit_payload["reason"] = result.reason
+        self._emit_event(
+            "worker_exit",
+            stage_id=stage_def.id,
+            payload=worker_exit_payload,
         )
 
         if result.cost_usd > 0:
@@ -876,6 +922,12 @@ class JobDriver:
 
         The driver returns control to its caller (typically ``main()``); the
         dashboard re-spawns the driver after the human action lands on disk.
+
+        P5 (real-claude e2e precondition track): in addition to the
+        stage.json + job.json transitions, create a HilItem so
+        ``POST /api/hil/{id}/answer`` can resolve the freshly-blocked
+        stage. Without this the operator (and the e2e test) had nothing
+        to answer against.
         """
         # Persist stage as BLOCKED_ON_HUMAN (creates stage.json if absent).
         sj = paths.stage_json(self.job_slug, stage_def.id, root=self.root)
@@ -903,6 +955,55 @@ class JobDriver:
             stage_id=stage_def.id,
             payload={"to": "BLOCKED_ON_HUMAN", "reason": reason},
         )
+
+        # P5: create + persist the HilItem so the answer endpoint can
+        # resolve it. Best-effort with narrow except so a write failure
+        # doesn't block the stage/job state transitions above.
+        # Split try blocks (codex review on PR #28): a HilItem that
+        # persisted but whose hil_item_opened event failed to emit is
+        # NOT a "could not write HilItem" condition — the dashboard
+        # watcher tailer will pick the item up off disk regardless.
+        from shared.hil_factory import create_stage_block_hil_item
+
+        item = None
+        try:
+            item = create_stage_block_hil_item(
+                job_slug=self.job_slug,
+                stage_id=stage_def.id,
+                instructions=(
+                    f"Stage {stage_def.id!r} is blocked on a human. "
+                    f"Reason: {reason}. Resolve the gate (write the required "
+                    f"output and/or answer this HIL item) so the driver can "
+                    f"resume."
+                ),
+                root=self.root,
+                now=self._now(),
+            )
+        except OSError as exc:
+            log.warning(
+                "could not write HilItem for stage block %s/%s: %s",
+                self.job_slug,
+                stage_def.id,
+                exc,
+            )
+        if item is not None:
+            try:
+                self._emit_event(
+                    "hil_item_opened",
+                    stage_id=stage_def.id,
+                    payload={
+                        "item_id": item.id,
+                        "stage_id": stage_def.id,
+                        "kind": item.kind,
+                    },
+                )
+            except OSError as exc:
+                log.warning(
+                    "HilItem %s persisted but hil_item_opened event emit failed: %s",
+                    item.id,
+                    exc,
+                )
+
         self._write_job_state(JobState.BLOCKED_ON_HUMAN)
         log.info(
             "Job %s blocked on human (stage=%s, reason=%s)", self.job_slug, stage_def.id, reason
@@ -1058,6 +1159,20 @@ class JobDriver:
                 stage_id,
                 exc,
             )
+            return
+        # P4 (real-claude e2e precondition track): visibility for the
+        # worktree lifecycle. Without this, "did we get isolation for
+        # this stage?" is only answerable by `git worktree list` from
+        # outside the system.
+        self._emit_event(
+            "worktree_created",
+            stage_id=stage_id,
+            payload={
+                "stage_id": stage_id,
+                "path": str(wt),
+                "branch": branch,
+            },
+        )
 
     # NOTE on v0 worktree teardown (Codex review of PR #24, HIGH 1):
     #

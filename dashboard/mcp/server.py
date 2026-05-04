@@ -91,7 +91,12 @@ def _make_task_id(stamp: datetime) -> str:
 
 
 def _make_hil_id(kind: str, stamp: datetime) -> str:
-    return f"{kind}_{stamp.strftime('%Y-%m-%dT%H:%M:%S')}_{secrets.token_hex(3)}"
+    # Thin shim around the shared helper so writers — open_ask here +
+    # JobDriver._block_on_human via shared/hil_factory — produce the
+    # same id shape (codex review on PR #28).
+    from shared.hil_factory import make_hil_id
+
+    return make_hil_id(kind, stamp)
 
 
 # ---------------------------------------------------------------------------
