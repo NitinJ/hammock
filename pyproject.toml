@@ -27,6 +27,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5",
+    "pytest-timeout>=2.3",
     "hypothesis>=6",
     "factory-boy>=3.3",
     "pyright>=1.1.350",
@@ -106,6 +107,9 @@ testpaths = ["tests"]
 norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "tests/fixtures"]
 addopts = ["-q", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
+markers = [
+    "real_claude: opt-in marker for the real-claude e2e test (gates collection alongside HAMMOCK_E2E_REAL_CLAUDE=1; see docs/specs/2026-05-03-real-claude-e2e-test-design.md)",
+]
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:factory.*",
