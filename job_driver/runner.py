@@ -742,10 +742,18 @@ class JobDriver:
         # stages the template put adjacent to the expander), but BEFORE
         # downstream stages like run-integration-tests + write-summary
         # which depend on the appended stages running first. Concretely:
-        # find the LAST occurrence of any review-{stage_def.id}-* stage,
-        # and insert after that. If no such review stage exists, fall
-        # back to inserting right after the expander itself.
-        review_prefix = f"review-{stage_def.id}-"
+        # find the LAST occurrence of any review-* stage that pairs with
+        # the expander, and insert after that. If no such review stage
+        # exists, fall back to inserting right after the expander itself.
+        #
+        # The bundled templates name reviewer stages by stripping the
+        # leading verb (``write-``) from the producer stage's id:
+        # ``write-impl-plan-spec`` → ``review-impl-plan-spec-{agent,human}``.
+        # We try both forms (with and without ``write-``) so templates
+        # that don't follow the verb-prefix convention still work.
+        review_prefixes: set[str] = {f"review-{stage_def.id}-"}
+        if stage_def.id.startswith("write-"):
+            review_prefixes.add(f"review-{stage_def.id[len('write-') :]}-")
         insert_idx = None
         for idx, s in enumerate(existing_data["stages"]):
             if not isinstance(s, dict):
@@ -753,7 +761,9 @@ class JobDriver:
             sid = s.get("id")
             if sid == stage_def.id:
                 insert_idx = idx + 1
-            elif sid and isinstance(sid, str) and sid.startswith(review_prefix):
+            elif sid and isinstance(sid, str) and any(
+                sid.startswith(p) for p in review_prefixes
+            ):
                 insert_idx = idx + 1
         if insert_idx is None:
             # Expander not in the list (shouldn't happen) — fall back
