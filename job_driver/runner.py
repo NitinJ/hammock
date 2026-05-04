@@ -728,16 +728,10 @@ class JobDriver:
                 exc,
             )
             return
-        if not isinstance(existing_data, dict) or not isinstance(
-            existing_data.get("stages"), list
-        ):
+        if not isinstance(existing_data, dict) or not isinstance(existing_data.get("stages"), list):
             return
 
-        existing_ids = {
-            s.get("id")
-            for s in existing_data["stages"]
-            if isinstance(s, dict)
-        }
+        existing_ids = {s.get("id") for s in existing_data["stages"] if isinstance(s, dict)}
         # Insert AFTER the expander stage's review triple (and any other
         # stages the template put adjacent to the expander), but BEFORE
         # downstream stages like run-integration-tests + write-summary
@@ -759,10 +753,8 @@ class JobDriver:
             if not isinstance(s, dict):
                 continue
             sid = s.get("id")
-            if sid == stage_def.id:
-                insert_idx = idx + 1
-            elif sid and isinstance(sid, str) and any(
-                sid.startswith(p) for p in review_prefixes
+            if sid == stage_def.id or (
+                sid and isinstance(sid, str) and any(sid.startswith(p) for p in review_prefixes)
             ):
                 insert_idx = idx + 1
         if insert_idx is None:
@@ -785,9 +777,7 @@ class JobDriver:
         existing_data["stages"][insert_idx:insert_idx] = new_stages
         from shared.atomic import atomic_write_text
 
-        atomic_write_text(
-            stage_list_path, yaml.safe_dump(existing_data, sort_keys=False)
-        )
+        atomic_write_text(stage_list_path, yaml.safe_dump(existing_data, sort_keys=False))
         log.info(
             "expander %s: merged %d stages from plan.yaml into stage-list.yaml at index %d",
             stage_def.id,

@@ -121,8 +121,7 @@ def build_stage_prompt(
             "## Tools available",
             "",
             "- `git` — full git CLI in the working directory (worktree).",
-            "- `gh` — GitHub CLI, already authenticated. Use it to push branches "
-            "and open PRs.",
+            "- `gh` — GitHub CLI, already authenticated. Use it to push branches and open PRs.",
             "- `pytest` / language toolchains — run inline as needed for verification.",
             "",
             "### Branch + PR protocol (MANDATORY for stages that produce code changes "

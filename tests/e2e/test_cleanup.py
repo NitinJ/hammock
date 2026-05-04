@@ -122,7 +122,12 @@ def test_teardown_deletes_only_new_branches(tmp_path: Path) -> None:
         and "DELETE" in c.args
         and any("git/refs/heads/" in a for a in c.args)
     ]
-    deleted = {a.split("git/refs/heads/", 1)[1] for c in delete_calls for a in c.args if "git/refs/heads/" in a}
+    deleted = {
+        a.split("git/refs/heads/", 1)[1]
+        for c in delete_calls
+        for a in c.args
+        if "git/refs/heads/" in a
+    }
     assert deleted == {"hammock/jobs/abc", "hammock/stages/abc/x"}
 
 

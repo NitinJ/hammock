@@ -164,9 +164,7 @@ def _close_open_prs(repo_slug: str, runner: CmdRunner) -> None:
         num = line.strip()
         if not num:
             continue
-        close_result = runner(
-            ["gh", "pr", "close", num, "--repo", repo_slug, "--delete-branch"]
-        )
+        close_result = runner(["gh", "pr", "close", num, "--repo", repo_slug, "--delete-branch"])
         if close_result.returncode != 0:
             log.warning(
                 "PR #%s close failed: rc=%d stderr=%s — continuing",

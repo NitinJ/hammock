@@ -199,9 +199,7 @@ def test_bootstrap_protection_payload_pins_review_count(seed_dir: Path) -> None:
     assert "-F" in protection_calls[0].args
 
 
-def test_bootstrap_soft_fails_on_protection_403(
-    seed_dir: Path, caplog: object
-) -> None:
+def test_bootstrap_soft_fails_on_protection_403(seed_dir: Path, caplog: object) -> None:
     """GitHub free tier rejects protection on private repos with HTTP 403
     ("Upgrade to GitHub Pro or make this repository public"). Bootstrap
     must log a warning and continue rather than crashing the test —
@@ -232,9 +230,7 @@ def test_bootstrap_soft_fails_on_protection_403(
     # Bootstrap completed despite the 403.
     assert result.created is True
     # And it logged the limitation so operators see why protection isn't on.
-    assert any(
-        "protection" in r.getMessage().lower() for r in caplog.records
-    )
+    assert any("protection" in r.getMessage().lower() for r in caplog.records)
 
 
 def test_bootstrap_raises_on_auth_error(seed_dir: Path) -> None:
