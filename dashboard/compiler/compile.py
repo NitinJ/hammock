@@ -16,6 +16,7 @@ Failures collected at any stage are returned without writing.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -35,6 +36,8 @@ from shared.slug import (
     SlugDerivationError,
     derive_slug,
 )
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -231,6 +234,23 @@ def compile_job(
             paths.job_stage_list(job_slug, root=root),
             yaml.safe_dump(bound, sort_keys=False),
         )
+        # v0 alignment Plan #3: snapshot the project's specialist
+        # catalogue at compile time so every stage of this job sees
+        # the same agents/skills, even if the operator edits an
+        # override mid-job. Best-effort: a resolver failure logs but
+        # does not abort the submit (no overrides → empty catalogue,
+        # which is fine).
+        try:
+            from dashboard.specialist.resolver import resolve
+
+            catalogue = resolve(project)
+            atomic_write_json(job_dir / "specialist-catalogue.json", catalogue)
+        except Exception as exc:
+            log.warning(
+                "could not resolve specialist catalogue for %s: %s",
+                project.slug,
+                exc,
+            )
     except OSError as e:
         return [CompileFailure("io", None, f"could not write job dir {job_dir}: {e}")]
 
