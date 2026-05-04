@@ -18,6 +18,7 @@ from dashboard.api.hil import router as hil_router
 from dashboard.api.jobs import router as jobs_router
 from dashboard.api.observatory import router as observatory_router
 from dashboard.api.projects import router as projects_router
+from dashboard.api.settings import router as settings_router
 from dashboard.api.sse import router as sse_router
 from dashboard.api.stages import router as stages_router
 
@@ -61,4 +62,5 @@ router.include_router(hil_router)
 router.include_router(artifacts_router)
 router.include_router(costs_router)
 router.include_router(observatory_router)
+router.include_router(settings_router)
 router.include_router(sse_router)
