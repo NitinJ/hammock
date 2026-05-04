@@ -356,17 +356,16 @@ class JobDriver:
             # reorder or remove existing entries (the loop trusts
             # per-stage state for "is this done?", not list order, so
             # removed entries are inert — but reordering would break
-            # loop_back targeting).
+            # loop_back targeting). The cap is enforced inside
+            # _read_stages so a runaway expander never reaches Pydantic.
             if stage_def.is_expander:
-                stages = self._read_stages()
-                if len(stages) > self._MAX_STAGES_PER_JOB:
-                    log.error(
-                        "stage-list expansion exceeded %d entries; aborting",
-                        self._MAX_STAGES_PER_JOB,
-                    )
+                try:
+                    stages = self._read_stages()
+                except ValueError as exc:
+                    log.error("expander rewrite rejected: %s", exc)
                     self._fail_stage(
                         stage_def,
-                        reason=f"runaway expander: stage list grew past {self._MAX_STAGES_PER_JOB}",
+                        reason=f"runaway expander: {exc}",
                     )
                     self._write_job_state(JobState.FAILED)
                     return
@@ -673,7 +672,18 @@ class JobDriver:
     def _read_stages(self) -> list[StageDefinition]:
         stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
         data = yaml.safe_load(stage_list_path.read_text()) or {}
-        return [StageDefinition.model_validate(s) for s in data.get("stages", [])]
+        raw_stages = data.get("stages", []) or []
+        # P3 (codex review on PR #26): bound the size BEFORE pydantic
+        # validation. A runaway expander could otherwise append 50k
+        # entries that all get parsed into StageDefinition models
+        # before the post-loop guard fires. Raising the cap-check up
+        # to read time costs one len() call and stops a real DoS path.
+        if len(raw_stages) > self._MAX_STAGES_PER_JOB:
+            raise ValueError(
+                f"stage-list.yaml exceeds the {self._MAX_STAGES_PER_JOB}-stage cap "
+                f"(found {len(raw_stages)}); refusing to parse"
+            )
+        return [StageDefinition.model_validate(s) for s in raw_stages]
 
     def _stage_already_succeeded(self, stage_def: StageDefinition) -> bool:
         """True only if both stage.json says SUCCEEDED and outputs exist.

@@ -21,6 +21,12 @@ from shared.models.stage import (
 )
 
 DEFAULT_MAX_INPUT_BYTES: int = 16 * 1024
+# Aggregate cap across all inlined input bodies (codex review on PR #26):
+# the per-file cap doesn't help when many inputs are declared. When the
+# total exceeds this budget the remaining inputs are listed by path
+# only with a "(omitted: prompt size cap)" notice so the agent still
+# sees the names and can read the files itself if needed.
+DEFAULT_MAX_TOTAL_INPUT_BYTES: int = 64 * 1024
 
 
 def build_stage_prompt(
@@ -30,6 +36,7 @@ def build_stage_prompt(
     job_dir: Path,
     cwd: Path,
     max_input_bytes: int = DEFAULT_MAX_INPUT_BYTES,
+    max_total_input_bytes: int = DEFAULT_MAX_TOTAL_INPUT_BYTES,
 ) -> str:
     """Render the stage prompt as one string.
 
@@ -63,15 +70,21 @@ def build_stage_prompt(
         job_prompt.strip(),
     ]
 
+    # Aggregate budget tracker: shared across required + optional sections
+    # so a long required input doesn't get inlined while optional inputs
+    # silently reach the cap. The mutable list is convention for "the
+    # remaining budget"; threaded through both render calls.
+    remaining_budget = [max_total_input_bytes]
+
     required_inputs = list(stage_def.inputs.required)
     if required_inputs:
         parts.extend(["", "## Required inputs"])
-        parts.extend(_render_inputs(required_inputs, job_dir, max_input_bytes))
+        parts.extend(_render_inputs(required_inputs, job_dir, max_input_bytes, remaining_budget))
 
     optional_inputs = list(stage_def.inputs.optional or [])
     if optional_inputs:
         parts.extend(["", "## Optional inputs"])
-        parts.extend(_render_inputs(optional_inputs, job_dir, max_input_bytes))
+        parts.extend(_render_inputs(optional_inputs, job_dir, max_input_bytes, remaining_budget))
 
     outputs = stage_def.exit_condition.required_outputs or []
     if outputs:
@@ -94,7 +107,18 @@ def build_stage_prompt(
     return "\n".join(parts)
 
 
-def _render_inputs(paths: list[str], job_dir: Path, max_bytes: int) -> list[str]:
+def _render_inputs(
+    paths: list[str],
+    job_dir: Path,
+    max_bytes: int,
+    remaining_budget: list[int],
+) -> list[str]:
+    """Render input file sections, respecting per-file + aggregate caps.
+
+    ``remaining_budget`` is a single-element list used as a mutable
+    cell threaded across multiple ``_render_inputs`` calls so the
+    required + optional sections share one aggregate budget.
+    """
     out: list[str] = []
     job_dir_resolved = job_dir.resolve()
     for relpath in paths:
@@ -108,17 +132,28 @@ def _render_inputs(paths: list[str], job_dir: Path, max_bytes: int) -> list[str]
         if not candidate.is_file():
             out.append(f"(file {relpath!r} not found at {candidate})")
             continue
+        if remaining_budget[0] <= 0:
+            out.append("(omitted: prompt size cap reached; agent should read this directly)")
+            continue
+        # Read at most one extra byte over the per-file cap so we can
+        # detect truncation without slurping the whole file into memory
+        # for large declared inputs.
+        per_file_cap = min(max_bytes, remaining_budget[0])
         try:
-            raw = candidate.read_bytes()
+            with candidate.open("rb") as fh:
+                head = fh.read(per_file_cap + 1)
         except OSError as exc:
             out.append(f"(could not read {relpath!r}: {exc})")
             continue
-        if len(raw) > max_bytes:
-            text = raw[:max_bytes].decode("utf-8", errors="replace")
-            out.append(text)
+        if len(head) > per_file_cap:
+            body = head[:per_file_cap]
+            out.append(body.decode("utf-8", errors="replace"))
             out.append("[truncated]")
+            consumed = per_file_cap
         else:
-            out.append(raw.decode("utf-8", errors="replace"))
+            out.append(head.decode("utf-8", errors="replace"))
+            consumed = len(head)
+        remaining_budget[0] -= consumed
     return out
 
 
