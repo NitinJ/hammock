@@ -11,7 +11,7 @@ Invoke explicitly:
 
     HAMMOCK_E2E_REAL_CLAUDE=1 pytest -m real_claude tests/e2e/
 
-The test wires together steps C–H of the impl plan:
+The test wires together steps C-H of the impl plan:
 
 1. :func:`run_preflight` (D)  — env + tooling probe; skip-vs-fail (D12).
 2. :func:`bootstrap_test_repo` (C) — create-or-reuse the test repo.

@@ -153,7 +153,7 @@ def assert_summary_md_has_url(root: Path, job_slug: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Outcomes #7–#10 — per-stage agent artifacts
+# Outcomes #7-#10 — per-stage agent artifacts
 # ---------------------------------------------------------------------------
 
 

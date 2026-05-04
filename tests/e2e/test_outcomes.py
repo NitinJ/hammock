@@ -206,7 +206,7 @@ def test_assert_required_outputs_exist_passes(tmp_path: Path) -> None:
 
 def test_assert_required_outputs_exist_fails_when_missing(tmp_path: Path) -> None:
     root = _seed_completed_job(tmp_path, write_output=False)
-    with pytest.raises(AssertionError, match="out.txt"):
+    with pytest.raises(AssertionError, match=r"out\.txt"):
         assert_required_outputs_exist(root, "j-out")
 
 
@@ -251,7 +251,7 @@ def test_assert_agent_artifacts_present_fails_when_stream_missing(
     root = _seed_completed_job(tmp_path)
     stream = paths.stage_run_dir("j-out", "stage-a", 1, root=root) / "agent0" / "stream.jsonl"
     stream.unlink()
-    with pytest.raises(AssertionError, match="stream.jsonl"):
+    with pytest.raises(AssertionError, match=r"stream\.jsonl"):
         assert_agent_artifacts_present(root, "j-out")
 
 
