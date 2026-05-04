@@ -132,6 +132,36 @@ async def test_non_expander_stage_appending_is_not_picked_up(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_runaway_expansion_caps_before_pydantic_parse(tmp_path: Path) -> None:
+    """Codex review on PR #26: the stage cap must fire BEFORE pydantic
+    validation so a 10k-entry rewrite doesn't allocate 10k models.
+
+    Validates by writing a stage-list with one normal stage + N stages
+    that are *invalid* (missing required fields). The driver should
+    reject the file at read time before noticing the validation errors,
+    so the failure message names the cap, not the missing fields.
+    """
+    job_dir = tmp_path / "jobs" / "runaway"
+    job_dir.mkdir(parents=True)
+    _write_job_config(job_dir)
+
+    # Build a YAML with way more entries than the cap. The entries are
+    # invalid pydantic input — if the cap check fired AFTER parse, we'd
+    # see a validation error instead of the cap message.
+    cap = JobDriver._MAX_STAGES_PER_JOB
+    bad_stage_list_path = job_dir / "stage-list.yaml"
+    entries = [{"id": f"s{i}", "worker": "agent"} for i in range(cap + 100)]
+    bad_stage_list_path.write_text(yaml.dump({"stages": entries}))
+
+    runner = _ExpandingRunner(job_dir=job_dir, trigger_id="never", appended=[])
+    driver = JobDriver(job_dir.name, root=tmp_path, stage_runner=runner)
+
+    # Calling _read_stages directly is the cleanest assertion target.
+    with pytest.raises(ValueError, match=rf"exceeds the {cap}-stage cap"):
+        driver._read_stages()
+
+
+@pytest.mark.asyncio
 async def test_expander_failure_does_not_trigger_reread(tmp_path: Path) -> None:
     """Re-read fires only on SUCCEEDED + is_expander; a failing expander
     must not re-read (it would mask the failure)."""

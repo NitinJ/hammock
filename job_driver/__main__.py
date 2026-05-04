@@ -45,9 +45,10 @@ from shared import paths
 from shared.models.job import JobConfig
 from shared.models.project import ProjectConfig
 
-# ``hammock`` is a namespace package (no __init__.py); resolve the
-# bundled Stop-hook script via importlib.resources so tests + production
-# both find it regardless of how Hammock is installed.
+# ``hammock`` is packaged in the wheel (see pyproject.toml
+# [tool.hatch.build.targets.wheel].packages); resolve the bundled
+# Stop-hook script via importlib.resources so tests + dev source-tree
+# layout + installed wheels all find it.
 _BUNDLED_STOP_HOOK: Path = Path(str(_pkg_files("hammock") / "hooks" / "validate-stage-exit.sh"))
 
 

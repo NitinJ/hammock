@@ -343,3 +343,59 @@ def test_blank_description_falls_back_to_id(tmp_path: Path, description: str | N
         cwd=tmp_path,
     )
     assert "fallback-id" in prompt
+
+
+# -- Codex-review follow-ups (PR #26) -------------------------------------
+
+
+def test_aggregate_input_budget_omits_overflow(tmp_path: Path) -> None:
+    """Per-file cap alone doesn't help when many inputs are declared.
+    Total inlined bytes are bounded by ``max_total_input_bytes``; inputs
+    past the cap are listed by name with an "omitted" notice."""
+    (tmp_path / "a.md").write_text("A" * 1000)
+    (tmp_path / "b.md").write_text("B" * 1000)
+    (tmp_path / "c.md").write_text("C" * 1000)
+    prompt = build_stage_prompt(
+        _stage(inputs_required=["a.md", "b.md", "c.md"]),
+        job_prompt="x",
+        job_dir=tmp_path,
+        cwd=tmp_path,
+        max_input_bytes=2000,
+        max_total_input_bytes=1500,
+    )
+    assert "c.md" in prompt
+    assert "omitted" in prompt.lower()
+    # The C payload (1000 chars) must NOT make it into the prompt.
+    assert prompt.count("C") < 100
+
+
+def test_aggregate_budget_shared_across_required_and_optional(tmp_path: Path) -> None:
+    """Required + optional inputs share one aggregate budget; otherwise
+    a long required input would still let optional inputs blow the cap."""
+    (tmp_path / "req.md").write_text("R" * 1500)
+    (tmp_path / "opt.md").write_text("O" * 1500)
+    prompt = build_stage_prompt(
+        _stage(inputs_required=["req.md"], inputs_optional=["opt.md"]),
+        job_prompt="x",
+        job_dir=tmp_path,
+        cwd=tmp_path,
+        max_input_bytes=2000,
+        max_total_input_bytes=1500,
+    )
+    assert "omitted" in prompt.lower()
+    assert prompt.count("O") < 100  # 'O' header letter from "Optional" allowed
+
+
+def test_does_not_load_full_file_above_cap(tmp_path: Path) -> None:
+    """Builder must not slurp arbitrarily large files before truncating."""
+    big_file = tmp_path / "big.md"
+    big_file.write_bytes(b"X" * (10 * 1024 * 1024))  # 10 MB
+    prompt = build_stage_prompt(
+        _stage(inputs_required=["big.md"]),
+        job_prompt="x",
+        job_dir=tmp_path,
+        cwd=tmp_path,
+        max_input_bytes=4096,
+    )
+    assert prompt.count("X") <= 4096
+    assert "[truncated]" in prompt
