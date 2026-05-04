@@ -104,4 +104,13 @@ asyncio_mode = "auto"
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:factory.*",
+    # asyncio's BaseSubprocessTransport emits an unraisable warning at
+    # GC time when a subprocess is reaped just before transport teardown
+    # (notably: tests that cancel a RealStageRunner mid-claude). The
+    # warning is captured by pytest's `unraisableexception` plugin in
+    # *its* teardown phase and re-raised against the *next* test, so a
+    # per-test marker can't catch it. The actual contract is asserted
+    # in tests/job_driver/test_real_runner_cancel_cleanup.py; the
+    # warning itself is benign noise from asyncio bookkeeping.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]

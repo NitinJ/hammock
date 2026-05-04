@@ -2740,7 +2740,7 @@ Event types fall into rough categories:
 
 **Channel/chat:** `chat_message_sent_to_session`, `chat_message_received_from_session`, `engine_nudge_emitted`
 
-**Cost:** `cost_accrued` — delta_usd, delta_tokens, running_total
+**Cost:** `cost_accrued` — delta_usd, delta_tokens, running_total. **v0 status:** the runner emits `delta_usd` + `agent_ref` (per the Job Driver post-stage hook); `delta_tokens` and `running_total` are reserved for v1+ when stream-side parsing of claude's per-turn cost events lands. Consumers that fold this event must treat the missing keys as zero.
 
 **Hooks:** `hook_fired`, `validator_passed`, `validator_failed`
 
@@ -2949,9 +2949,9 @@ This is deliberate. Cost data is not architecturally distinct from any other obs
 
 #### Layer 1 (live cost)
 
-Already exists. The `cost_accrued` event payload includes `delta_usd`, `delta_tokens`, and `running_total`. The dashboard tails the per-stage `events.jsonl` via watchfiles and displays:
+The `cost_accrued` event payload **target shape** is `delta_usd` + `delta_tokens` + `running_total`. **v0 ships only `delta_usd` + `agent_ref`** — the per-turn token / running-total stream parsing is a v1+ item (see § Event taxonomy above). The dashboard tails the per-stage `events.jsonl` via watchfiles and displays:
 
-- Per-active-stage running cost (latest `running_total` from cost_accrued events for that stage)
+- Per-active-stage running cost (sum of `delta_usd` from cost_accrued events for that stage; promoted to "latest `running_total`" once v1+ ships it)
 - Per-active-job running cost (sum of stage running totals + completed stages' totals from `stage.json`)
 - Per-project rolling totals (computed on demand from job-summary records)
 
@@ -4155,7 +4155,7 @@ Refreshed as of the consolidation pass (2026-04-30). Earlier items in this list 
 1. **One responsibility per plane.** A capability that belongs in two planes is a sign the boundary is wrong; revisit.
 2. **Storage is the ground truth.** No plane holds canonical state in memory. Restart of any component reconstitutes from storage.
 3. **HIL is structured, not free-form.** Every human pause has a typed shape (ask, review, manual-step) the orchestrator must use.
-4. **Bounded budgets are mandatory.** Every worker run has a hard cap; budget overruns are first-class errors, not warnings.
+4. **Bounded budgets are mandatory.** Every worker run has a hard cap; budget overruns are first-class errors, not warnings. **v0 enforces** `max_wall_clock_min` (parent-process watchdog in the Job Driver) and `max_budget_usd` (passed to claude as `--max-budget-usd` and post-checked in the Job Driver). `max_turns` is accepted on the model but not enforced in v0 — claude has no `--max-turns` CLI flag and stream-side turn counting is the v1+ remainder. Templates may still declare it; enforcement lands when stream-counting ships.
 5. **Code plane discipline is non-negotiable.** Branch-per-task, merge --no-ff, PR per stage. Hammock enforces this; it does not negotiate it.
 6. **Observability over introspection.** Anything an operator might want to know about a run is captured to disk, not derived from process state.
 7. **Worktrees enable parallel execution; merge-integration is where parallel work reconciles.** Conflict resolution at integration is a normal failure mode, not a system bug. The ideal is plans whose tasks compose without collision — improvement toward that ideal is one of Soul's tunable targets, not a property hammock requires from day one.

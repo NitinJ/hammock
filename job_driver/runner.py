@@ -385,18 +385,58 @@ class JobDriver:
 
         log.info("Running stage %s (attempt %d)", stage_def.id, attempt)
 
-        # Race the stage runner against the cancel event
+        # Race the stage runner against the cancel event AND the
+        # wall-clock budget cap (v0 alignment Plan #1). The runner is
+        # the worker; the parent process holds the kill switch, so
+        # workers cannot disable their own budgets per design.
+        #
+        # Tie-breaking policy (Codex review LOW 4): when stage and
+        # wall-clock complete simultaneously, **wall-clock wins** —
+        # the wall-clock branch is checked before the stage-result
+        # branch below. Rationale: a stage that just barely beat the
+        # cap is indistinguishable from one that just barely missed it
+        # by clock skew; safer to fail-closed on the cap than to admit
+        # a marginal overrun.
         stage_task = asyncio.create_task(self._stage_runner.run(stage_def, job_dir, stage_run_dir))
         cancel_task = asyncio.create_task(self._cancel_event.wait())
+        wall_clock_task: asyncio.Task[None] | None = None
+        wait_set: set[asyncio.Task[Any]] = {stage_task, cancel_task}
+        if stage_def.budget.max_wall_clock_min is not None:
+            wall_clock_seconds = float(stage_def.budget.max_wall_clock_min) * 60.0
+            wall_clock_task = asyncio.create_task(asyncio.sleep(wall_clock_seconds))
+            wait_set.add(wall_clock_task)
 
         done, pending = await asyncio.wait(
-            {stage_task, cancel_task},
+            wait_set,
             return_when=asyncio.FIRST_COMPLETED,
         )
 
         for task in pending:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+        if wall_clock_task is not None and wall_clock_task in done:
+            # Wall-clock cap fired before the stage finished. Mark the
+            # stage FAILED with a structured budget-overrun reason.
+            stage_run = stage_run.model_copy(
+                update={
+                    "state": StageState.FAILED,
+                    "ended_at": self._now(),
+                    "restart_count": attempt - 1,
+                }
+            )
+            self._write_stage_run(stage_def.id, stage_run)
+            self._emit_event(
+                "stage_state_transition",
+                stage_id=stage_def.id,
+                payload={
+                    "from": "RUNNING",
+                    "to": "FAILED",
+                    "reason": "budget overrun (max_wall_clock_min)",
+                },
+            )
+            self._write_manifest_for_latest_run(stage_def.id)
+            return StageResult(succeeded=False, reason="budget overrun (max_wall_clock_min)")
 
         if cancel_task in done:
             # Cancellation won — clean up stage state
@@ -414,6 +454,26 @@ class JobDriver:
         # If the runner raised, propagate so the caller can fail the job.
         result: StageResult = stage_task.result()
 
+        # Budget post-check: a runner that reports success but blew the
+        # spend cap is still a budget-overrun failure (workers cannot
+        # disable their own budgets). claude --max-budget-usd is the
+        # primary defence inside RealStageRunner; this catches the
+        # remainder (FakeStageRunner runs and any Real-runner overshoot
+        # claude couldn't preempt).
+        if (
+            stage_def.budget.max_budget_usd is not None
+            and result.cost_usd > stage_def.budget.max_budget_usd
+        ):
+            result = StageResult(
+                succeeded=False,
+                reason=(
+                    f"budget overrun (max_budget_usd: spent ${result.cost_usd:.4f}, "
+                    f"cap ${stage_def.budget.max_budget_usd:.4f})"
+                ),
+                outputs_produced=result.outputs_produced,
+                cost_usd=result.cost_usd,
+            )
+
         final_state = StageState.SUCCEEDED if result.succeeded else StageState.FAILED
         stage_run = stage_run.model_copy(
             update={
@@ -425,6 +485,11 @@ class JobDriver:
             }
         )
         self._write_stage_run(stage_def.id, stage_run)
+
+        # Run-archive integrity manifest (v0 alignment Plan #5; centralised
+        # via _write_manifest_for_latest_run after Codex review of PR #23
+        # so exception-routed failures via _fail_stage land one too).
+        self._write_manifest_for_latest_run(stage_def.id)
         self._emit_event(
             "stage_state_transition",
             stage_id=stage_def.id,
@@ -439,10 +504,17 @@ class JobDriver:
             # key with both the spec and the projection reader, which had
             # silently been folding to 0 because driver, projection, and spec
             # all named the field differently.
+            #
+            # Codex review of PR #23: include ``agent_ref`` so the
+            # ``by_agent`` rollup in JobCostSummary actually populates
+            # (without it, every job's by_agent was structurally empty).
+            payload: dict[str, Any] = {"delta_usd": result.cost_usd}
+            if stage_def.agent_ref:
+                payload["agent_ref"] = stage_def.agent_ref
             self._emit_event(
                 "cost_accrued",
                 stage_id=stage_def.id,
-                payload={"delta_usd": result.cost_usd},
+                payload=payload,
             )
 
         return result
@@ -490,6 +562,24 @@ class JobDriver:
             "job_state_transition",
             payload={"from": str(old_state), "to": str(state)},
         )
+        # Terminal-state hook: persist JobCostSummary to job-summary.json.
+        # Per `JobCostSummary` docstring + v0 alignment audit Plan #6 — the
+        # file was promised by the model but never written. Lazy import
+        # avoids a circular at module load (cost_summary imports `paths`,
+        # which is fine; this just keeps the runner module surface tight).
+        if state in (JobState.COMPLETED, JobState.FAILED, JobState.ABANDONED):
+            from job_driver.cost_summary import write_job_summary
+
+            try:
+                write_job_summary(
+                    self.job_slug,
+                    job_id=updated.job_id,
+                    project_slug=updated.project_slug,
+                    root=self.root,
+                    completed_at=self._now(),
+                )
+            except Exception as exc:
+                log.warning("failed to write job-summary.json for %s: %s", self.job_slug, exc)
 
     def _read_stages(self) -> list[StageDefinition]:
         stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
@@ -801,3 +891,33 @@ class JobDriver:
             stage_id=stage_def.id,
             payload={"to": "FAILED", "reason": reason},
         )
+        # Codex review of PR #23: manifest is the integrity contract for
+        # every closed stage attempt — including ones that closed via
+        # exception or predicate failure routed through here. Best-
+        # effort: if no run dir exists (e.g. predicate failure before
+        # _run_single_stage created it), the helper logs and returns.
+        self._write_manifest_for_latest_run(stage_def.id)
+
+    def _write_manifest_for_latest_run(self, stage_id: str) -> None:
+        """Write the integrity manifest for the latest run dir of *stage_id*.
+
+        No-op (with a debug log) when the run dir doesn't exist yet —
+        e.g. a stage that failed at the predicate stage before its run
+        dir was created. Failure to write the manifest must never mask
+        the stage outcome, so all errors are caught + logged.
+        """
+        latest = paths.stage_run_latest(self.job_slug, stage_id, root=self.root)
+        if not latest.exists():
+            log.debug("no stage run dir for %s — skipping manifest write", stage_id)
+            return
+        try:
+            from job_driver.archive import write_manifest
+
+            write_manifest(latest)
+        except Exception as exc:
+            log.warning(
+                "failed to write archive manifest for %s/%s: %s",
+                self.job_slug,
+                stage_id,
+                exc,
+            )

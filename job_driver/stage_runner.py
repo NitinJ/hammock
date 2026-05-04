@@ -27,14 +27,58 @@ stages that produce no artifacts in tests).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shlex
+import signal
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import yaml
+
+
+def _terminate_subprocess(proc: asyncio.subprocess.Process, *, grace_seconds: float) -> None:
+    """SIGTERM → poll → SIGKILL the subprocess (synchronous).
+
+    Used by RealStageRunner when its enclosing task is cancelled (e.g.
+    JobDriver wall-clock watchdog wins). Without this the claude
+    subprocess outlives the parent's "cancel" and silently bypasses
+    the budget cap.
+
+    Synchronous on purpose: any awaited cleanup inside a
+    ``CancelledError`` handler races the cancellation that triggered
+    it, leaves the asyncio subprocess transport in an unclean state,
+    and trips pytest's unraisable-exception capture. The polling loop
+    blocks the event loop briefly (≤ ``grace_seconds``); for
+    cancellation cleanup that's the right tradeoff. asyncio will reap
+    the SIGCHLD via its child watcher once we return to the loop.
+    """
+    import time
+
+    if proc.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        proc.send_signal(signal.SIGTERM)
+
+    pid = proc.pid
+    deadline = time.monotonic() + grace_seconds
+    while time.monotonic() < deadline:
+        try:
+            done_pid, _ = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return  # already reaped
+        if done_pid == pid:
+            return
+        time.sleep(0.05)
+
+    # Grace expired — escalate to SIGKILL.
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(ChildProcessError):
+        os.waitpid(pid, 0)
+
 
 if TYPE_CHECKING:
     from dashboard.mcp.manager import MCPManager
@@ -224,6 +268,13 @@ class RealStageRunner:
                 "--settings",
                 str(settings_path),
             ]
+            # v0 alignment Plan #1: pass the stage's spend cap to claude
+            # so the agent self-aborts on overshoot. The JobDriver's
+            # post-check is the safety net; this is the cheap primary
+            # defence. claude documents `--max-budget-usd <amount>`
+            # (only works with --print, which we already pass).
+            if stage_def.budget.max_budget_usd is not None:
+                cmd += ["--max-budget-usd", str(stage_def.budget.max_budget_usd)]
 
             # Build subprocess environment with Hammock context for the hook
             env = self._build_env(job_dir, stage_def)
@@ -246,18 +297,29 @@ class RealStageRunner:
                 os.close(stderr_fd)
             assert proc.stdout is not None
 
-            # Stream stdout to stream.jsonl line-by-line
-            fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
             try:
-                async for line in proc.stdout:
-                    view = memoryview(line)
-                    while view:
-                        n = os.write(fd, view)
-                        view = view[n:]
-            finally:
-                os.close(fd)
+                # Stream stdout to stream.jsonl line-by-line.
+                fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+                try:
+                    async for line in proc.stdout:
+                        view = memoryview(line)
+                        while view:
+                            n = os.write(fd, view)
+                            view = view[n:]
+                finally:
+                    os.close(fd)
 
-            await proc.wait()
+                await proc.wait()
+            except asyncio.CancelledError:
+                # JobDriver cancels stage_task when its wall-clock watchdog
+                # wins or the operator cancels. Without this, the claude
+                # subprocess survives the parent's "cancel" and keeps
+                # spending until it self-completes — the budget would be
+                # silently bypassed. Synchronous cleanup avoids racing
+                # the cancellation; see _terminate_subprocess docstring.
+                _terminate_subprocess(proc, grace_seconds=2.0)
+                raise
+
             return_code = proc.returncode or 0
 
             # Extract stream → messages.jsonl, tool-uses.jsonl, result.json, subagents/

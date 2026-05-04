@@ -1313,6 +1313,13 @@ The v1+ deferred-by-design list from the design doc rolls forward unchanged. To 
   a one-spec Playwright walk through "open dashboard → submit job →
   watch live view → answer HIL form" would close the loop on the UI
   side once the HIL bridge above ships. *(Surfaced by Stage 16.)*
+- **Stage-level parallel dispatch (`parallel_with` field + scheduler).**
+  An earlier draft had a `parallel_with: list[str]` field on
+  `StageDefinition` plus a symmetry validator, but the JobDriver always
+  iterated stages strictly sequentially — the field was a contract
+  trap. Removed in the v0 alignment follow-up; reintroduce together
+  with a wavefront scheduler in `_execute_stages` when a real template
+  needs concurrent stages. *(Surfaced by the v0 alignment audit, Plan #4.)*
 
 The first v1+ stage will reuse this doc's structure: stage numbers continue (Stage 17, 18, ...) but tagged `v1.*`. The deferred items themselves don't have a fixed order; expect to pick whichever is most pressing once dogfooding reveals which ones are missed first.
 
