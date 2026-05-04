@@ -221,11 +221,26 @@ def _submit_job_via_cli(root: Path, *, project_slug: str, job_type: str) -> str:
     import json as _json
 
     title = f"e2e {job_type}"
-    request = (
-        f"Hammock real-claude e2e test (auto-generated). Job type: {job_type}. "
-        "Make any reasonable change consistent with the seed repo's "
-        "add_integers.py + tests."
-    )
+    # Concrete request so claude doesn't loop on a vague brief. The
+    # seed repo ships an intentional bug for fix-bug to land on; for
+    # other job types the wording stays specific enough that the
+    # agent has a clear target.
+    if job_type == "fix-bug":
+        request = (
+            "The pytest test ``test_no_args_returns_zero`` in "
+            "test_add_integers.py fails. The function ``add_integers`` in "
+            "add_integers.py returns ``None`` when called with no "
+            "arguments; it should return ``0`` (an empty sum). Diagnose, "
+            "fix the bug, and add a brief regression note. Do not change "
+            "the public signature of ``add_integers`` — keep it variadic."
+        )
+    else:
+        request = (
+            f"Hammock real-claude e2e test ({job_type}). Add a small, "
+            "reasonable feature to ``add_integers.py`` of your choosing — "
+            "for example, an ``add_floats`` companion function. Cover it "
+            "with at least one passing pytest test."
+        )
     result = subprocess.run(
         [
             sys.executable,
