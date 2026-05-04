@@ -134,7 +134,7 @@ async def test_stitch_writes_disk_before_posting_answer(tmp_path: Path) -> None:
     seen_states: list[bool] = []
 
     class _ProbingClient:
-        def post(self, _path: str, json: dict[str, object]) -> object:  # noqa: A002
+        def post(self, _path: str, json: dict[str, object]) -> object:
             del json
             # When the POST runs, both the artifact and the stage.json
             # must already be on disk.
