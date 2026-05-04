@@ -13,6 +13,11 @@ Environment variables (prefix ``HAMMOCK_``):
 - ``HAMMOCK_CLAUDE_BINARY``      — override the ``claude`` CLI path
                                     used by ``RealStageRunner``
                                     (default: ``claude`` from ``$PATH``)
+- ``HAMMOCK_RUN_BACKGROUND_TASKS`` — start watcher / supervisor /
+                                    MCP-manager background tasks in
+                                    the lifespan? Default ``True``.
+                                    Tests set ``False`` so they don't
+                                    race the supervisor's first scan.
 """
 
 from __future__ import annotations
@@ -43,6 +48,10 @@ class Settings(BaseSettings):
     # when fake_fixtures_dir is None). Defaults to `claude` from $PATH;
     # override with HAMMOCK_CLAUDE_BINARY.
     claude_binary: str = "claude"
+    # Start watcher / supervisor / MCP-manager background tasks in the
+    # lifespan. Default True for production. Tests that pre-seed jobs
+    # would race the supervisor's first scan and pass False.
+    run_background_tasks: bool = True
 
     @property
     def runner_mode(self) -> RunnerMode:
