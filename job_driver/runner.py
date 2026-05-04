@@ -359,6 +359,16 @@ class JobDriver:
             # loop_back targeting). The cap is enforced inside
             # _read_stages so a runaway expander never reaches Pydantic.
             if stage_def.is_expander:
+                # Auto-merge the expander's ``plan.yaml`` into
+                # ``stage-list.yaml`` if it exists. The expander's
+                # contract is to write a Plan; the driver glues that
+                # into the live stage list so the appended stages
+                # actually execute. Discovered during the real-claude
+                # e2e dogfood: agents write plan.yaml correctly but
+                # don't always call the ``append_stages`` MCP tool, so
+                # without this merge the appended stages never run and
+                # the job ends after the expander triple.
+                self._merge_plan_yaml_into_stage_list(stage_def)
                 try:
                     stages = self._read_stages()
                 except ValueError as exc:
@@ -668,6 +678,80 @@ class JobDriver:
                 )
             except Exception as exc:
                 log.warning("failed to write job-summary.json for %s: %s", self.job_slug, exc)
+
+    def _merge_plan_yaml_into_stage_list(self, stage_def: StageDefinition) -> None:
+        """For an expander stage, append ``<job_dir>/plan.yaml``'s stages
+        to ``stage-list.yaml``.
+
+        The expander stage's contract is to produce a ``Plan`` (typically
+        as ``plan.yaml``); the driver is responsible for gluing that into
+        the live stage list so subsequent stages execute. This used to
+        rely on the agent calling the ``append_stages`` MCP tool, but
+        compliance is uneven (real-claude e2e dogfood: agent wrote
+        plan.yaml correctly without calling the tool, so the appended
+        stages never ran).
+
+        Skips entries already present in ``stage-list.yaml`` (de-duped
+        by ``id``) so calling both this merge and ``append_stages``
+        yields the same result.
+        """
+        plan_path = self._job_dir() / "plan.yaml"
+        if not plan_path.is_file():
+            return
+        try:
+            plan_data = yaml.safe_load(plan_path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            log.warning(
+                "could not parse %s for expander merge: %s — skipping",
+                plan_path,
+                exc,
+            )
+            return
+        plan_stages = plan_data.get("stages") or []
+        if not isinstance(plan_stages, list) or not plan_stages:
+            return
+
+        stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
+        try:
+            existing_data = yaml.safe_load(stage_list_path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            log.warning(
+                "could not parse stage-list.yaml for expander merge: %s — skipping",
+                exc,
+            )
+            return
+        if not isinstance(existing_data, dict) or not isinstance(
+            existing_data.get("stages"), list
+        ):
+            return
+
+        existing_ids = {
+            s.get("id")
+            for s in existing_data["stages"]
+            if isinstance(s, dict)
+        }
+        appended = 0
+        for stage_spec in plan_stages:
+            if not isinstance(stage_spec, dict):
+                continue
+            sid = stage_spec.get("id")
+            if not sid or sid in existing_ids:
+                continue
+            existing_ids.add(sid)
+            existing_data["stages"].append(stage_spec)
+            appended += 1
+        if appended == 0:
+            return
+        from shared.atomic import atomic_write_text
+
+        atomic_write_text(
+            stage_list_path, yaml.safe_dump(existing_data, sort_keys=False)
+        )
+        log.info(
+            "expander %s: merged %d stages from plan.yaml into stage-list.yaml",
+            stage_def.id,
+            appended,
+        )
 
     def _read_stages(self) -> list[StageDefinition]:
         stage_list_path = paths.job_stage_list(self.job_slug, root=self.root)
