@@ -137,6 +137,11 @@ def bootstrap_test_repo(
         # Use the slug form so SSH/HTTPS auth follows whichever ``gh``
         # already configured, instead of forcing a specific scheme.
         runner(["git", "clone", f"https://github.com/{slug}.git", str(clone_dir)], check=True)
+        # Codex review on PR #29: the cloned repo's default branch
+        # might not be ``main`` (account/org default). Force ``main``
+        # so the seed push and the branch-protection PUT below both
+        # target the same branch regardless of remote-side default.
+        runner(["git", "checkout", "-B", "main"], cwd=clone_dir, check=True)
         # Copy seed contents into the clone (skip .git inside seed if any).
         for item in seed_dir.iterdir():
             if item.name == ".git":
@@ -155,7 +160,10 @@ def bootstrap_test_repo(
         runner(["git", "push", "-u", "origin", "main"], cwd=clone_dir, check=True)
 
     # Branch protection — 1 approving review, no force-push, no admin
-    # bypass (mirrors production Hammock workflows).
+    # bypass (mirrors production Hammock workflows). Codex review on
+    # PR #29: typed values (booleans, nulls, integers) need ``-F``;
+    # ``-f`` is string-only and silently misencodes them. Nested keys
+    # use bracket syntax (``parent[child]=value``).
     runner(
         [
             "gh",
@@ -163,16 +171,22 @@ def bootstrap_test_repo(
             "-X",
             "PUT",
             f"repos/{slug}/branches/main/protection",
-            "-f",
-            "required_pull_request_reviews.required_approving_review_count=1",
-            "-f",
+            "-F",
+            "required_pull_request_reviews[required_approving_review_count]=1",
+            "-F",
+            "required_pull_request_reviews[dismiss_stale_reviews]=false",
+            "-F",
+            "required_pull_request_reviews[require_code_owner_reviews]=false",
+            "-F",
             "enforce_admins=false",
-            "-f",
-            "restrictions=null",
-            "-f",
+            "-F",
             "required_status_checks=null",
-            "-f",
+            "-F",
+            "restrictions=null",
+            "-F",
             "allow_force_pushes=false",
+            "-F",
+            "allow_deletions=false",
         ],
         check=True,
     )

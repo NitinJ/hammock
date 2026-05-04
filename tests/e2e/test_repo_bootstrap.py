@@ -71,10 +71,6 @@ class FakeRunner:
         check: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(_FakeCall(args=list(args), cwd=cwd))
-        # Mimic enough of `git clone <url> <path>` for downstream
-        # filesystem ops in the bootstrap flow to find the clone dir.
-        if args[:2] == ["git", "clone"] and len(args) >= 4:
-            Path(args[3]).mkdir(parents=True, exist_ok=True)
         # Find the longest matching prefix.
         best: tuple[str, ...] | None = None
         for prefix in self._handlers:
@@ -82,8 +78,17 @@ class FakeRunner:
                 if best is None or len(prefix) > len(best):
                     best = prefix
         if best is None:
-            return subprocess.CompletedProcess(args=list(args), returncode=0, stdout="", stderr="")
-        result = self._handlers[best](args)
+            result = subprocess.CompletedProcess(
+                args=list(args), returncode=0, stdout="", stderr=""
+            )
+        else:
+            result = self._handlers[best](args)
+        # Mimic enough of `git clone <url> <path>` for downstream
+        # filesystem ops in the bootstrap flow — but only when the
+        # call would have succeeded. Codex review on PR #29: a future
+        # failing-clone test shouldn't get the dir created behind it.
+        if args[:2] == ["git", "clone"] and len(args) >= 4 and result.returncode == 0:
+            Path(args[3]).mkdir(parents=True, exist_ok=True)
         if check and result.returncode != 0:
             raise subprocess.CalledProcessError(
                 result.returncode, args, output=result.stdout, stderr=result.stderr
@@ -150,6 +155,9 @@ def test_bootstrap_creates_when_absent_then_seeds_then_protects(
     assert result.created is True
     assert _gh_args_have(runner, "repo", "create", "--private")
     assert _gh_args_have(runner, "git", "clone")
+    # Codex review on PR #29: must force ``main`` regardless of
+    # remote-side default-branch configuration.
+    assert _gh_args_have(runner, "checkout", "-B", "main")
     assert _gh_args_have(runner, "git", "push")
     assert _gh_args_have(runner, "branches/main/protection")
 
@@ -185,7 +193,10 @@ def test_bootstrap_protection_payload_pins_review_count(seed_dir: Path) -> None:
     protection_calls = [c for c in runner.calls if "branches/main/protection" in " ".join(c.args)]
     assert len(protection_calls) == 1
     payload = " ".join(protection_calls[0].args)
-    assert "required_approving_review_count=1" in payload
+    # Bracket-nested form per gh api typed-flag (-F) convention.
+    assert "required_pull_request_reviews[required_approving_review_count]=1" in payload
+    # Typed booleans/nulls must use -F so gh emits proper JSON, not strings.
+    assert "-F" in protection_calls[0].args
 
 
 def test_bootstrap_raises_on_auth_error(seed_dir: Path) -> None:

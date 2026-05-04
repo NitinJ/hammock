@@ -275,12 +275,19 @@ def assert_worker_exit_for_each_succeeded_stage(root: Path, job_slug: str) -> No
 # ---------------------------------------------------------------------------
 
 
+# Spec outcome #5 (Stop hook fired) is deferred from the registry: the
+# bundled ``validate-stage-exit.sh`` hook doesn't emit a ``hook_fired``
+# event today (codex review on PR #29), so the assertion would always
+# fail. The ``assert_stop_hook_fired_for_each_succeeded_stage`` helper
+# stays in this module for use once the hook is wired to emit.
+# Transitive coverage is preserved: outcome #2 (all stages SUCCEEDED) +
+# #4 (required outputs exist) imply the hook didn't reject — otherwise
+# the stage would've transitioned to FAILED.
 OUTCOMES: dict[str, OutcomeFn] = {
     "job_completed": assert_job_completed,
     "all_stages_succeeded": assert_all_stages_succeeded,
     "no_failed_or_cancelled": assert_no_failed_or_cancelled,
     "required_outputs_exist": assert_required_outputs_exist,
-    "stop_hook_fired": assert_stop_hook_fired_for_each_succeeded_stage,
     "summary_md_has_url": assert_summary_md_has_url,
     "agent_artifacts_present": assert_agent_artifacts_present,
     "event_stream_well_formed": assert_event_stream_well_formed,

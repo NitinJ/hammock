@@ -101,8 +101,12 @@ async def test_real_claude_full_lifecycle(tmp_path: Path) -> None:
 
     repo_slug = _slug_from_url(cfg.repo_url)
 
-    # 2. Bootstrap (create-if-absent + seed + branch protection).
+    # 2. Bootstrap (create-if-absent + seed + branch protection). After
+    # bootstrap, prune any leftover ``hammock/...`` branches from a
+    # prior crashed run so the snapshot diff in teardown won't ignore
+    # them as "pre-existing" (codex review on PR #29).
     bootstrap_test_repo(cfg.repo_url, seed_dir=_SEED_DIR)
+    _prune_orphan_hammock_branches(repo_slug)
 
     # 3. Snapshot pre-existing branches so teardown only deletes the diff.
     snapshot = take_snapshot(repo_slug)
@@ -110,9 +114,14 @@ async def test_real_claude_full_lifecycle(tmp_path: Path) -> None:
     root = tmp_path / "hammock-root"
     root.mkdir()
 
+    # The CLI's ``project register`` takes a local repo path, so clone
+    # the test repo into the tmp area and register *that*.
+    clone_dir = tmp_path / "test-repo-clone"
+    _clone_repo(cfg.repo_url, clone_dir)
+
     try:
         # 4. Register the project + submit the job through the CLI.
-        project_slug = _register_project_via_cli(root, cfg.repo_url)
+        project_slug = _register_project_via_cli(root, clone_dir)
         job_slug = _submit_job_via_cli(root, project_slug=project_slug, job_type=cfg.job_type)
 
         # 5. Drive to terminal — stitch HIL gates, re-spawn driver,
@@ -151,35 +160,59 @@ async def test_real_claude_full_lifecycle(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _register_project_via_cli(root: Path, repo_url: str) -> str:
-    """Run ``hammock project register`` against tmp root; return slug."""
+def _hammock_env(root: Path) -> dict[str, str]:
+    """Subprocess env with ``HAMMOCK_ROOT`` injected — the CLI honours
+    that env var (no global ``--root`` flag exists)."""
+    env = os.environ.copy()
+    env["HAMMOCK_ROOT"] = str(root)
+    return env
+
+
+def _clone_repo(repo_url: str, dest: Path) -> None:
     result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "cli",
-            "--root",
-            str(root),
-            "project",
-            "register",
-            repo_url,
-        ],
+        ["git", "clone", repo_url, str(dest)],
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
         raise AssertionError(
+            f"git clone {repo_url} failed: rc={result.returncode}\nstderr={result.stderr}"
+        )
+
+
+def _register_project_via_cli(root: Path, repo_path: Path) -> str:
+    """Run ``hammock project register <local-path>``; return slug.
+
+    The CLI accepts a local path (not a URL) and derives the slug from
+    the path's basename. We re-derive it the same way for the next step.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "cli",
+            "project",
+            "register",
+            str(repo_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_hammock_env(root),
+    )
+    if result.returncode != 0:
+        raise AssertionError(
             f"hammock project register failed: rc={result.returncode}\n"
             f"stdout={result.stdout}\nstderr={result.stderr}"
         )
-    # The slug is the last path segment of the repo URL by convention.
-    slug = _slug_from_url(repo_url).split("/")[-1]
-    return slug
+    return repo_path.name
 
 
 def _submit_job_via_cli(root: Path, *, project_slug: str, job_type: str) -> str:
-    """Run ``hammock job submit`` against tmp root; return job_slug."""
+    """Run ``hammock job submit ... --json``; parse the slug from JSON."""
+    import json as _json
+
     title = f"e2e {job_type}"
     request = (
         f"Hammock real-claude e2e test (auto-generated). Job type: {job_type}. "
@@ -191,52 +224,71 @@ def _submit_job_via_cli(root: Path, *, project_slug: str, job_type: str) -> str:
             sys.executable,
             "-m",
             "cli",
-            "--root",
-            str(root),
             "job",
             "submit",
+            "--project",
             project_slug,
             "--type",
             job_type,
             "--title",
             title,
-            "--request",
+            "--request-text",
             request,
+            "--json",
         ],
         capture_output=True,
         text=True,
         check=False,
+        env=_hammock_env(root),
     )
     if result.returncode != 0:
         raise AssertionError(
             f"hammock job submit failed: rc={result.returncode}\n"
             f"stdout={result.stdout}\nstderr={result.stderr}"
         )
-    # The slug is printed by submit; parse it from stdout.
-    slug = _parse_job_slug(result.stdout)
-    if slug is None:
-        raise AssertionError(f"could not parse job slug from submit output: {result.stdout!r}")
+    try:
+        payload = _json.loads(result.stdout)
+    except _json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"could not parse hammock job submit JSON output: {result.stdout!r}"
+        ) from exc
+    slug = payload.get("job_slug")
+    if not isinstance(slug, str) or not slug:
+        raise AssertionError(f"hammock job submit JSON missing job_slug: {payload!r}")
     return slug
 
 
-def _parse_job_slug(stdout: str) -> str | None:
-    """Best-effort: pick a token that looks like a job slug from CLI stdout.
+def _prune_orphan_hammock_branches(repo_slug: str) -> None:
+    """Delete any pre-existing ``hammock/...`` branches before snapshot.
 
-    The CLI's exact output format is owned elsewhere; rely on the slug
-    appearing on a line containing "job_slug" or as the last token of
-    a "submitted" line. Falls back to scanning the jobs dir.
+    A previous run that crashed before teardown leaves zombies; the
+    snapshot diff would record them as "pre-existing" and never clean
+    them up (codex review on PR #29).
     """
-    import re
-
-    match = re.search(r"job[_-]?slug[\":\s=]+([a-z0-9-]+)", stdout, flags=re.IGNORECASE)
-    if match:
-        return match.group(1)
-    # Fallback: a line matching the slug format on its own.
-    for line in stdout.splitlines():
-        line = line.strip()
-        if re.fullmatch(r"[a-z0-9][a-z0-9-]{2,}", line):
-            return line
-    return None
+    listing = subprocess.run(
+        ["gh", "api", f"repos/{repo_slug}/branches", "--jq", ".[].name", "--paginate"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listing.returncode != 0:
+        return  # best-effort — surface the underlying error if any
+    for line in listing.stdout.splitlines():
+        branch = line.strip()
+        if not branch.startswith("hammock/"):
+            continue
+        subprocess.run(
+            [
+                "gh",
+                "api",
+                "-X",
+                "DELETE",
+                f"repos/{repo_slug}/git/refs/heads/{branch}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
 
 # ---------------------------------------------------------------------------
