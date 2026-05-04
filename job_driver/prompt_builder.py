@@ -174,6 +174,51 @@ def _render_inputs(
     return out
 
 
+# Schema hints surface the *required field set* + critical constraints
+# so the agent doesn't invent extra fields that the production
+# Pydantic validators (``extra='forbid'``) reject. Caught during the
+# real-claude e2e dogfood: claude wrote review-verdict-schema with 7
+# helpful-but-rejected fields like ``strengths``, ``issues``,
+# ``approval_conditions``. Adding these hints to the prompt is the
+# minimum-scope fix; a v1+ pass can synthesise from
+# ``model_json_schema()`` automatically.
+_SCHEMA_HINTS: dict[str, str] = {
+    "non-empty": "Any non-empty file content.",
+    "review-verdict-schema": (
+        "Strict JSON. Allowed fields ONLY:\n"
+        "  - verdict: 'approved' | 'needs-revision' | 'rejected'\n"
+        "  - summary: 1-3 sentence string\n"
+        "  - unresolved_concerns: list of objects, each with\n"
+        "      {severity: 'blocker'|'major'|'minor', concern: string, location: string}\n"
+        "  - addressed_in_this_iteration: list of strings (empty on iteration 1)\n"
+        "Schema uses extra='forbid' — DO NOT add other fields like 'reviewer',\n"
+        "'strengths', 'issues', 'minor_suggestions', 'approval_conditions',\n"
+        "'loop_back_required', 'reviewed_artifact'. Put any feedback inline in\n"
+        "``summary`` or as entries in ``unresolved_concerns``."
+    ),
+    "plan-schema": (
+        "Strict JSON/YAML. Allowed top-level field ONLY: ``stages`` (list of\n"
+        "StageDefinition objects). Each stage object has fields: id, description,\n"
+        "worker, agent_ref, inputs, outputs, budget, exit_condition, runs_if,\n"
+        "loop_back, presentation, is_expander. Schema uses extra='forbid'."
+    ),
+    "integration-test-report-schema": (
+        "Strict JSON. Allowed fields ONLY:\n"
+        "  - verdict: 'passed' | 'failed' | 'errored'\n"
+        "  - summary: string\n"
+        "  - test_command: string (the command that was run)\n"
+        "  - total_count: int >= 0\n"
+        "  - passed_count: int >= 0\n"
+        "  - failed_count: int >= 0\n"
+        "  - skipped_count: int >= 0\n"
+        "  - failures: list of {test_name, file_path, error_summary}\n"
+        "  - duration_seconds: float >= 0\n"
+        "Counts must satisfy passed_count + failed_count + skipped_count == total_count.\n"
+        "verdict='passed' requires failed_count == 0. extra='forbid'."
+    ),
+}
+
+
 def _render_outputs(
     outputs: list[RequiredOutput],
     validators: list[ArtifactValidator] | None,
@@ -185,12 +230,16 @@ def _render_outputs(
         schema_by_path[v.path] = v.schema_
     lines: list[str] = []
     for out in outputs:
-        full_path = (
-            f"{job_dir}/{out.path}" if job_dir is not None else out.path
-        )
+        full_path = f"{job_dir}/{out.path}" if job_dir is not None else out.path
         schema = schema_by_path.get(out.path)
         if schema:
             lines.append(f"- {full_path}  (validated by: {schema})")
+            hint = _SCHEMA_HINTS.get(schema)
+            if hint:
+                # Indent every line so the hint reads as a sub-block of
+                # the bullet above it.
+                for hint_line in hint.splitlines():
+                    lines.append(f"    {hint_line}")
         else:
             lines.append(f"- {full_path}")
     return lines
