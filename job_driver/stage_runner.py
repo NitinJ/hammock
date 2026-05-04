@@ -216,6 +216,12 @@ class RealStageRunner:
         job_slug: str | None = None,
         hammock_root: Path | None = None,
     ) -> None:
+        # The runner uses ``project_root`` as the subprocess ``cwd``;
+        # validating up-front turns a confusing FileNotFoundError from
+        # ``create_subprocess_exec`` into a clear configuration error
+        # at construction time (PR3 — Codex review on PR #25).
+        if not project_root.is_dir():
+            raise ValueError(f"project_root {project_root!s} does not exist or is not a directory")
         self._project_root = project_root
         self._claude_binary = claude_binary
         self._stop_hook_path = stop_hook_path
@@ -275,6 +281,21 @@ class RealStageRunner:
             # (only works with --print, which we already pass).
             if stage_def.budget.max_budget_usd is not None:
                 cmd += ["--max-budget-usd", str(stage_def.budget.max_budget_usd)]
+
+            # v0 alignment Plan #3: pick up the per-stage materialised
+            # agents catalogue if the JobDriver wrote one. Convention:
+            # ``<stage_run_dir>/agents.json`` keyed by ``agent_ref``
+            # with ``{description, prompt}`` per entry, matching
+            # claude's ``--agents <inline json>`` flag. Empty mapping
+            # → skip the flag so claude uses its default agent set.
+            agents_json = stage_run_dir / "agents.json"
+            if agents_json.is_file():
+                try:
+                    payload = json.loads(agents_json.read_text())
+                except (OSError, json.JSONDecodeError):
+                    payload = {}
+                if isinstance(payload, dict) and payload:
+                    cmd += ["--agents", json.dumps(payload)]
 
             # Build subprocess environment with Hammock context for the hook
             env = self._build_env(job_dir, stage_def)

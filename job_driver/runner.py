@@ -377,6 +377,12 @@ class JobDriver:
         # and run the stage in-place (fake-fixture flows; tests).
         self._setup_stage_isolation(stage_def.id)
 
+        # v0 alignment Plan #3: materialise the project's specialist
+        # catalogue into <stage_run_dir>/agents.json. RealStageRunner
+        # passes its contents to claude via `--agents <inline json>`.
+        # Best-effort: failure logs but never aborts the stage.
+        self._materialise_specialists_for_stage(stage_run_dir)
+
         # Persist RUNNING state
         stage_run = StageRun(
             stage_id=stage_def.id,
@@ -1036,3 +1042,34 @@ class JobDriver:
     # automatic cleanup pass to a v1+ task documented in
     # `docs/implementation.md § 9`. Operators clean up manually with
     # `git worktree remove <path>` + `git worktree prune`.
+
+    # ------------------------------------------------------------------
+    # Specialist catalogue (v0 alignment Plan #3)
+    # ------------------------------------------------------------------
+
+    def _materialise_specialists_for_stage(self, stage_run_dir: Path) -> None:
+        """Write ``<stage_run_dir>/agents.json`` from the project's
+        specialist catalogue so RealStageRunner can pass it to claude
+        via ``--agents <inline json>``.
+
+        ``resolve`` already logs+skips per-file malformed overrides;
+        the catch here narrows to filesystem / model-parse errors so
+        a missing ``project.json`` or atomic_write failure doesn't
+        crash the driver — programming bugs still propagate.
+        """
+        try:
+            from dashboard.specialist.materialise import materialise_for_spawn
+            from shared.models import ProjectConfig
+
+            cfg = self._read_job_config()
+            project_path = paths.project_json(cfg.project_slug, root=self.root)
+            if not project_path.exists():
+                return
+            project = ProjectConfig.model_validate_json(project_path.read_text())
+            materialise_for_spawn(project, stage_run_dir)
+        except (OSError, ValueError) as exc:
+            log.warning(
+                "could not materialise specialist catalogue for %s: %s",
+                self.job_slug,
+                exc,
+            )

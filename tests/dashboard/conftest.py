@@ -270,5 +270,9 @@ def populated_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(populated_root: Path) -> TestClient:
-    app = create_app(Settings(root=populated_root))
+    # `run_background_tasks=False` prevents the supervisor + watcher +
+    # MCP manager from racing test setup (they fire on lifespan
+    # startup; pre-seeded jobs without heartbeats would trigger a
+    # spurious respawn that conflicts with the test's API calls).
+    app = create_app(Settings(root=populated_root, run_background_tasks=False))
     return TestClient(app)

@@ -63,7 +63,9 @@ def stage_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(stage_root: Path) -> TestClient:
-    return TestClient(create_app(Settings(root=stage_root)))
+    # Disable background tasks (supervisor scan would race with the
+    # restart-endpoint tests). v0 alignment Plan #7.
+    return TestClient(create_app(Settings(root=stage_root, run_background_tasks=False)))
 
 
 # ---------------------------------------------------------------------------

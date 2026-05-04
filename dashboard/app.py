@@ -18,12 +18,15 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from dashboard.api import router
+from dashboard.driver.supervisor import Supervisor
+from dashboard.mcp.manager import MCPManager
 from dashboard.settings import Settings
 from dashboard.state.cache import Cache
 from dashboard.state.pubsub import InProcessPubSub
@@ -43,13 +46,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Stage 12.5 (A5): separate bus for typed Event records tailed from events.jsonl
     events_pubsub: InProcessPubSub[Event] = InProcessPubSub()
 
+    supervisor = Supervisor()
+    mcp_manager = MCPManager()
+
     app.state.cache = cache  # type: ignore[attr-defined]
     app.state.pubsub = pubsub  # type: ignore[attr-defined]
     app.state.events_pubsub = events_pubsub  # type: ignore[attr-defined]
+    app.state.supervisor = supervisor  # type: ignore[attr-defined]
+    app.state.mcp_manager = mcp_manager  # type: ignore[attr-defined]
 
-    tasks = [
-        asyncio.create_task(tailer.run(cache, pubsub, events_pubsub), name="watcher"),
-    ]
+    # v0 alignment Plan #7: presentation-plane spec calls for the
+    # lifespan to start watcher + supervisor + MCP manager. Earlier
+    # drafts shipped only the watcher (Codex review of the audit
+    # caught the gap; both other classes also lacked `run()` methods,
+    # which this PR adds). ``run_background_tasks`` is the test
+    # opt-out — TestClient suites that pre-seed jobs would race the
+    # supervisor's first scan (which fires on startup, would spawn
+    # drivers, and would conflict with API calls under test).
+    tasks: list[asyncio.Task[Any]] = []
+    if settings.run_background_tasks:
+        tasks.extend(
+            [
+                asyncio.create_task(tailer.run(cache, pubsub, events_pubsub), name="watcher"),
+                asyncio.create_task(supervisor.run(root=settings.root), name="supervisor"),
+                asyncio.create_task(mcp_manager.run(), name="mcp-manager"),
+            ]
+        )
     try:
         yield
     finally:

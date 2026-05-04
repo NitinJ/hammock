@@ -16,6 +16,7 @@ Failures collected at any stage are returned without writing.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -35,6 +36,8 @@ from shared.slug import (
     SlugDerivationError,
     derive_slug,
 )
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -231,6 +234,26 @@ def compile_job(
             paths.job_stage_list(job_slug, root=root),
             yaml.safe_dump(bound, sort_keys=False),
         )
+        # v0 alignment Plan #3: snapshot the project's specialist
+        # catalogue at compile time so every stage of this job sees
+        # the same agents/skills, even if the operator edits an
+        # override mid-job. ``resolve`` itself logs+skips per-file
+        # malformed overrides (so individual bad frontmatter doesn't
+        # abort the whole catalogue); the broad-but-narrow exception
+        # set here only swallows filesystem failures of the snapshot
+        # write, which would otherwise block submit. Programming bugs
+        # (AttributeError, ImportError, KeyError, ...) propagate.
+        try:
+            from dashboard.specialist.resolver import resolve
+
+            catalogue = resolve(project)
+            atomic_write_json(job_dir / "specialist-catalogue.json", catalogue)
+        except OSError as exc:
+            log.warning(
+                "could not snapshot specialist catalogue for %s: %s",
+                project.slug,
+                exc,
+            )
     except OSError as e:
         return [CompileFailure("io", None, f"could not write job dir {job_dir}: {e}")]
 

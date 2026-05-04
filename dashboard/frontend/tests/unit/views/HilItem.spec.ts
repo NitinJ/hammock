@@ -187,4 +187,34 @@ describe("HilItem", () => {
     await flushPromises();
     expect(w.find("[role='alert']").exists()).toBe(true);
   });
+
+  it("forwards project_slug to /api/hil/templates so per-project overrides resolve", async () => {
+    // v0 alignment report Plan #10: when the HIL detail names a project,
+    // the template fetch must include `?project_slug=<slug>` so the
+    // backend resolver picks the project's `<repo>/.hammock/ui-templates/`
+    // override before falling back to the bundled default.
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.includes("/templates/")) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(askTemplate),
+        };
+      }
+      return { ok: true, status: 200, json: () => Promise.resolve(askDetail) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = makeRouter();
+    await router.isReady();
+    mount(HilItem, { global: { plugins: [router, createPinia()] } });
+    await flushPromises();
+
+    const templateCall = calls.find((u) => u.includes("/templates/"));
+    expect(templateCall).toBeDefined();
+    // askDetail.project_slug === "alpha" → must appear in the query string
+    expect(templateCall).toContain("project_slug=alpha");
+  });
 });

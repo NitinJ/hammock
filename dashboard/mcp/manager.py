@@ -80,6 +80,38 @@ class MCPManager:
     def dispose(self, handle: ServerHandle) -> None:
         self._live.pop((handle.job_slug, handle.stage_id), None)
 
+    def live_count(self) -> int:
+        """Number of currently-spawned per-stage MCP server descriptors.
+
+        Public counterpart of ``self._live`` so callers (e.g. the
+        Settings rollup) don't depend on the private attribute name.
+        """
+        return len(self._live)
+
+    async def run(self, *, poll_interval: float = 60.0) -> None:
+        """Long-running janitor loop.
+
+        v0 ships a no-op (sleeps until cancelled) so the dashboard
+        lifespan has a single shape for "background subsystem". A
+        v1+ stage adds the real cleanup work — reaping per-stage MCP
+        server descriptors whose enclosing job has reached a terminal
+        state, plus orphan-detection for spawn calls that never
+        called ``dispose``.
+
+        Cancellation propagates via :class:`asyncio.CancelledError`.
+        """
+        import asyncio
+        import logging
+
+        log = logging.getLogger(__name__)
+        log.info("mcp manager started — poll_interval=%.1fs (v0 no-op)", poll_interval)
+        try:
+            while True:
+                await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            log.info("mcp manager cancelled")
+            raise
+
     def _build_mcp_config(self, job_slug: str, stage_id: str, root: Path) -> dict[str, Any]:
         return {
             "mcpServers": {
