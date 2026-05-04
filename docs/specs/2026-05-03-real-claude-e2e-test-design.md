@@ -16,14 +16,16 @@ This document describes **what** the test does, **when** it runs, **what counts 
 
 A fidelity check on the real execution stack, focused narrowly on what unit tests cannot reach:
 
-1. **Catch RealStageRunner regressions early.** Verify the real-`claude` path drives a `fix-bug` job to `COMPLETED` end-to-end.
+1. **Catch RealStageRunner regressions early.** Verify the real-`claude` path drives a job end-to-end to `COMPLETED`.
 2. **Verify storage-layer + git artifact contracts** in production-shaped form: branches, worktrees, PRs, per-stage artifacts, `summary.md`, `events.jsonl`.
 3. **Surface integration-only bugs** that emerge when MCP server + Stop hook + driver IPC + dashboard + a real `claude` subprocess all run together. Unit tests can't see these.
-4. **Bound scope to what we can reliably assert.** Pass = job completes + artifacts match contracts. No claims about model output quality.
+4. **Bound scope to what we can reliably assert.** Pass = job completes + artifacts match contracts. No claims about model output content.
+
+The first iteration runs against a single chosen job type, but **the design must be job-type-agnostic**: the same scaffolding (registration, submission, gate-stitching, polling, assertions) applies to any job type the test repo is configured for. Adding coverage for a new job type should mean configuring the test repo and pointing the test at it — not rewriting the test.
 
 ## Non-goals
 
-- Model-quality regression detection ("did Claude actually fix the bug").
+- Model-quality regression detection (whether Claude's output is correct content).
 - Frontend / Playwright coverage.
 - Default-CI execution.
 - Exhaustive failure-mode coverage.
@@ -34,11 +36,12 @@ A fidelity check on the real execution stack, focused narrowly on what unit test
 
 | Dimension | Decision |
 |---|---|
-| Real `claude` subprocess via `RealStageRunner` | **In** — cost accepted |
+| Real `claude` subprocess via `RealStageRunner` | **In** |
 | Real dashboard application (running through its production code paths) | **In** |
 | Real registered git project, real worktrees / branches / PRs | **In** |
-| Real GitHub remote (dedicated test repo) | **In** — user provisions |
+| Real GitHub remote (dedicated test repo, operator-provisioned) | **In** |
 | Real per-stage MCP server | **In** — no fake |
+| Job-type-agnostic test scaffolding | **In** |
 | Frontend / Playwright | **Out** — separate spec |
 | Closed-loop HIL → artifact bridge | **Out** — gates are stitched the same way the existing fake e2e does |
 | Default-CI execution | **Out** — opt-in only |
@@ -48,7 +51,7 @@ A fidelity check on the real execution stack, focused narrowly on what unit test
 
 ## Prerequisites
 
-The test cannot run until all of these are in place.
+The test cannot run until all of these are in place. If any precondition is missing, the test must skip with a message naming the missing piece — never fail.
 
 ### Code preconditions
 
@@ -59,15 +62,14 @@ The test cannot run until all of these are in place.
 
 ### Operator preconditions
 
-3. **Dedicated GitHub test repo.** A throwaway repo with one trivial Python bug (e.g. off-by-one in a small parser), a unit-test demonstrating the bug, `pyproject.toml`, and `CLAUDE.md`. Small enough that an agent fixes it in 1–2 turns per stage.
+3. **A dedicated GitHub test repo** exists and is accessible to the test environment. Its contents and structure are an operator concern; this design does not prescribe them.
 4. **`GITHUB_TOKEN`** with `repo` scope for the test repo, available in the test environment.
 5. **`claude` CLI** installed and resolvable (on `$PATH` or via `HAMMOCK_CLAUDE_BINARY`).
 6. **Configuration env vars set:**
    - `HAMMOCK_E2E_REAL_CLAUDE=1` — opt-in switch.
-   - `HAMMOCK_E2E_TEST_REPO_URL` — clone URL of the test repo. No default; the test skips with a clear message if unset.
-   - `HAMMOCK_E2E_KEEP_ROOT=1` — *optional*; preserves the tmp `HAMMOCK_ROOT` after the run for post-mortem inspection.
-
-If any precondition is missing, the test must skip with a message naming the missing piece — never fail.
+   - `HAMMOCK_E2E_TEST_REPO_URL` — clone URL of the test repo. No default; the test skips if unset.
+   - `HAMMOCK_E2E_JOB_TYPE` — which job type to submit (e.g. `fix-bug`, `build-feature`). Default chosen at implementation time.
+   - `HAMMOCK_E2E_KEEP_ROOT=1` — *optional*; preserves the tmp `HAMMOCK_ROOT` after the run for post-mortem inspection. Off by default.
 
 ---
 
@@ -80,35 +82,36 @@ If any precondition is missing, the test must skip with a message naming the mis
 | Explicit invocation: `HAMMOCK_E2E_REAL_CLAUDE=1 pytest -m real_claude ...` with all preconditions satisfied | Test runs. |
 | Nightly cron in CI | **Not yet.** Deferred until the project is funded. |
 
-### Runtime budgets
+### Runtime budget
 
 | Bound | Value | Mechanism |
 |---|---|---|
 | Hard wall-clock timeout | 15 minutes | pytest timeout |
-| Soft cost cap | $5 | Warning printed to stderr at end of run; not a failure (cost varies with model pricing and is a flaky pass condition) |
 | Hammock-side per-stage budget | n/a today | Hammock budget enforcement is alignment-drift item #1; not yet shipped. The wall-clock timeout is the only backstop until it ships. |
+
+Cost guards (warnings, soft caps, billing alerts) are explicitly deferred — operators run this consciously, and the wall-clock timeout is the only protection in scope right now.
 
 ---
 
 ## What the test does
 
-A single end-to-end scenario. The test:
+A single end-to-end scenario, parameterised over job type. The test:
 
 1. **Sets up a clean state.** Tmp `HAMMOCK_ROOT`. Clone of the test repo at a known commit (`origin/main`, hard-reset). Reuses the existing `tests/conftest.py::hammock_root` pattern where applicable.
 2. **Registers the cloned repo as a Hammock project** through the canonical CLI path that production uses.
-3. **Submits a `fix-bug` job** through the production submission path. The real `JobDriver` is spawned. Stages execute via `RealStageRunner` — real `claude` subprocesses, real MCP server, real Stop hook.
-4. **Walks through every stage.** When the job blocks on a human gate, the test stitches it the same way `tests/e2e/test_full_lifecycle.py` does today: writes the required output artifact, transitions `stage.json` to `SUCCEEDED`, and additionally records the answer through the HIL answer endpoint for fidelity. Driver re-spawns proceed normally.
+3. **Submits a job** of the configured type through the production submission path. The real `JobDriver` is spawned. Stages execute via `RealStageRunner` — real `claude` subprocesses, real MCP server, real Stop hook.
+4. **Walks through every stage.** When the job blocks on a human gate, the test stitches it the same way `tests/e2e/test_full_lifecycle.py` does today: writes the required output artifact, transitions `stage.json` to `SUCCEEDED`, and additionally records the answer through the HIL answer endpoint for fidelity. Driver re-spawns proceed normally. The stitching layer reads the gate's required output schema dynamically from the compiled stage list — no per-job-type hardcoding.
 5. **Waits for the job to reach a terminal state** (under the wall-clock cap).
-6. **Validates the on-disk and git outcomes** against the assertion list below.
-7. **Cleans up.** Branches matching the job's branch namespace are deleted (local + remote). PRs auto-close on branch deletion. Tmp `HAMMOCK_ROOT` removed unless `HAMMOCK_E2E_KEEP_ROOT=1`.
+6. **Validates the on-disk and git outcomes** against the assertion list below. Assertions are derived from the compiled stage list — they apply equally to any job type whose stages declare their `required_outputs` and artifact schemas.
+7. **Cleans up — always, on success or failure.** Cleanup runs through `pytest` fixture teardown so it executes even when the test body raises or times out. It removes branches created by the run (local + remote), letting GitHub auto-close the corresponding PRs. It removes the tmp `HAMMOCK_ROOT` unless the operator opted in to keep it via `HAMMOCK_E2E_KEEP_ROOT=1`. Cleanup failures are logged but do not mask the underlying test failure.
 
-The test is a single-scenario `fix-bug` walk. Multi-scenario coverage (`build-feature`, error-path variants, etc.) is explicitly out of scope; future tests can layer on.
+The first iteration is a single-scenario walk for the chosen job type. Multi-job-type and multi-scenario coverage is layered on later by the same scaffolding.
 
 ---
 
 ## Outcomes — what counts as PASS
 
-All of these must hold. Failure of any one fails the test.
+All of these must hold. Failure of any one fails the test. Each outcome is derived from the compiled stage list (no per-job-type hardcoding).
 
 | # | Outcome | Source of truth |
 |---|---|---|
@@ -125,9 +128,8 @@ All of these must hold. Failure of any one fails the test.
 
 ### Explicitly NOT asserted
 
-- "The bug was actually fixed." Would require running the fixture's tests against the post-fix worktree. Deferred to a separate test (assertion-strategy C).
+- "Claude produced correct output content." Would require running the test repo's own tests against the post-run worktree. Deferred to a separate test (assertion-strategy C).
 - PR title / body / commit message quality. Model-quality, not Hammock-quality.
-- Total cost. Warning only.
 
 ---
 
@@ -136,11 +138,12 @@ All of these must hold. Failure of any one fails the test.
 | Item | Reason for deferral |
 |---|---|
 | Frontend Playwright e2e | Separate concern; browser-driven flow has its own spec |
-| "Did Claude actually fix the bug" assertion (strategy C) | Would couple test pass to model quality; separate test once strategy A is stable |
+| Strategy-C content correctness assertion (run repo's tests post-run) | Would couple test pass to model quality; separate test once strategy A is stable |
 | SSE assertions | Already covered by `tests/dashboard/api/test_sse.py`; layering it in here conflates concerns |
-| `build-feature` template coverage | Larger stage list, more cost; revisit after `fix-bug` is stable |
+| Multi-job-type coverage in a single run / parameterised matrix | Scaffolding is job-type-agnostic so this is a configuration change later; not first-cut |
 | Hammock-side per-stage budget enforcement during the test | Depends on alignment-drift item #1 shipping |
 | Closed-loop HIL → artifact bridge integration | Separate v1+ effort; gates are hand-stitched here just like the existing fake e2e |
+| Cost guards / soft caps / billing alerts | Deferred — operators run this consciously |
 | Nightly CI cron | Real cost on a recurring schedule conflicts with the no-funding constraint |
 
 ---
@@ -149,12 +152,11 @@ All of these must hold. Failure of any one fails the test.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Claude wanders off / runs long | medium | high cost | 15-min wall-clock timeout; soft cost warning at $5 |
+| Run exceeds wall-clock | medium | test timeout | 15-min pytest timeout; teardown cleans up regardless |
 | GH rate limit during run | low | flake | Dedicated test repo; failures retryable |
-| Branch cleanup leaves orphans | low | accumulating noise | Cleanup failures logged but non-fatal; periodic manual sweep |
+| Branch cleanup leaves orphans | low | accumulating noise | Teardown is unconditional; cleanup failures logged but non-fatal; periodic manual sweep |
 | HIL stitching races driver restart | low | flake | Same pattern proven by the existing fake e2e |
 | Stop-hook validation rejects an artifact Claude wrote | medium | stage FAILED | This is *real coverage* — surface as a bug in Hammock contracts or the prompt; do not paper over |
-| Model-pricing change spikes cost | low | warning only | Cost is a warning, not a failure |
 | Test repo state drift between runs | low | non-repeatable run | Hard-reset to `origin/main` in test setup |
 
 ---
@@ -165,14 +167,14 @@ Each design choice with the alternatives evaluated and the reasoning for the sel
 
 ### D1 — Test scenario
 
-**Selected:** `fix-bug` job on a dedicated, throwaway GitHub repo containing one trivial Python bug.
+**Selected:** a single end-to-end job run against a dedicated GitHub test repo, with the job type chosen at runtime via env var. Scaffolding is job-type-agnostic.
 
 | Option | Verdict | Reasoning |
 |---|---|---|
-| `fix-bug` on existing `tests/fixtures/dogfood-bug/` | ✗ | Conflates the manual-dogfood fixture (doc-grade) with the automated test |
-| **`fix-bug` on a dedicated test repo** | ✓ | Clean separation; user is provisioning it; independent maintenance |
-| `build-feature` on the same repo | defer | Larger stage list and cost; not the right first cut |
-| Custom trimmed-down template | ✗ | Test would no longer exercise the production template — defeats the point |
+| Hardcode a single job type into the test | ✗ | Couples the test to one template; adding another job type means duplicating scaffolding |
+| **Job-type-agnostic scaffolding, type chosen via env var** | ✓ | Same test serves any job type; assertions derive from the compiled stage list, not the template |
+| Reuse `tests/fixtures/dogfood-bug/` | ✗ | Conflates the manual-dogfood fixture (doc-grade) with the automated test repo |
+| Custom trimmed-down template designed for testing | ✗ | Test would no longer exercise production templates |
 
 ### D2 — Test orchestration
 
@@ -181,7 +183,7 @@ Each design choice with the alternatives evaluated and the reasoning for the sel
 | Option | Verdict | Reasoning |
 |---|---|---|
 | **Match existing e2e pattern (in-process app + real detached driver)** | ✓ | The test goal is RealStageRunner + git + storage layer; none of those care about HTTP transport. Aligns with codebase convention. |
-| Spin up a real dashboard subprocess on a free port | ✗ | Adds fixture complexity (port discovery, readiness probe, log capture) without testing anything new for our goals. Reconsider only if we want to catch lifespan-only bugs in a future test. |
+| Spin up a real dashboard subprocess on a free port | ✗ | Adds fixture complexity (port discovery, readiness probe, log capture) without testing anything new for our goals |
 | Operator-started external dashboard | ✗ | Coordination burden; can't run unattended |
 
 ### D3 — State observation
@@ -196,7 +198,7 @@ Each design choice with the alternatives evaluated and the reasoning for the sel
 
 ### D4 — HIL gate handling
 
-**Selected:** poll for `BLOCKED_ON_HUMAN`; for each, write the required output artifact, mark `stage.json` `SUCCEEDED`, additionally POST to the HIL answer endpoint for record fidelity, then re-spawn the driver. Helper lifted from existing e2e and shared.
+**Selected:** poll for `BLOCKED_ON_HUMAN`; for each, write the required output artifact, mark `stage.json` `SUCCEEDED`, additionally POST to the HIL answer endpoint for record fidelity, then re-spawn the driver. The stitching helper is shared with the existing fake e2e and reads the required output schema from the compiled stage list (no per-job-type hardcoding).
 
 | Option | Verdict | Reasoning |
 |---|---|---|
@@ -216,14 +218,15 @@ Each design choice with the alternatives evaluated and the reasoning for the sel
 
 ### D6 — Cleanup + isolation
 
-**Selected:** tmp `HAMMOCK_ROOT` per run; reset test repo to a known commit on init; delete created branches in teardown; rely on GH auto-close of PRs when their branch is deleted.
+**Selected:** unconditional teardown via `pytest` fixture; tmp `HAMMOCK_ROOT` per run; reset test repo to a known commit on init; delete created branches in teardown; rely on GH auto-close of PRs when their branch is deleted.
 
 | Option | Verdict | Reasoning |
 |---|---|---|
-| Full GH cleanup including explicit PR close | ✗ | Adds permission requirements + extra teardown failure modes |
-| **Tmp HAMMOCK_ROOT + branch delete; PRs auto-close** | ✓ | Simple, low blast radius |
+| Conditional cleanup (only on success) | ✗ | Failed runs leave branches and PRs around — exactly when cleanup matters most |
+| **Unconditional teardown via `pytest` fixture (always runs)** | ✓ | Cleanup is the same on success or failure; cleanup errors are logged, never mask the underlying test failure |
+| Full GH cleanup including explicit PR close | ✗ | Adds permission requirements and extra teardown failure modes; PRs auto-close on branch deletion |
 | Persistent HAMMOCK_ROOT by default | ✗ | State leaks across runs; exposed as opt-in via `HAMMOCK_E2E_KEEP_ROOT=1` |
-| Reset test repo to known commit at run start | ✓ adopted | Repeatable starting state; only force-pushes a non-`main` working ref, not `main` |
+| Reset test repo to known commit at run start | ✓ adopted | Repeatable starting state |
 
 ### D7 — Gating
 
@@ -243,20 +246,10 @@ Each design choice with the alternatives evaluated and the reasoning for the sel
 | Option | Verdict | Reasoning |
 |---|---|---|
 | **A. Contractual only** | ✓ | Pass = job completes + artifacts match contracts. Reliable, model-quality independent. |
-| B. Contractual + structural (right files touched, summary mentions bug) | defer | Useful future addition; not the first cut |
-| C. Contractual + semantic (run fixture's tests against post-fix code) | defer | Strongest signal but couples test pass to Claude's model quality — wrong oracle for an integration test |
+| B. Contractual + structural (right files touched, summary mentions specific keywords) | defer | Useful future addition; not the first cut |
+| C. Contractual + semantic (run repo's tests against post-run code) | defer | Strongest signal but couples test pass to Claude's model quality — wrong oracle for an integration test |
 
-### D9 — Soft cost-cap mechanism
-
-**Selected:** print to stderr at end of run.
-
-| Option | Verdict | Reasoning |
-|---|---|---|
-| **`print(..., file=sys.stderr)`** | ✓ | Visible in pytest output; not affected by the repo's `filterwarnings = ["error"]` policy |
-| `warnings.warn(...)` | ✗ | The repo promotes warnings to errors; would convert a soft signal into a test failure |
-| Logger | acceptable | Equivalent to print for this purpose |
-
-### D10 — Precondition PR (P1) packaging
+### D9 — Precondition PR (P1) packaging
 
 **Selected:** ship the runner-selection plumbing fix as its own small PR before this test PR.
 
@@ -277,8 +270,10 @@ The design is accepted when the user confirms:
 - [ ] Outcomes (pass criteria) are the right contract to enforce
 - [ ] Gating rules are correct
 - [ ] P1 scope is correct
+- [ ] Cleanup behaviour is correctly captured (unconditional, runs on success and failure)
+- [ ] Job-type-agnostic intent is correctly captured
 
 Once accepted, the next step is to invoke the `superpowers:writing-plans` skill to produce an implementation plan, broken into:
 
 1. **Precondition PR — P1.** Plumb MCP server + Stop hook from the `job_driver` entry point into RealStageRunner; register the `real_claude` marker.
-2. **E2E test PR.** The test, the shared HIL-stitching helper extracted from the existing e2e, the gating, the operator-facing runner script.
+2. **E2E test PR.** The test, the shared HIL-stitching helper extracted from the existing e2e, the gating, and the operator-facing runner script.
