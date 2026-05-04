@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from add_integers import add_integers
 
 
