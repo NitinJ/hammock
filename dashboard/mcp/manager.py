@@ -80,6 +80,14 @@ class MCPManager:
     def dispose(self, handle: ServerHandle) -> None:
         self._live.pop((handle.job_slug, handle.stage_id), None)
 
+    def live_count(self) -> int:
+        """Number of currently-spawned per-stage MCP server descriptors.
+
+        Public counterpart of ``self._live`` so callers (e.g. the
+        Settings rollup) don't depend on the private attribute name.
+        """
+        return len(self._live)
+
     async def run(self, *, poll_interval: float = 60.0) -> None:
         """Long-running janitor loop.
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,17 @@ _NON_TERMINAL_JOB_STATES = frozenset(
 
 HEARTBEAT_INTERVAL: float = 30.0
 STALE_FACTOR: int = 3  # heartbeat considered stale after 3x interval
+
+# Respawn policy (Codex review on PR #25):
+# - ``RESPAWN_GRACE_SECONDS``: ignore freshly-submitted jobs whose driver
+#   simply hasn't written its pid yet — avoids double-spawn during the
+#   spawn_driver → pid-write window.
+# - ``RESPAWN_BACKOFF_BASE_S`` / ``MAX_RESPAWN_ATTEMPTS``: bound the
+#   respawn rate of a driver that crashes immediately on startup.
+RESPAWN_GRACE_SECONDS: float = 60.0
+RESPAWN_BACKOFF_BASE_S: float = 60.0
+RESPAWN_BACKOFF_MAX_S: float = 600.0
+MAX_RESPAWN_ATTEMPTS: int = 5
 
 
 class Supervisor:
@@ -60,6 +72,8 @@ class Supervisor:
         self.heartbeat_interval = heartbeat_interval
         self.stale_factor = stale_factor
         self._now: Callable[[], datetime] = now_fn or (lambda: datetime.now(UTC))
+        # Per-slug respawn ledger: (attempts, last_attempt_monotonic_seconds).
+        self._respawn_attempts: dict[str, tuple[int, float]] = {}
 
     def stale_threshold_seconds(self) -> float:
         return self.heartbeat_interval * self.stale_factor
@@ -130,32 +144,89 @@ class Supervisor:
                 continue
             if cfg.state not in _NON_TERMINAL_JOB_STATES:
                 continue
-            await self._maybe_respawn(slug, root)
+            await self._maybe_respawn(slug, cfg, root)
 
-    async def _maybe_respawn(self, slug: str, root: Path | None) -> None:
+    async def _maybe_respawn(self, slug: str, cfg: JobConfig, root: Path | None) -> None:
         hb = paths.job_heartbeat(slug, root=root)
         if not self.is_stale(hb):
             return
-        pid = self.get_pid(paths.job_driver_pid(slug, root=root))
-        if pid is not None and _is_pid_alive(pid):
+
+        # Startup grace: a freshly-SUBMITTED job whose driver hasn't
+        # yet written the pid file would otherwise be respawned by the
+        # supervisor's first scan, racing with the original driver.
+        # Skip jobs younger than ``RESPAWN_GRACE_SECONDS`` whose pid
+        # file is absent.
+        pid_path = paths.job_driver_pid(slug, root=root)
+        pid = self.get_pid(pid_path)
+        if pid is None:
+            age = (self._now() - cfg.created_at).total_seconds()
+            if age < RESPAWN_GRACE_SECONDS:
+                return
+
+        if pid is not None and _is_driver_alive(pid):
             log.warning(
                 "job %s heartbeat stale but pid %d alive — leaving alone (v0)",
                 slug,
                 pid,
             )
             return
-        log.warning("respawning stale driver for job %s (pid=%s, dead)", slug, pid)
+
+        # Respawn backoff: an immediately-crashing driver would loop
+        # respawn-die-respawn at the poll cadence. Track attempts and
+        # back off exponentially, capped at ``MAX_RESPAWN_ATTEMPTS``.
+        attempts, last_at = self._respawn_attempts.get(slug, (0, 0.0))
+        now_mono = time.monotonic()
+        backoff = min(RESPAWN_BACKOFF_BASE_S * (2**attempts), RESPAWN_BACKOFF_MAX_S)
+        if attempts > 0 and (now_mono - last_at) < backoff:
+            return
+        if attempts >= MAX_RESPAWN_ATTEMPTS:
+            log.error(
+                "job %s exceeded %d respawn attempts; leaving alone",
+                slug,
+                MAX_RESPAWN_ATTEMPTS,
+            )
+            return
+
+        log.warning(
+            "respawning stale driver for job %s (pid=%s, attempt=%d)",
+            slug,
+            pid,
+            attempts + 1,
+        )
+        self._respawn_attempts[slug] = (attempts + 1, now_mono)
         try:
             await spawn_driver(slug, root=root)
         except Exception as exc:
             log.warning("failed to respawn driver for %s: %s", slug, exc)
 
 
-def _is_pid_alive(pid: int) -> bool:
+def _is_driver_alive(pid: int) -> bool:
+    """Return True if *pid* is alive AND running ``job_driver``.
+
+    ``os.kill(pid, 0)`` alone is unreliable across PID-recycling: a
+    recycled PID owned by an unrelated process would mask a dead
+    driver. On Linux we additionally confirm the process's cmdline
+    includes ``job_driver``. On non-Linux platforms (or if /proc is
+    unreadable) we fall back to liveness only.
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
+        # Different user; we can't signal, but the process exists.
+        # Drop to /proc check for cmdline confirmation.
+        pass
+
+    cmdline_path = Path(f"/proc/{pid}/cmdline")
+    try:
+        cmdline = cmdline_path.read_bytes()
+    except OSError:
+        # /proc unavailable (non-Linux, container w/o /proc, ...).
+        # Best-effort: trust the kill(0) signal we already passed.
         return True
-    return True
+    return b"job_driver" in cmdline
+
+
+# Back-compat alias for any external callers; same semantics now.
+_is_pid_alive = _is_driver_alive

@@ -237,17 +237,20 @@ def compile_job(
         # v0 alignment Plan #3: snapshot the project's specialist
         # catalogue at compile time so every stage of this job sees
         # the same agents/skills, even if the operator edits an
-        # override mid-job. Best-effort: a resolver failure logs but
-        # does not abort the submit (no overrides → empty catalogue,
-        # which is fine).
+        # override mid-job. ``resolve`` itself logs+skips per-file
+        # malformed overrides (so individual bad frontmatter doesn't
+        # abort the whole catalogue); the broad-but-narrow exception
+        # set here only swallows filesystem failures of the snapshot
+        # write, which would otherwise block submit. Programming bugs
+        # (AttributeError, ImportError, KeyError, ...) propagate.
         try:
             from dashboard.specialist.resolver import resolve
 
             catalogue = resolve(project)
             atomic_write_json(job_dir / "specialist-catalogue.json", catalogue)
-        except Exception as exc:
+        except OSError as exc:
             log.warning(
-                "could not resolve specialist catalogue for %s: %s",
+                "could not snapshot specialist catalogue for %s: %s",
                 project.slug,
                 exc,
             )

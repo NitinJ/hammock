@@ -216,6 +216,12 @@ class RealStageRunner:
         job_slug: str | None = None,
         hammock_root: Path | None = None,
     ) -> None:
+        # The runner uses ``project_root`` as the subprocess ``cwd``;
+        # validating up-front turns a confusing FileNotFoundError from
+        # ``create_subprocess_exec`` into a clear configuration error
+        # at construction time (PR3 — Codex review on PR #25).
+        if not project_root.is_dir():
+            raise ValueError(f"project_root {project_root!s} does not exist or is not a directory")
         self._project_root = project_root
         self._claude_binary = claude_binary
         self._stop_hook_path = stop_hook_path

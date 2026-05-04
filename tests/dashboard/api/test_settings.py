@@ -112,6 +112,13 @@ def test_get_settings_lists_projects_with_doctor_status(tmp_path: Path) -> None:
     projects = {p["slug"]: p for p in body["projects"]}
     assert projects["alpha"]["doctor_status"] == "pass"
     assert projects["beta"]["doctor_status"] == "warn"
+    # last_health_check_at must round-trip as a parseable ISO 8601
+    # timestamp (Codex review on PR #25 — guards against a future
+    # serializer change silently dropping the field or losing tz).
+    raw = projects["alpha"]["last_health_check_at"]
+    assert isinstance(raw, str)
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None
 
 
 def test_get_settings_specialist_inventory_counts_overrides(tmp_path: Path) -> None:

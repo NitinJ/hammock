@@ -99,14 +99,22 @@ async def test_supervisor_run_respawns_driver_when_stale_and_dead(tmp_path: Path
 
 
 async def test_supervisor_run_leaves_alive_pid_alone(tmp_path: Path) -> None:
-    """Stale heartbeat but PID alive → no respawn (v0 policy)."""
+    """Stale heartbeat but PID is alive AND running job_driver → no respawn.
+
+    The supervisor's PID-recycle defence (Codex review on PR #25) checks
+    ``/proc/<pid>/cmdline`` for the ``job_driver`` substring, so this
+    test patches the helper to simulate a healthy driver process.
+    """
     root = tmp_path / "hammock-root"
     root.mkdir()
     _seed_running_job(root, slug="j1", pid=os.getpid(), heartbeat_age_s=120)
 
     sup = Supervisor()
     spawn = AsyncMock()
-    with patch("dashboard.driver.supervisor.spawn_driver", spawn):
+    with (
+        patch("dashboard.driver.supervisor.spawn_driver", spawn),
+        patch("dashboard.driver.supervisor._is_driver_alive", new=lambda _pid: True),
+    ):
         task = asyncio.create_task(sup.run(root=root, poll_interval=0.05))
         await asyncio.sleep(0.15)
         task.cancel()

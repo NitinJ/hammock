@@ -188,8 +188,34 @@ def _mcp_server_count(app_state: Any) -> int:
     mgr = getattr(app_state, "mcp_manager", None)
     if mgr is None:
         return 0
-    live = getattr(mgr, "_live", None)
-    return len(live) if live is not None else 0
+    counter = getattr(mgr, "live_count", None)
+    if callable(counter):
+        result: Any = counter()
+        try:
+            return int(result)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+# Inventory cache (Codex review on PR #25): the Settings view polls every
+# 5 s; rebuilding by globbing every project's override directories on
+# each request is wasteful. Cache per-root for a short TTL — the
+# operator-facing count is allowed to lag by ~30 s. Keyed by stringified
+# root path so per-test tmp_path roots don't collide.
+_INVENTORY_TTL_SECONDS: float = 30.0
+_inventory_cache: dict[str, tuple[float, Inventory]] = {}
+
+
+def _build_inventory_cached(root: Path | None) -> Inventory:
+    key = str(root) if root is not None else ""
+    cached = _inventory_cache.get(key)
+    now = time.monotonic()
+    if cached is not None and (now - cached[0]) < _INVENTORY_TTL_SECONDS:
+        return cached[1]
+    inv = _build_inventory(root)
+    _inventory_cache[key] = (now, inv)
+    return inv
 
 
 @router.get("", response_model=SettingsResponse)
@@ -202,6 +228,6 @@ async def get_settings(request: Request) -> SettingsResponse:
         cache_size=sum(cache.size().values()),
         active_jobs=_list_active_jobs(settings.root),
         projects=_list_projects(settings.root),
-        inventory=_build_inventory(settings.root),
+        inventory=_build_inventory_cached(settings.root),
         mcp_server_count=_mcp_server_count(request.app.state),
     )

@@ -1052,10 +1052,10 @@ class JobDriver:
         specialist catalogue so RealStageRunner can pass it to claude
         via ``--agents <inline json>``.
 
-        Best-effort: any failure logs and skips. The result is "no
-        per-project agent overrides apply this run", which is
-        equivalent to v0-without-Plan-#3 — operators see the warning
-        and the stage still runs.
+        ``resolve`` already logs+skips per-file malformed overrides;
+        the catch here narrows to filesystem / model-parse errors so
+        a missing ``project.json`` or atomic_write failure doesn't
+        crash the driver — programming bugs still propagate.
         """
         try:
             from dashboard.specialist.materialise import materialise_for_spawn
@@ -1067,7 +1067,7 @@ class JobDriver:
                 return
             project = ProjectConfig.model_validate_json(project_path.read_text())
             materialise_for_spawn(project, stage_run_dir)
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             log.warning(
                 "could not materialise specialist catalogue for %s: %s",
                 self.job_slug,
