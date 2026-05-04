@@ -309,6 +309,36 @@ async def test_claude_invoked_with_verbose_flag(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_claude_prompt_includes_structured_sections(tmp_path: Path) -> None:
+    """P2: the ``-p <prompt>`` argv must contain the structured prompt
+    sections (job context, working directory) — not just the stage's
+    one-line description."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    (job_dir / "prompt.md").write_text("OVERALL JOB GOAL: ship the feature.")
+    stage_run_dir = job_dir / "stages" / "my-stage" / "run-1"
+    stage_run_dir.mkdir(parents=True)
+
+    args_dump = tmp_path / "argv.txt"
+    fixture_path = FIXTURES / "simple_success.jsonl"
+    fake_claude = tmp_path / "fake_prompt_claude"
+    fake_claude.write_text(
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > {args_dump}\ncat {fixture_path}\n'
+    )
+    fake_claude.chmod(fake_claude.stat().st_mode | stat.S_IEXEC)
+
+    runner = RealStageRunner(project_root=project_root, claude_binary=str(fake_claude))
+    await runner.run(_make_stage("my-stage"), job_dir, stage_run_dir)
+
+    raw = args_dump.read_text()
+    assert "## Job context" in raw
+    assert "OVERALL JOB GOAL: ship the feature." in raw
+    assert "## Working directory" in raw
+
+
+@pytest.mark.asyncio
 async def test_stderr_captured_to_log_file(tmp_path: Path) -> None:
     """Claude failures (auth, bad flags, segfaults) must be debuggable from
     the job dir alone — capture stderr to ``agent0/stderr.log`` instead of

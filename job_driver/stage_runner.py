@@ -258,12 +258,23 @@ class RealStageRunner:
             mcp_config = mcp_handle.mcp_config if mcp_handle is not None else None
             self._write_session_settings(settings_path, stage_def, mcp_config)
 
-            # Build command: use stage description as the agent's initial prompt.
+            # P2: hand the agent a structured prompt instead of just
+            # the stage description. ``build_stage_prompt`` reads the
+            # job's prompt.md, declared inputs, and required outputs
+            # plus their validator schemas. Without this the agent has
+            # no idea what to produce or where to write.
             # `--verbose` is mandatory when combining `-p` (--print) with
             # `--output-format stream-json`; without it claude refuses to
             # start with `Error: When using --print, --output-format=stream-json
             # requires --verbose` and exits, leaving stream.jsonl empty.
-            prompt = stage_def.description or stage_def.id
+            # cwd is computed up-front so the prompt can name it; it's
+            # also used as the subprocess cwd below.
+            cwd = self._cwd_for_stage(stage_def, stage_run_dir)
+            prompt = self._build_prompt(
+                stage_def=stage_def,
+                job_dir=job_dir,
+                cwd=cwd,
+            )
             cmd = [
                 self._claude_binary,
                 "-p",
@@ -301,14 +312,12 @@ class RealStageRunner:
             env = self._build_env(job_dir, stage_def)
 
             stream_path = agent0_dir / "stream.jsonl"
-            # v0 alignment Plan #2 + #8: discover the per-stage worktree
-            # at the convention path
-            # ``<job_dir>/stages/<sid>/worktree`` and use it as the
-            # subprocess cwd instead of the project root. This is what
-            # gives parallel stages real isolation. If the JobDriver
-            # didn't set one up (fake-fixture flows; non-git project
-            # repos), fall back to the project root.
-            cwd = self._cwd_for_stage(stage_def, stage_run_dir)
+            # cwd was resolved at the top of run() so the prompt could
+            # name it; the same path is used here as the subprocess cwd.
+            # v0 alignment Plan #2 + #8 still applies: prefer the
+            # per-stage worktree at ``<job_dir>/stages/<sid>/worktree``
+            # over the project root for stage isolation; fall back to
+            # the project root for fake-fixture / non-git flows.
             # Capture stderr to a log file so claude failures (auth, flag
             # validation, segfaults) are diagnosable from the job dir
             # alone — without this, every failure mode is silent.
@@ -374,6 +383,34 @@ class RealStageRunner:
         finally:
             if mcp_handle is not None and self._mcp_manager is not None:
                 self._mcp_manager.dispose(mcp_handle)
+
+    def _build_prompt(
+        self,
+        *,
+        stage_def: StageDefinition,
+        job_dir: Path,
+        cwd: Path,
+    ) -> str:
+        """Render the structured prompt for ``claude -p``.
+
+        Reads ``<job_dir>/prompt.md`` for the job's overall prompt;
+        delegates to ``prompt_builder.build_stage_prompt`` for the rest.
+        Missing prompt.md is treated as empty rather than an error —
+        old jobs predating this contract should still run.
+        """
+        from job_driver.prompt_builder import build_stage_prompt
+
+        prompt_md = job_dir / "prompt.md"
+        try:
+            job_prompt = prompt_md.read_text()
+        except OSError:
+            job_prompt = ""
+        return build_stage_prompt(
+            stage_def,
+            job_prompt=job_prompt,
+            job_dir=job_dir,
+            cwd=cwd,
+        )
 
     def _cwd_for_stage(self, stage_def: StageDefinition, stage_run_dir: Path) -> Path:
         """Pick the cwd for the claude subprocess.
