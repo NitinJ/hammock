@@ -1,0 +1,62 @@
+workflow: t3-with-code-node
+
+# T3: T2 + a `code`-kind node that fixes the bug from the design spec
+# and produces a real PR. Tests substrate allocation (worktree + stage
+# branch off job branch), `pr` variable type's produce (push + gh pr
+# create), real GitHub round-trip.
+
+variables:
+  request:                   { type: job-request }
+  bug_report:                { type: bug-report }
+  design_spec:               { type: design-spec }
+  design_spec_review_agent:  { type: review-verdict }
+  design_spec_review_human:  { type: review-verdict }
+  pr:                        { type: pr }
+
+nodes:
+  - id: write-bug-report
+    kind: artifact
+    actor: agent
+    inputs:
+      request: $request
+    outputs:
+      bug_report: $bug_report
+
+  - id: write-design-spec
+    kind: artifact
+    actor: agent
+    after: [write-bug-report]
+    inputs:
+      bug_report: $bug_report
+    outputs:
+      design_spec: $design_spec
+
+  - id: review-design-spec-agent
+    kind: artifact
+    actor: agent
+    after: [write-design-spec]
+    inputs:
+      design_spec: $design_spec
+    outputs:
+      verdict: $design_spec_review_agent
+
+  - id: review-design-spec-human
+    kind: artifact
+    actor: human
+    after: [review-design-spec-agent]
+    inputs:
+      design_spec: $design_spec
+      agent_verdict: $design_spec_review_agent
+    outputs:
+      verdict: $design_spec_review_human
+    presentation:
+      title: "Review the design spec"
+
+  - id: implement
+    kind: code
+    actor: agent
+    after: [review-design-spec-human]
+    inputs:
+      design_spec: $design_spec
+    outputs:
+      pr: $pr
