@@ -1,0 +1,102 @@
+workflow: t5-count-of-until
+
+# T5: T4 + outer count loop (count: 2) wrapping pr-merged-loop. Tests:
+#   - count loop primitive (vs T4's until)
+#   - nested loop dispatch (count → until)
+#   - per-iteration substrate (each outer iter = fresh stage branch off
+#     the job branch, which advances as prior PRs merge)
+#   - [*] fan-in aggregation (list[pr], list[pr-merge-confirmation])
+#   - inner loop outputs projection writes at outer-scoped indexed path,
+#     so the outer can [*] aggregate across its iterations.
+#
+# Test repo gets two independent improvements in add_integers.py:
+#   1. Remove the `if not nums: return None` guard so add_integers() == 0.
+#   2. Add a docstring describing the function.
+# Outer iter 0 picks up task 1; iter 1 (substrate freshly forked off the
+# now-merged job branch) sees task 1 done and picks up task 2.
+
+variables:
+  request:                   { type: job-request }
+  bug_report:                { type: bug-report }
+  design_spec:               { type: design-spec }
+  design_spec_review_agent:  { type: review-verdict }
+  design_spec_review_human:  { type: review-verdict }
+  pr:                        { type: pr }
+  pr_merge:                  { type: pr-merge-confirmation }
+  pr_list:                   { type: "list[pr]" }
+  pr_merge_list:             { type: "list[pr-merge-confirmation]" }
+
+nodes:
+  - id: write-bug-report
+    kind: artifact
+    actor: agent
+    inputs:
+      request: $request
+    outputs:
+      bug_report: $bug_report
+
+  - id: write-design-spec
+    kind: artifact
+    actor: agent
+    after: [write-bug-report]
+    inputs:
+      bug_report: $bug_report
+    outputs:
+      design_spec: $design_spec
+
+  - id: review-design-spec-agent
+    kind: artifact
+    actor: agent
+    after: [write-design-spec]
+    inputs:
+      design_spec: $design_spec
+    outputs:
+      verdict: $design_spec_review_agent
+
+  - id: review-design-spec-human
+    kind: artifact
+    actor: human
+    after: [review-design-spec-agent]
+    inputs:
+      design_spec: $design_spec
+      agent_verdict: $design_spec_review_agent
+    outputs:
+      verdict: $design_spec_review_human
+    presentation:
+      title: "Review the design spec"
+
+  - id: implement-loop
+    kind: loop
+    after: [review-design-spec-human]
+    count: 2
+    substrate: per-iteration
+    body:
+      - id: pr-merged-loop
+        kind: loop
+        until: $pr-merged-loop.pr_merge[i]
+        max_iterations: 3
+        substrate: shared
+        body:
+          - id: implement
+            kind: code
+            actor: agent
+            inputs:
+              design_spec: $design_spec
+            outputs:
+              pr: $pr
+
+          - id: pr-merge-hil
+            kind: artifact
+            actor: human
+            inputs:
+              pr: $pr-merged-loop.pr[i]
+            outputs:
+              pr_merge: $pr_merge
+            presentation:
+              title: "Merge the PR on GitHub, then submit pr_url"
+        outputs:
+          pr: $pr-merged-loop.pr[last]
+          pr_merge: $pr-merged-loop.pr_merge[last]
+    outputs:
+      pr_list: $implement-loop.pr[*]
+      pr_merge_list: $implement-loop.pr_merge[*]
