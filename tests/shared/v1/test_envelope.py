@@ -16,7 +16,6 @@ from shared.v1.envelope import (
     make_envelope,
 )
 
-
 # ---------------------------------------------------------------------------
 # make_envelope
 # ---------------------------------------------------------------------------
@@ -47,9 +46,7 @@ def test_make_envelope_with_repo() -> None:
 
 def test_make_envelope_default_produced_at_is_recent_utc() -> None:
     before = datetime.now(UTC)
-    env = make_envelope(
-        type_name="x", producer_node="n", value_payload={}
-    )
+    env = make_envelope(type_name="x", producer_node="n", value_payload={})
     after = datetime.now(UTC)
     assert before <= env.produced_at <= after
     assert env.produced_at.tzinfo == UTC
@@ -57,16 +54,12 @@ def test_make_envelope_default_produced_at_is_recent_utc() -> None:
 
 def test_make_envelope_explicit_now() -> None:
     fixed = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
-    env = make_envelope(
-        type_name="x", producer_node="n", value_payload={}, now=fixed
-    )
+    env = make_envelope(type_name="x", producer_node="n", value_payload={}, now=fixed)
     assert env.produced_at == fixed
 
 
 def test_make_envelope_explicit_type_version() -> None:
-    env = make_envelope(
-        type_name="x", producer_node="n", value_payload={}, type_version=3
-    )
+    env = make_envelope(type_name="x", producer_node="n", value_payload={}, type_version=3)
     assert env.type_version == 3
 
 
@@ -92,24 +85,18 @@ def test_envelope_rejects_extra_fields() -> None:
 
 
 def test_expect_passes_for_matching_type_and_version() -> None:
-    env = make_envelope(
-        type_name="bug-report", producer_node="n", value_payload={}, type_version=1
-    )
+    env = make_envelope(type_name="bug-report", producer_node="n", value_payload={}, type_version=1)
     expect(env, type_name="bug-report", type_version=1)  # does not raise
 
 
 def test_expect_raises_on_type_mismatch() -> None:
-    env = make_envelope(
-        type_name="pr", producer_node="n", value_payload={}
-    )
+    env = make_envelope(type_name="pr", producer_node="n", value_payload={})
     with pytest.raises(EnvelopeMismatch, match="type mismatch"):
         expect(env, type_name="branch")
 
 
 def test_expect_raises_on_version_mismatch() -> None:
-    env = make_envelope(
-        type_name="bug-report", producer_node="n", value_payload={}, type_version=1
-    )
+    env = make_envelope(type_name="bug-report", producer_node="n", value_payload={}, type_version=1)
     with pytest.raises(EnvelopeMismatch, match="type_version mismatch"):
         expect(env, type_name="bug-report", type_version=2)
 

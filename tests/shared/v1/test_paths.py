@@ -12,9 +12,7 @@ def test_job_dir(tmp_path: Path) -> None:
 
 
 def test_job_config_path(tmp_path: Path) -> None:
-    assert paths.job_config_path("j1", root=tmp_path) == (
-        tmp_path / "jobs" / "j1" / "job.json"
-    )
+    assert paths.job_config_path("j1", root=tmp_path) == (tmp_path / "jobs" / "j1" / "job.json")
 
 
 def test_variable_envelope_path(tmp_path: Path) -> None:

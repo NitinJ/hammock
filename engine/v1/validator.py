@@ -217,8 +217,7 @@ def _check_input_references(workflow: Workflow) -> list[ValidationFinding]:
                     ValidationFinding(
                         node_id=node.id,
                         message=(
-                            f"input {input_name!r} references undeclared "
-                            f"variable ${var_name!r}"
+                            f"input {input_name!r} references undeclared variable ${var_name!r}"
                         ),
                     )
                 )
@@ -239,9 +238,7 @@ def _check_output_references(workflow: Workflow) -> list[ValidationFinding]:
                 findings.append(
                     ValidationFinding(
                         node_id=node.id,
-                        message=(
-                            f"output {output_name!r} has malformed reference {ref!r}"
-                        ),
+                        message=(f"output {output_name!r} has malformed reference {ref!r}"),
                     )
                 )
                 continue
@@ -250,8 +247,7 @@ def _check_output_references(workflow: Workflow) -> list[ValidationFinding]:
                     ValidationFinding(
                         node_id=node.id,
                         message=(
-                            f"output {output_name!r} references undeclared variable "
-                            f"${var_name!r}"
+                            f"output {output_name!r} references undeclared variable ${var_name!r}"
                         ),
                     )
                 )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -142,9 +141,7 @@ def test_produce_passes_draft_through(tmp_path: Path) -> None:
 
 def test_produce_default_body_when_commit_body_empty(tmp_path: Path) -> None:
     t = PRType()
-    ctx = FakeCodeNodeCtx(
-        var_name="pr", job_dir=tmp_path, commit_body=""
-    )
+    ctx = FakeCodeNodeCtx(var_name="pr", job_dir=tmp_path, commit_body="")
     t.produce(t.Decl(), ctx)
     assert "Auto-opened by Hammock" in ctx.last_create_kwargs["body"]
 
@@ -156,9 +153,7 @@ def test_produce_default_body_when_commit_body_empty(tmp_path: Path) -> None:
 
 def test_produce_raises_when_branch_has_no_commits(tmp_path: Path) -> None:
     t = PRType()
-    ctx = FakeCodeNodeCtx(
-        var_name="pr", job_dir=tmp_path, has_commits=False
-    )
+    ctx = FakeCodeNodeCtx(var_name="pr", job_dir=tmp_path, has_commits=False)
     with pytest.raises(VariableTypeError, match="no commits beyond"):
         t.produce(t.Decl(), ctx)
     # No push attempt either.

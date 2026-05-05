@@ -36,9 +36,7 @@ def _write_envelope(
         value_payload=value,
         now=datetime.now(UTC),
     )
-    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(
-        env.model_dump_json()
-    )
+    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(env.model_dump_json())
 
 
 # ---------------------------------------------------------------------------
@@ -106,9 +104,7 @@ def test_resolves_required_input_to_value_model(tmp_path: Path) -> None:
             )
         ],
     )
-    resolved = resolve_node_inputs(
-        node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path
-    )
+    resolved = resolve_node_inputs(node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path)
     assert "r" in resolved
     slot = resolved["r"]
     assert slot.present is True
@@ -132,9 +128,7 @@ def test_required_missing_variable_raises(tmp_path: Path) -> None:
         ],
     )
     with pytest.raises(ResolutionError, match="not been produced"):
-        resolve_node_inputs(
-            node=wf.nodes[0], workflow=wf, job_slug="j1", root=tmp_path
-        )
+        resolve_node_inputs(node=wf.nodes[0], workflow=wf, job_slug="j1", root=tmp_path)
 
 
 def test_optional_missing_variable_yields_absent_slot(tmp_path: Path) -> None:
@@ -152,9 +146,7 @@ def test_optional_missing_variable_yields_absent_slot(tmp_path: Path) -> None:
             )
         ],
     )
-    resolved = resolve_node_inputs(
-        node=wf.nodes[0], workflow=wf, job_slug="j1", root=tmp_path
-    )
+    resolved = resolve_node_inputs(node=wf.nodes[0], workflow=wf, job_slug="j1", root=tmp_path)
     assert resolved["prior_review"].present is False
     assert resolved["prior_review"].value is None
     assert resolved["prior_review"].optional is True
@@ -182,9 +174,7 @@ def test_field_access_returns_primitive(tmp_path: Path) -> None:
             )
         ],
     )
-    resolved = resolve_node_inputs(
-        node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path
-    )
+    resolved = resolve_node_inputs(node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path)
     assert resolved["text"].value == "Fix the bug"
 
 
@@ -211,9 +201,7 @@ def test_field_access_unknown_field_raises(tmp_path: Path) -> None:
         ],
     )
     with pytest.raises(ResolutionError, match="no field 'no_such_field'"):
-        resolve_node_inputs(
-            node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path
-        )
+        resolve_node_inputs(node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path)
 
 
 def test_resolves_multiple_inputs(tmp_path: Path) -> None:
@@ -248,9 +236,7 @@ def test_resolves_multiple_inputs(tmp_path: Path) -> None:
             )
         ],
     )
-    resolved = resolve_node_inputs(
-        node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path
-    )
+    resolved = resolve_node_inputs(node=wf.nodes[0], workflow=wf, job_slug=job_slug, root=tmp_path)
     assert resolved["req"].present
     assert resolved["bug"].present
     assert isinstance(resolved["req"].value, JobRequestValue)

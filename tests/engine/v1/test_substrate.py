@@ -101,15 +101,9 @@ def test_set_up_creates_clone_branch_pushes(tmp_path: Path) -> None:
 
     cmds = [c.args for c in runner.calls]
     assert any(c[:2] == ["git", "clone"] for c in cmds)
-    assert any(
-        c == ["git", "fetch", "origin", "main"] for c in cmds
-    )
-    assert any(
-        c == ["git", "branch", "hammock/jobs/j", "origin/main"] for c in cmds
-    )
-    assert any(
-        c == ["git", "push", "-u", "origin", "hammock/jobs/j"] for c in cmds
-    )
+    assert any(c == ["git", "fetch", "origin", "main"] for c in cmds)
+    assert any(c == ["git", "branch", "hammock/jobs/j", "origin/main"] for c in cmds)
+    assert any(c == ["git", "push", "-u", "origin", "hammock/jobs/j"] for c in cmds)
 
 
 def test_set_up_idempotent_when_job_branch_already_remote(tmp_path: Path) -> None:
@@ -197,9 +191,7 @@ def test_allocate_creates_stage_branch_and_worktree(tmp_path: Path) -> None:
         runner=runner,
     )
     assert sub.repo_dir == paths.repo_clone_dir("j", root=tmp_path)
-    assert sub.worktree == paths.node_worktree_dir(
-        "j", "implement", root=tmp_path
-    )
+    assert sub.worktree == paths.node_worktree_dir("j", "implement", root=tmp_path)
     assert sub.stage_branch == "hammock/stages/j/implement"
     assert sub.base_branch == "hammock/jobs/j"
     assert sub.repo_slug == "me/repo"
@@ -207,14 +199,15 @@ def test_allocate_creates_stage_branch_and_worktree(tmp_path: Path) -> None:
     cmds = [c.args for c in runner.calls]
     # Pulls job branch BEFORE forking.
     fetch_calls = [
-        i
-        for i, c in enumerate(cmds)
-        if c == ["git", "fetch", "origin", "hammock/jobs/j"]
+        i for i, c in enumerate(cmds) if c == ["git", "fetch", "origin", "hammock/jobs/j"]
     ]
     assert len(fetch_calls) == 1
     branch_create = next(
-        (i for i, c in enumerate(cmds)
-         if c == ["git", "branch", "hammock/stages/j/implement", "origin/hammock/jobs/j"]),
+        (
+            i
+            for i, c in enumerate(cmds)
+            if c == ["git", "branch", "hammock/stages/j/implement", "origin/hammock/jobs/j"]
+        ),
         None,
     )
     assert branch_create is not None

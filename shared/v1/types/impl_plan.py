@@ -76,9 +76,7 @@ class ImplPlanType:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise VariableTypeError(
-                f"impl-plan at {path} is not valid JSON: {exc}"
-            ) from exc
+            raise VariableTypeError(f"impl-plan at {path} is not valid JSON: {exc}") from exc
         try:
             return ImplPlanValue.model_validate(data)
         except ValidationError as exc:

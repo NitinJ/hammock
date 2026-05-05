@@ -6,13 +6,9 @@ post-actor `produce`) so unit tests don't need real git/gh.
 
 from __future__ import annotations
 
-import dataclasses
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from engine.v1 import git_ops
 from engine.v1.code_dispatch import dispatch_code_agent
@@ -22,16 +18,10 @@ from shared.v1.envelope import Envelope, make_envelope
 from shared.v1.workflow import CodeNode, VariableSpec, Workflow
 
 
-def _seed_var(
-    *, root: Path, job_slug: str, var_name: str, type_name: str, value: dict
-) -> None:
+def _seed_var(*, root: Path, job_slug: str, var_name: str, type_name: str, value: dict) -> None:
     paths.ensure_job_layout(job_slug, root=root)
-    env = make_envelope(
-        type_name=type_name, producer_node="<test>", value_payload=value
-    )
-    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(
-        env.model_dump_json()
-    )
+    env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
+    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(env.model_dump_json())
 
 
 def _t3_workflow() -> Workflow:
@@ -76,7 +66,9 @@ def _make_substrate(tmp_path: Path) -> CodeSubstrate:
 def test_dispatch_code_happy_path(tmp_path: Path) -> None:
     job_slug = "j"
     _seed_var(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
         type_name="design-spec",
         value={"title": "x", "overview": "y"},
     )
@@ -121,9 +113,7 @@ def test_dispatch_code_happy_path(tmp_path: Path) -> None:
         )
 
     assert result.succeeded
-    mock_push.assert_called_once_with(
-        substrate.repo_dir, substrate.stage_branch, force=True
-    )
+    mock_push.assert_called_once_with(substrate.repo_dir, substrate.stage_branch, force=True)
     assert mock_gh.called
 
     # PR envelope persisted.
@@ -144,16 +134,16 @@ def test_dispatch_code_happy_path(tmp_path: Path) -> None:
 def test_dispatch_writes_prompt_with_substrate_context(tmp_path: Path) -> None:
     job_slug = "j"
     _seed_var(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
         type_name="design-spec",
         value={"title": "x", "overview": "y"},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
 
-    def fake(
-        prompt: str, attempt_dir: Path, worktree: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
@@ -198,16 +188,16 @@ def test_dispatch_writes_prompt_with_substrate_context(tmp_path: Path) -> None:
 def test_dispatch_fails_when_subprocess_nonzero(tmp_path: Path) -> None:
     job_slug = "j"
     _seed_var(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
         type_name="design-spec",
         value={"title": "x", "overview": "y"},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
 
-    def fake(
-        prompt: str, attempt_dir: Path, worktree: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("(fake) crashed\n")
         return subprocess.CompletedProcess(args=["c"], returncode=2, stdout=b"", stderr=b"")
@@ -229,16 +219,16 @@ def test_dispatch_fails_when_branch_has_no_commits(tmp_path: Path) -> None:
     (no commits beyond base) and dispatcher reports failure."""
     job_slug = "j"
     _seed_var(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
         type_name="design-spec",
         value={"title": "x", "overview": "y"},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
 
-    def fake(
-        prompt: str, attempt_dir: Path, worktree: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
@@ -259,16 +249,16 @@ def test_dispatch_fails_when_branch_has_no_commits(tmp_path: Path) -> None:
 def test_dispatch_fails_on_gh_error(tmp_path: Path) -> None:
     job_slug = "j"
     _seed_var(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
         type_name="design-spec",
         value={"title": "x", "overview": "y"},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
 
-    def fake(
-        prompt: str, attempt_dir: Path, worktree: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")

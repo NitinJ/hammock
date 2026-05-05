@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from engine.v1 import git_ops
-from engine.v1.prompt import OutputSlot, build_prompt, collect_output_slots
+from engine.v1.prompt import OutputSlot, collect_output_slots
 from engine.v1.resolver import resolve_node_inputs
 from engine.v1.substrate import CodeSubstrate
 from shared.atomic import atomic_write_text
@@ -69,9 +69,7 @@ class _CodeNodeContext:
     # --- engine helpers exposed to types ---
 
     def branch_has_commits(self, branch: str, *, base: str) -> bool:
-        return git_ops.has_commits_beyond(
-            self.repo_dir, branch, base=base
-        )
+        return git_ops.has_commits_beyond(self.repo_dir, branch, base=base)
 
     def git_push(self, branch: str) -> None:
         # Hammock owns stage branches under `hammock/stages/*`; successive
@@ -91,7 +89,11 @@ class _CodeNodeContext:
     ) -> str:
         return git_ops.gh_create_pr(
             self.repo_dir,
-            head=head, base=base, title=title, body=body, draft=draft,
+            head=head,
+            base=base,
+            title=title,
+            body=body,
+            draft=draft,
         )
 
     def latest_commit_subject(self, branch: str) -> str:
@@ -176,8 +178,12 @@ def dispatch_code_agent(
 
     # 1. Resolve inputs (loop-aware).
     resolved = resolve_node_inputs(
-        node=node, workflow=workflow, job_slug=job_slug, root=root,
-        loop_id=loop_id, iteration=iteration,
+        node=node,
+        workflow=workflow,
+        job_slug=job_slug,
+        root=root,
+        loop_id=loop_id,
+        iteration=iteration,
     )
 
     # 2. Build prompt with code-aware context (so the `pr` type's
@@ -257,7 +263,6 @@ def _build_code_prompt(
     so per-output `render_for_producer` (for `pr`, `branch`, etc.) sees
     the worktree + branch names."""
     from engine.v1.prompt import _PromptCtx as _ArtifactPromptCtx
-    from engine.v1.prompt import build_prompt as _build_artifact_prompt
 
     # The artifact-prompt builder uses _PromptCtx for rendering each
     # output. For code outputs the type needs more context (worktree,
@@ -295,9 +300,7 @@ def _build_code_prompt(
         for slot_name, slot in inputs.items():
             if not slot.present:
                 if slot.optional:
-                    parts.append(
-                        f"### Input `{slot_name}` (optional, not produced)"
-                    )
+                    parts.append(f"### Input `{slot_name}` (optional, not produced)")
                     parts.append("")
                     parts.append("(no upstream value yet — proceed without it)")
                     parts.append("")
@@ -311,9 +314,7 @@ def _build_code_prompt(
                 if type_name:
                     type_obj = get_type(type_name)
                     ctx = _ArtifactPromptCtx(var_name=slot_name, job_dir=job_dir)
-                    parts.append(
-                        type_obj.render_for_consumer(type_obj.Decl(), slot.value, ctx)
-                    )
+                    parts.append(type_obj.render_for_consumer(type_obj.Decl(), slot.value, ctx))
                     parts.append("")
                     continue
             parts.append(f"### Input `{slot_name}`")
@@ -415,7 +416,5 @@ def _produce_code_outputs(
                 job_slug, loop_id, slot.var_name, iteration, root=root
             )
         else:
-            target = paths.variable_envelope_path(
-                job_slug, slot.var_name, root=root
-            )
+            target = paths.variable_envelope_path(job_slug, slot.var_name, root=root)
         atomic_write_text(target, env.model_dump_json())

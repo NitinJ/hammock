@@ -32,9 +32,7 @@ def _human_review_workflow() -> Workflow:
 def test_stitcher_answers_pending_gate(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
 
     stitcher = HilStitcher(
         job_slug="j",
@@ -65,9 +63,7 @@ def test_stitcher_answers_pending_gate(tmp_path: Path) -> None:
 def test_stitcher_records_error_when_no_policy_registered(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
 
     stitcher = HilStitcher(
         job_slug="j",
@@ -94,9 +90,7 @@ def test_stitcher_doesnt_double_answer(tmp_path: Path) -> None:
     on a removed marker would error otherwise."""
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     stitcher = HilStitcher(
         job_slug="j",
         workflow=wf,

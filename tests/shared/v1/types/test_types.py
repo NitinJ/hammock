@@ -136,9 +136,7 @@ def test_bug_report_produce_invalid_json_raises(tmp_path: Path) -> None:
 
 def test_bug_report_produce_extra_fields_rejected(tmp_path: Path) -> None:
     t = BugReportType()
-    (tmp_path / "bug_report.json").write_text(
-        json.dumps({"summary": "x", "extra": "no"})
-    )
+    (tmp_path / "bug_report.json").write_text(json.dumps({"summary": "x", "extra": "no"}))
     ctx = FakeNodeCtx(var_name="bug_report", job_dir=tmp_path)
     with pytest.raises(VariableTypeError, match="schema invalid"):
         t.produce(t.Decl(), ctx)

@@ -50,9 +50,7 @@ def _is_truthy(value: str | None) -> bool:
     return value is not None and value.strip() in {"1", "true", "True", "yes"}
 
 
-def run_preflight(
-    *, env: Mapping[str, str], runner: CmdRunner | None = None
-) -> PreflightConfig:
+def run_preflight(*, env: Mapping[str, str], runner: CmdRunner | None = None) -> PreflightConfig:
     runner = runner or _default_runner
 
     if not _is_truthy(env.get("HAMMOCK_E2E_REAL_CLAUDE")):

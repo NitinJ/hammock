@@ -53,18 +53,14 @@ class DesignSpecType:
     def produce(self, decl: DesignSpecDecl, ctx: NodeContext) -> DesignSpecValue:
         path = ctx.expected_path()
         if not path.is_file():
-            raise VariableTypeError(
-                f"design-spec not produced at {path}"
-            )
+            raise VariableTypeError(f"design-spec not produced at {path}")
         raw = path.read_bytes()
         if not raw.strip():
             raise VariableTypeError(f"design-spec at {path} is empty")
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise VariableTypeError(
-                f"design-spec at {path} is not valid JSON: {exc}"
-            ) from exc
+            raise VariableTypeError(f"design-spec at {path} is not valid JSON: {exc}") from exc
         try:
             return DesignSpecValue.model_validate(data)
         except ValidationError as exc:

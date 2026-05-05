@@ -44,9 +44,7 @@ class RunSnapshot:
 
 
 def _list_remote_branches(repo_slug: str, runner: CmdRunner) -> set[str]:
-    result = runner(
-        ["gh", "api", f"repos/{repo_slug}/branches", "--jq", ".[].name", "--paginate"]
-    )
+    result = runner(["gh", "api", f"repos/{repo_slug}/branches", "--jq", ".[].name", "--paginate"])
     if result.returncode != 0:
         log.warning(
             "could not list branches for %s: rc=%d stderr=%s",
@@ -110,9 +108,7 @@ def _close_open_prs(repo_slug: str, runner: CmdRunner) -> None:
         num = line.strip()
         if not num:
             continue
-        close_result = runner(
-            ["gh", "pr", "close", num, "--repo", repo_slug, "--delete-branch"]
-        )
+        close_result = runner(["gh", "pr", "close", num, "--repo", repo_slug, "--delete-branch"])
         if close_result.returncode != 0:
             log.warning(
                 "PR #%s close failed: rc=%d stderr=%s — continuing",
@@ -130,9 +126,7 @@ def _delete_branch(repo_slug: str, branch: str, runner: CmdRunner) -> None:
     the test process's cwd is the dev repo, so a naked push --delete
     silently targets the wrong remote.
     """
-    result = runner(
-        ["gh", "api", "-X", "DELETE", f"repos/{repo_slug}/git/refs/heads/{branch}"]
-    )
+    result = runner(["gh", "api", "-X", "DELETE", f"repos/{repo_slug}/git/refs/heads/{branch}"])
     if result.returncode != 0:
         log.warning(
             "branch delete failed for %s: rc=%d stderr=%s — continuing",

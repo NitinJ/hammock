@@ -93,9 +93,7 @@ def test_submit_creates_job_config_and_seeds_request(tmp_path: Path) -> None:
     assert cfg.workflow_name == "t1"
 
     # Job config persisted.
-    on_disk = JobConfig.model_validate_json(
-        paths.job_config_path("j1", root=tmp_path).read_text()
-    )
+    on_disk = JobConfig.model_validate_json(paths.job_config_path("j1", root=tmp_path).read_text())
     assert on_disk.job_slug == "j1"
 
     # Job-request envelope seeded.
@@ -119,9 +117,7 @@ nodes: []
     from engine.v1.validator import WorkflowValidationError
 
     with pytest.raises(WorkflowValidationError):
-        submit_job(
-            workflow_path=p, request_text="x", job_slug="j", root=tmp_path
-        )
+        submit_job(workflow_path=p, request_text="x", job_slug="j", root=tmp_path)
 
 
 def test_submit_rejects_request_variable_with_wrong_type(tmp_path: Path) -> None:
@@ -135,9 +131,7 @@ nodes: []
 """
     )
     with pytest.raises(JobSubmissionError, match="job-request"):
-        submit_job(
-            workflow_path=p, request_text="x", job_slug="j", root=tmp_path
-        )
+        submit_job(workflow_path=p, request_text="x", job_slug="j", root=tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +152,7 @@ def test_topological_order_respects_after_edges() -> None:
                 inputs={},
                 outputs={},
             ),
-            ArtifactNode(
-                id="a", kind="artifact", actor="agent", inputs={}, outputs={"o": "$x"}
-            ),
+            ArtifactNode(id="a", kind="artifact", actor="agent", inputs={}, outputs={"o": "$x"}),
         ],
     )
     order = _topological_order(wf)
@@ -209,9 +201,7 @@ def test_run_job_drives_t1_to_completed(tmp_path: Path) -> None:
     )
     fake = _make_writer_fake(
         {
-            "write-bug-report": {
-                "bug_report": {"summary": "the bug"}
-            },
+            "write-bug-report": {"bug_report": {"summary": "the bug"}},
             "write-design-spec": {
                 "design_spec": {
                     "title": "Fix",
@@ -235,9 +225,7 @@ def test_run_job_persists_node_runs(tmp_path: Path) -> None:
     fake = _make_writer_fake(
         {
             "write-bug-report": {"bug_report": {"summary": "x"}},
-            "write-design-spec": {
-                "design_spec": {"title": "t", "overview": "o"}
-            },
+            "write-design-spec": {"design_spec": {"title": "t", "overview": "o"}},
         }
     )
     run_job(job_slug="j1", root=tmp_path, claude_runner=fake)
@@ -260,9 +248,7 @@ def test_run_job_persists_all_envelopes(tmp_path: Path) -> None:
     fake = _make_writer_fake(
         {
             "write-bug-report": {"bug_report": {"summary": "x"}},
-            "write-design-spec": {
-                "design_spec": {"title": "t", "overview": "o"}
-            },
+            "write-design-spec": {"design_spec": {"title": "t", "overview": "o"}},
         }
     )
     run_job(job_slug="j1", root=tmp_path, claude_runner=fake)
@@ -321,9 +307,7 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
         variables_dir = job_dir / "variables"
         variables_dir.mkdir(parents=True, exist_ok=True)
         if node_id == "write-bug-report":
-            (variables_dir / "bug_report.json").write_text(
-                json.dumps({"summary": "x"})
-            )
+            (variables_dir / "bug_report.json").write_text(json.dumps({"summary": "x"}))
         # write-design-spec writes nothing → fails
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
@@ -340,9 +324,7 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
     # Reset the failed node's state to PENDING for the resume sim. (Real
     # resume would happen via operator intervention; for this test we just
     # remove the failed state file so the driver will retry that node.)
-    failed_state_path = paths.node_state_path(
-        "j1", "write-design-spec", root=tmp_path
-    )
+    failed_state_path = paths.node_state_path("j1", "write-design-spec", root=tmp_path)
     if failed_state_path.exists():
         failed_state_path.unlink()
     # Reset the job state from FAILED back to RUNNING (the driver's resume

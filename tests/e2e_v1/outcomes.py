@@ -11,7 +11,6 @@ variable or node.
 
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -21,7 +20,6 @@ from shared.v1.envelope import Envelope
 from shared.v1.job import JobConfig, JobState, NodeRun, NodeRunState
 from shared.v1.types.registry import get_type
 from shared.v1.workflow import ArtifactNode, CodeNode, Workflow
-
 
 OutcomeFn = Callable[[Path, str, Workflow], None]
 
@@ -37,9 +35,7 @@ def assert_job_completed(root: Path, job_slug: str, workflow: Workflow) -> None:
         raise AssertionError(f"job config missing at {cfg_path}")
     cfg = JobConfig.model_validate_json(cfg_path.read_text())
     if cfg.state != JobState.COMPLETED:
-        raise AssertionError(
-            f"job {job_slug!r} did not reach COMPLETED — saw {cfg.state.value}"
-        )
+        raise AssertionError(f"job {job_slug!r} did not reach COMPLETED — saw {cfg.state.value}")
 
 
 # ---------------------------------------------------------------------------
@@ -47,9 +43,7 @@ def assert_job_completed(root: Path, job_slug: str, workflow: Workflow) -> None:
 # ---------------------------------------------------------------------------
 
 
-def assert_all_declared_outputs_produced(
-    root: Path, job_slug: str, workflow: Workflow
-) -> None:
+def assert_all_declared_outputs_produced(root: Path, job_slug: str, workflow: Workflow) -> None:
     """Every required output declared by a top-level (non-loop-body) node
     must have an envelope on disk at the plain path.
 
@@ -92,8 +86,7 @@ def assert_all_declared_outputs_produced(
     # Loop-internal variables aren't required at the plain path unless
     # they're projected (covered above).
     required_outputs -= loop_internal_vars - set(
-        external for n in workflow.nodes if isinstance(n, LoopNode)
-        for external in n.outputs
+        external for n in workflow.nodes if isinstance(n, LoopNode) for external in n.outputs
     )
 
     for var_name in required_outputs:
@@ -109,9 +102,7 @@ def assert_all_declared_outputs_produced(
 # ---------------------------------------------------------------------------
 
 
-def assert_envelopes_well_formed(
-    root: Path, job_slug: str, workflow: Workflow
-) -> None:
+def assert_envelopes_well_formed(root: Path, job_slug: str, workflow: Workflow) -> None:
     """Every persisted variable envelope (plain or loop-indexed) is
     JSON-valid, has the right ``type`` field, and the ``value`` payload
     validates against the type's ``Value`` Pydantic model."""
@@ -135,15 +126,11 @@ def assert_envelopes_well_formed(
         try:
             raw = env_path.read_text()
         except OSError as exc:
-            raise AssertionError(
-                f"could not read envelope at {env_path}: {exc}"
-            ) from exc
+            raise AssertionError(f"could not read envelope at {env_path}: {exc}") from exc
         try:
             envelope = Envelope.model_validate_json(raw)
         except Exception as exc:
-            raise AssertionError(
-                f"envelope at {env_path} failed schema validation: {exc}"
-            ) from exc
+            raise AssertionError(f"envelope at {env_path} failed schema validation: {exc}") from exc
 
         if var_name not in workflow.variables:
             raise AssertionError(
@@ -172,9 +159,7 @@ def assert_envelopes_well_formed(
 # ---------------------------------------------------------------------------
 
 
-def assert_all_nodes_succeeded_or_skipped(
-    root: Path, job_slug: str, workflow: Workflow
-) -> None:
+def assert_all_nodes_succeeded_or_skipped(root: Path, job_slug: str, workflow: Workflow) -> None:
     for node in workflow.nodes:
         state_path = paths.node_state_path(job_slug, node.id, root=root)
         if not state_path.is_file():
@@ -203,9 +188,7 @@ def assert_all_nodes_succeeded_or_skipped(
 _REQUIRED_ARTEFACTS = ("prompt.md", "stdout.log", "stderr.log")
 
 
-def assert_node_artefacts_present(
-    root: Path, job_slug: str, workflow: Workflow
-) -> None:
+def assert_node_artefacts_present(root: Path, job_slug: str, workflow: Workflow) -> None:
     """For every *agent-actor* node that ran (state.json exists), check
     that the attempt directory has the conventional files (prompt.md,
     stdout.log, stderr.log).
@@ -221,19 +204,13 @@ def assert_node_artefacts_present(
         if not state_path.is_file():
             continue
         run = NodeRun.model_validate_json(state_path.read_text())
-        attempt_dir = paths.node_attempt_dir(
-            job_slug, node.id, run.attempts, root=root
-        )
+        attempt_dir = paths.node_attempt_dir(job_slug, node.id, run.attempts, root=root)
         if not attempt_dir.is_dir():
-            raise AssertionError(
-                f"node {node.id!r}: attempt dir missing at {attempt_dir}"
-            )
+            raise AssertionError(f"node {node.id!r}: attempt dir missing at {attempt_dir}")
         for fname in _REQUIRED_ARTEFACTS:
             f = attempt_dir / fname
             if not f.is_file():
-                raise AssertionError(
-                    f"node {node.id!r}: missing artefact {fname!r} at {f}"
-                )
+                raise AssertionError(f"node {node.id!r}: missing artefact {fname!r} at {f}")
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +225,7 @@ def assert_pr_envelopes_correspond_to_real_prs(
     query GitHub via `gh pr view` to confirm the PR exists.
 
     Skipped silently if no `pr` envelopes were produced (T1/T2 case)."""
-    pr_var_names = {
-        name for name, spec in workflow.variables.items() if spec.type == "pr"
-    }
+    pr_var_names = {name for name, spec in workflow.variables.items() if spec.type == "pr"}
     if not pr_var_names:
         return
 
@@ -274,9 +249,7 @@ def assert_pr_envelopes_correspond_to_real_prs(
         env = Envelope.model_validate_json(env_path.read_text())
         url = env.value.get("url")
         if not url:
-            raise AssertionError(
-                f"pr envelope at {env_path} has no `url` in its value"
-            )
+            raise AssertionError(f"pr envelope at {env_path} has no `url` in its value")
         result = subprocess.run(
             ["gh", "pr", "view", url, "--json", "number,state"],
             capture_output=True,
@@ -284,14 +257,10 @@ def assert_pr_envelopes_correspond_to_real_prs(
             check=False,
         )
         if result.returncode != 0:
-            raise AssertionError(
-                f"PR at {url} not viewable via gh: {result.stderr.strip()}"
-            )
+            raise AssertionError(f"PR at {url} not viewable via gh: {result.stderr.strip()}")
 
 
-def assert_branches_in_remote(
-    root: Path, job_slug: str, workflow: Workflow
-) -> None:
+def assert_branches_in_remote(root: Path, job_slug: str, workflow: Workflow) -> None:
     """For workflows that include code-kind nodes, verify the job branch
     and at least one stage branch are present in the remote.
 
@@ -299,9 +268,7 @@ def assert_branches_in_remote(
     code_nodes = [n for n in workflow.nodes if isinstance(n, CodeNode)]
     if not code_nodes:
         return
-    cfg = JobConfig.model_validate_json(
-        paths.job_config_path(job_slug, root=root).read_text()
-    )
+    cfg = JobConfig.model_validate_json(paths.job_config_path(job_slug, root=root).read_text())
     if not cfg.repo_slug:
         raise AssertionError("workflow has code nodes but JobConfig.repo_slug is None")
 
@@ -319,9 +286,7 @@ def assert_branches_in_remote(
         check=False,
     )
     if result.returncode != 0:
-        raise AssertionError(
-            f"could not list branches via gh api: {result.stderr.strip()}"
-        )
+        raise AssertionError(f"could not list branches via gh api: {result.stderr.strip()}")
     remote_branches = {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
     job_branch = paths.job_branch_name(job_slug)
@@ -332,9 +297,7 @@ def assert_branches_in_remote(
         )
 
     expected_stage_prefix = f"hammock/stages/{job_slug}/"
-    stage_branches_present = [
-        b for b in remote_branches if b.startswith(expected_stage_prefix)
-    ]
+    stage_branches_present = [b for b in remote_branches if b.startswith(expected_stage_prefix)]
     if not stage_branches_present:
         raise AssertionError(
             f"no stage branches under {expected_stage_prefix!r} in remote. "
@@ -368,9 +331,7 @@ def assert_count_loop_aggregations_have_expected_size(
         for external_name, ref in node.outputs.items():
             if not ref.strip().endswith("[*]"):
                 continue
-            env_path = paths.variable_envelope_path(
-                job_slug, external_name, root=root
-            )
+            env_path = paths.variable_envelope_path(job_slug, external_name, root=root)
             if not env_path.is_file():
                 raise AssertionError(
                     f"loop {node.id!r} declared [*] output {external_name!r} "

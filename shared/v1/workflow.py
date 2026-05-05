@@ -122,7 +122,7 @@ class LoopNode(BaseModel):
     substrate: Literal["per-iteration", "shared"] | None = None
     """When omitted: ``per-iteration`` for count, ``shared`` for until."""
 
-    body: list["Node"] = Field(default_factory=list)
+    body: list[Node] = Field(default_factory=list)
     outputs: dict[str, str] = Field(default_factory=dict)
     """Loop output projection: external_name → ``$loop-id.body_var`` reference.
     For count loops the projection is ``list[T]``; for until loops, scalar T
@@ -131,9 +131,7 @@ class LoopNode(BaseModel):
 
 # Discriminated union: the validator sees the `kind` field and routes
 # to the right model. As of T4: `artifact`, `code`, `loop`.
-Node = Annotated[
-    ArtifactNode | CodeNode | LoopNode, Field(discriminator="kind")
-]
+Node = Annotated[ArtifactNode | CodeNode | LoopNode, Field(discriminator="kind")]
 
 
 # Forward-ref resolution for LoopNode.body (typing self-reference).

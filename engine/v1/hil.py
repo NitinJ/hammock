@@ -91,7 +91,7 @@ def write_pending_marker(
     pending.mkdir(parents=True, exist_ok=True)
     output_types = {}
     output_var_names = []
-    for output_name, ref in node.outputs.items():
+    for _output_name, ref in node.outputs.items():
         var_name = ref.lstrip("$").split(".", 1)[0]
         output_var_names.append(var_name)
         if var_name in workflow.variables:
@@ -208,18 +208,14 @@ def submit_hil_answer(
             f"${var_name!r}. Declared outputs: {list(output_var_to_slot)}"
         )
     if var_name not in workflow.variables:
-        raise HilSubmissionError(
-            f"variable ${var_name!r} not in workflow variables"
-        )
+        raise HilSubmissionError(f"variable ${var_name!r} not in workflow variables")
     type_name = workflow.variables[var_name].type
     type_obj = get_type(type_name)
 
     # 3. Read the pending marker to discover loop context (if any).
     marker_path = pending_marker_path(job_slug, node_id, root=root)
     if not marker_path.is_file():
-        raise HilSubmissionError(
-            f"no pending HIL gate for node {node_id!r}"
-        )
+        raise HilSubmissionError(f"no pending HIL gate for node {node_id!r}")
     marker_data = json.loads(marker_path.read_text())
     loop_id = marker_data.get("loop_id")
     iteration = marker_data.get("iteration")
@@ -230,9 +226,7 @@ def submit_hil_answer(
             job_slug, loop_id, var_name, iteration, root=root
         )
     else:
-        target_path = paths.variable_envelope_path(
-            job_slug, var_name, root=root
-        )
+        target_path = paths.variable_envelope_path(job_slug, var_name, root=root)
     paths.variables_dir(job_slug, root=root).mkdir(parents=True, exist_ok=True)
 
     # 4. Stage the raw payload at the target path so the type's produce
@@ -316,9 +310,7 @@ def _all_required_outputs_submitted(
                 job_slug, loop_id, var_name, iteration, root=root
             )
         else:
-            env_path = paths.variable_envelope_path(
-                job_slug, var_name, root=root
-            )
+            env_path = paths.variable_envelope_path(job_slug, var_name, root=root)
         if not env_path.is_file() and not optional:
             return False
     return True
@@ -338,9 +330,7 @@ def wait_for_node_outputs(
 
     Returns True on success; False on timeout. The driver uses this to
     wait in-process for the human."""
-    deadline = (
-        time.monotonic() + timeout_seconds if timeout_seconds is not None else None
-    )
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
     marker = pending_marker_path(job_slug, node.id, root=root)
     while True:
         if not marker.exists():

@@ -8,13 +8,13 @@ elsewhere; this module just owns the envelope around a workflow run.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     SUBMITTED = "submitted"
     """Initial state immediately after `hammock job submit`."""
 
@@ -79,7 +79,7 @@ def make_job_config(
     )
 
 
-class NodeRunState(str, Enum):
+class NodeRunState(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"

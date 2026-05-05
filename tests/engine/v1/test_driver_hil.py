@@ -84,9 +84,7 @@ def _make_writer_fake(
 def _agent_payloads_for_t2() -> dict[str, dict[str, dict]]:
     return {
         "write-bug-report": {"bug_report": {"summary": "the bug"}},
-        "write-design-spec": {
-            "design_spec": {"title": "Fix it", "overview": "Plan."}
-        },
+        "write-design-spec": {"design_spec": {"title": "Fix it", "overview": "Plan."}},
         "review-design-spec-agent": {
             "design_spec_review_agent": {
                 "verdict": "approved",
@@ -208,8 +206,7 @@ def test_driver_persists_human_node_run_succeeded(tmp_path: Path) -> None:
 
     # Human node state should be SUCCEEDED.
     run = NodeRun.model_validate_json(
-        paths.node_state_path(job_slug, "review-design-spec-human", root=tmp_path)
-        .read_text()
+        paths.node_state_path(job_slug, "review-design-spec-human", root=tmp_path).read_text()
     )
     assert run.state == NodeRunState.SUCCEEDED
 
@@ -238,8 +235,7 @@ def test_driver_fails_on_hil_timeout(tmp_path: Path) -> None:
     )
     assert final.state == JobState.FAILED
     run = NodeRun.model_validate_json(
-        paths.node_state_path(job_slug, "review-design-spec-human", root=tmp_path)
-        .read_text()
+        paths.node_state_path(job_slug, "review-design-spec-human", root=tmp_path).read_text()
     )
     assert run.state == NodeRunState.FAILED
     assert run.last_error is not None
@@ -284,9 +280,7 @@ def test_driver_transitions_through_blocked_on_human(tmp_path: Path) -> None:
         time.sleep(0.02)
 
     # At this moment the job state on disk should read BLOCKED_ON_HUMAN.
-    cfg = JobConfig.model_validate_json(
-        paths.job_config_path(job_slug, root=tmp_path).read_text()
-    )
+    cfg = JobConfig.model_validate_json(paths.job_config_path(job_slug, root=tmp_path).read_text())
     assert cfg.state == JobState.BLOCKED_ON_HUMAN
 
     submit_hil_answer(

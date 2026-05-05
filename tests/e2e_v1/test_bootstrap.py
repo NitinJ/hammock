@@ -123,9 +123,7 @@ def test_creates_repo_when_not_found(tmp_path: Path) -> None:
     create_calls = [c for c in runner.calls if c.args[:3] == ["gh", "repo", "create"]]
     assert len(create_calls) == 1
     assert "me/hammock-e2e-test" in create_calls[0].args
-    push_calls = [
-        c for c in runner.calls if c.args[:3] == ["git", "push", "-u"]
-    ]
+    push_calls = [c for c in runner.calls if c.args[:3] == ["git", "push", "-u"]]
     assert len(push_calls) == 1
 
 
@@ -139,9 +137,7 @@ def test_create_path_forces_main_branch(tmp_path: Path) -> None:
         runner=runner,
     )
     checkout_calls = [
-        c
-        for c in runner.calls
-        if c.args[:3] == ["git", "checkout", "-B"] and "main" in c.args
+        c for c in runner.calls if c.args[:3] == ["git", "checkout", "-B"] and "main" in c.args
     ]
     assert len(checkout_calls) == 1
 

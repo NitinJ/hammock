@@ -58,9 +58,7 @@ def is_known_type(name: str) -> bool:
     if name in REGISTRY:
         return True
     m = _LIST_NAME_RE.match(name)
-    if m is not None and m.group("inner") in REGISTRY:
-        return True
-    return False
+    return bool(m is not None and m.group("inner") in REGISTRY)
 
 
 def get_type(name: str) -> Any:
@@ -87,8 +85,7 @@ def get_type(name: str) -> Any:
             _LIST_TYPE_CACHE[name] = cached
         return cached
     raise UnknownVariableType(
-        f"variable type {name!r} is not registered. Known types: "
-        f"{sorted(REGISTRY.keys())}"
+        f"variable type {name!r} is not registered. Known types: {sorted(REGISTRY.keys())}"
     )
 
 

@@ -33,7 +33,9 @@ class ListDecl(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def _make_list_value_model(inner_value_cls: type[BaseModel]) -> type[RootModel]:
+def _make_list_value_model(
+    inner_value_cls: type[BaseModel],
+) -> type[RootModel[list[BaseModel]]]:
     """Return a Pydantic RootModel whose root is ``list[inner_value_cls]``.
 
     Built per inner type so envelope validation (`Value.model_validate`)
@@ -60,8 +62,7 @@ class ListType:
         # Engine populates list envelopes directly when projecting loop
         # outputs; no actor produces a list[T] via the type protocol.
         raise VariableTypeError(
-            f"{self.name}: produce() is engine-derived (count-loop "
-            "projection), not actor-driven"
+            f"{self.name}: produce() is engine-derived (count-loop projection), not actor-driven"
         )
 
     def render_for_producer(self, decl: ListDecl, ctx: PromptContext) -> str:
@@ -70,9 +71,7 @@ class ListType:
             "Engine-derived list output — no producer prompt fragment."
         )
 
-    def render_for_consumer(
-        self, decl: ListDecl, value: Any, ctx: PromptContext
-    ) -> str:
+    def render_for_consumer(self, decl: ListDecl, value: Any, ctx: PromptContext) -> str:
         from dataclasses import dataclass as _dataclass
 
         @_dataclass
@@ -86,9 +85,7 @@ class ListType:
         lines = [f"### Input `{ctx.var_name}` ({self.name})\n"]
         inner_decl = self.inner.Decl()
         for k, item in enumerate(items):
-            elem_ctx = _ElemCtx(
-                var_name=f"{ctx.var_name}[{k}]", job_dir=ctx.job_dir
-            )
+            elem_ctx = _ElemCtx(var_name=f"{ctx.var_name}[{k}]", job_dir=ctx.job_dir)
             lines.append(self.inner.render_for_consumer(inner_decl, item, elem_ctx))
             lines.append("")
         return "\n".join(lines).rstrip() + "\n"

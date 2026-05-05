@@ -81,13 +81,9 @@ def set_up_job_repo(
     if not git_ops.branch_exists_local(repo_dir, job_branch, runner=runner):
         # Off origin/<base> — the freshly-fetched ref.
         try:
-            git_ops.create_branch(
-                repo_dir, job_branch, f"origin/{base}", runner=runner
-            )
+            git_ops.create_branch(repo_dir, job_branch, f"origin/{base}", runner=runner)
         except git_ops.GitError as exc:
-            raise SubstrateError(
-                f"could not create job branch {job_branch!r}: {exc}"
-            ) from exc
+            raise SubstrateError(f"could not create job branch {job_branch!r}: {exc}") from exc
 
     # Push job branch best-effort. If push fails (e.g. branch already on
     # remote), we surface but don't crash since job branch existence on
@@ -126,13 +122,9 @@ def allocate_code_substrate(
     # frozen at clone time and reports stale "phantom" commits on
     # freshly-forked stage branches that haven't been touched by the
     # agent.
-    git_ops.update_local_branch_to_remote(
-        job_repo.repo_dir, job_repo.job_branch, runner=runner
-    )
+    git_ops.update_local_branch_to_remote(job_repo.repo_dir, job_repo.job_branch, runner=runner)
 
-    if not git_ops.branch_exists_local(
-        job_repo.repo_dir, stage_branch, runner=runner
-    ):
+    if not git_ops.branch_exists_local(job_repo.repo_dir, stage_branch, runner=runner):
         # Fork off the freshly-fetched job branch.
         git_ops.create_branch(
             job_repo.repo_dir,
@@ -141,9 +133,7 @@ def allocate_code_substrate(
             runner=runner,
         )
 
-    git_ops.add_worktree(
-        job_repo.repo_dir, worktree, stage_branch, runner=runner
-    )
+    git_ops.add_worktree(job_repo.repo_dir, worktree, stage_branch, runner=runner)
 
     return CodeSubstrate(
         repo_dir=job_repo.repo_dir,

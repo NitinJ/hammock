@@ -51,9 +51,7 @@ class SummaryType:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise VariableTypeError(
-                f"summary at {path} is not valid JSON: {exc}"
-            ) from exc
+            raise VariableTypeError(f"summary at {path} is not valid JSON: {exc}") from exc
         try:
             return SummaryValue.model_validate(data)
         except ValidationError as exc:

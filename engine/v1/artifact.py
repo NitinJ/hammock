@@ -123,14 +123,22 @@ def dispatch_artifact_agent(
 
     # 1. Resolve inputs.
     resolved = resolve_node_inputs(
-        node=node, workflow=workflow, job_slug=job_slug, root=root,
-        loop_id=loop_id, iteration=iteration,
+        node=node,
+        workflow=workflow,
+        job_slug=job_slug,
+        root=root,
+        loop_id=loop_id,
+        iteration=iteration,
     )
 
     # 2. Build prompt.
     prompt = build_prompt(
-        node=node, workflow=workflow, inputs=resolved, job_dir=job_dir,
-        loop_id=loop_id, iteration=iteration,
+        node=node,
+        workflow=workflow,
+        inputs=resolved,
+        job_dir=job_dir,
+        loop_id=loop_id,
+        iteration=iteration,
     )
     atomic_write_text(attempt_dir / "prompt.md", prompt)
 
@@ -225,7 +233,5 @@ def _produce_outputs(
                 job_slug, loop_id, slot.var_name, iteration, root=root
             )
         else:
-            target = paths.variable_envelope_path(
-                job_slug, slot.var_name, root=root
-            )
+            target = paths.variable_envelope_path(job_slug, slot.var_name, root=root)
         atomic_write_text(target, env.model_dump_json())

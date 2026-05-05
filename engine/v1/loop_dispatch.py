@@ -25,10 +25,8 @@ Body iteration:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,7 +51,6 @@ from engine.v1.substrate import (
 from shared.atomic import atomic_write_text
 from shared.v1 import paths
 from shared.v1.envelope import Envelope, make_envelope
-from shared.v1.types.registry import get_type
 from shared.v1.workflow import (
     ArtifactNode,
     CodeNode,
@@ -115,17 +112,12 @@ def dispatch_loop(
                 node.count, workflow=workflow, job_slug=job_slug, root=root
             )
         except _LoopError as exc:
-            return LoopDispatchResult(
-                succeeded=False, iterations_run=0, error=str(exc)
-            )
+            return LoopDispatchResult(succeeded=False, iterations_run=0, error=str(exc))
         if count_value < 0:
             return LoopDispatchResult(
                 succeeded=False,
                 iterations_run=0,
-                error=(
-                    f"loop {node.id!r}: count resolved to {count_value} "
-                    "(must be >= 0)"
-                ),
+                error=(f"loop {node.id!r}: count resolved to {count_value} (must be >= 0)"),
             )
         max_iters = count_value
         substrate_default = "per-iteration"
@@ -153,8 +145,7 @@ def dispatch_loop(
                 succeeded=False,
                 iterations_run=0,
                 error=(
-                    f"loop {node.id!r} contains code-kind body nodes but "
-                    "the job has no repo_slug"
+                    f"loop {node.id!r} contains code-kind body nodes but the job has no repo_slug"
                 ),
             )
         try:
@@ -175,8 +166,11 @@ def dispatch_loop(
     for iteration in range(max_iters):
         log.info(
             "loop %s: iteration %d/%d (kind=%s, substrate=%s)",
-            node.id, iteration, max_iters,
-            "count" if is_count_loop else "until", substrate_mode,
+            node.id,
+            iteration,
+            max_iters,
+            "count" if is_count_loop else "until",
+            substrate_mode,
         )
 
         # Per-iteration substrate allocation (if any direct code body
@@ -185,7 +179,8 @@ def dispatch_loop(
         if direct_code_body and substrate_mode == "per-iteration":
             if job_repo is None:
                 return LoopDispatchResult(
-                    succeeded=False, iterations_run=iteration,
+                    succeeded=False,
+                    iterations_run=iteration,
                     error=(
                         f"loop {node.id!r} per-iteration substrate needs a "
                         "job_repo (workflow has code nodes but JobConfig has no repo_slug)"
@@ -200,7 +195,8 @@ def dispatch_loop(
                 )
             except SubstrateError as exc:
                 return LoopDispatchResult(
-                    succeeded=False, iterations_run=iteration,
+                    succeeded=False,
+                    iterations_run=iteration,
                     error=f"per-iteration substrate alloc failed: {exc}",
                 )
 
@@ -254,9 +250,7 @@ def dispatch_loop(
                     root=root,
                     parent_loop_context=parent_loop_context,
                 )
-                return LoopDispatchResult(
-                    succeeded=True, iterations_run=iterations_run
-                )
+                return LoopDispatchResult(succeeded=True, iterations_run=iterations_run)
 
     # Either count loop reached the end (success) or until exhausted (failure).
     if is_count_loop:
@@ -268,17 +262,12 @@ def dispatch_loop(
             root=root,
             parent_loop_context=parent_loop_context,
         )
-        return LoopDispatchResult(
-            succeeded=True, iterations_run=iterations_run
-        )
+        return LoopDispatchResult(succeeded=True, iterations_run=iterations_run)
 
     return LoopDispatchResult(
         succeeded=False,
         iterations_run=iterations_run,
-        error=(
-            f"loop {node.id!r}: predicate never became true after "
-            f"{max_iters} iteration(s)"
-        ),
+        error=(f"loop {node.id!r}: predicate never became true after {max_iters} iteration(s)"),
     )
 
 
@@ -320,9 +309,7 @@ def _dispatch_body_node(
             code_claude_runner=code_claude_runner,
             hil_poll_interval_seconds=hil_poll_interval_seconds,
             hil_timeout_seconds=hil_timeout_seconds,
-            parent_loop_context=ParentLoopContext(
-                loop_id=loop_node.id, iteration=iteration
-            ),
+            parent_loop_context=ParentLoopContext(loop_id=loop_node.id, iteration=iteration),
         )
         return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
 
@@ -330,10 +317,7 @@ def _dispatch_body_node(
         if code_substrate is None:
             return _BodyDispatchOk(
                 succeeded=False,
-                error=(
-                    f"loop body has code node {body_node.id!r} but no "
-                    "substrate was allocated"
-                ),
+                error=(f"loop body has code node {body_node.id!r} but no substrate was allocated"),
             )
         result = dispatch_code_agent(
             node=body_node,
@@ -346,9 +330,7 @@ def _dispatch_body_node(
             loop_id=loop_node.id,
             iteration=iteration,
         )
-        return _BodyDispatchOk(
-            succeeded=result.succeeded, error=result.error
-        )
+        return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
 
     # Artifact body node — agent or human actor.
     if body_node.actor == "human":
@@ -371,10 +353,7 @@ def _dispatch_body_node(
         if not ok:
             return _BodyDispatchOk(
                 succeeded=False,
-                error=(
-                    f"loop body {body_node.id!r} timed out waiting for "
-                    "HIL submission"
-                ),
+                error=(f"loop body {body_node.id!r} timed out waiting for HIL submission"),
             )
         return _BodyDispatchOk(succeeded=True)
 
@@ -432,7 +411,9 @@ def _project_outputs(
         if m is None:
             log.warning(
                 "loop %s: output projection for %s has unrecognised ref %r — skipping",
-                loop_node.id, external_name, ref,
+                loop_node.id,
+                external_name,
+                ref,
             )
             continue
         ref_loop_id = m.group("loop_id")
@@ -442,7 +423,9 @@ def _project_outputs(
         if ref_loop_id != loop_node.id:
             log.warning(
                 "loop %s: output ref %s targets a different loop id %r — skipping",
-                loop_node.id, ref, ref_loop_id,
+                loop_node.id,
+                ref,
+                ref_loop_id,
             )
             continue
 
@@ -457,7 +440,8 @@ def _project_outputs(
             if envelope_text is None:
                 log.warning(
                     "loop %s: [last] projection for %s found no envelope on disk",
-                    loop_node.id, body_var,
+                    loop_node.id,
+                    body_var,
                 )
                 continue
             _write_projected(
@@ -473,9 +457,7 @@ def _project_outputs(
                 body_var=body_var,
                 iterations_run=iterations_run,
                 external_name=external_name,
-                workflow_var_type=_workflow_var_type(
-                    external_name, loop_node, job_slug, root
-                ),
+                workflow_var_type=_workflow_var_type(external_name, loop_node, job_slug, root),
                 job_slug=job_slug,
                 root=root,
             )
@@ -491,13 +473,14 @@ def _project_outputs(
         else:
             # Specific iteration index.
             k = int(idx_form)
-            path = paths.loop_variable_envelope_path(
-                job_slug, loop_node.id, body_var, k, root=root
-            )
+            path = paths.loop_variable_envelope_path(job_slug, loop_node.id, body_var, k, root=root)
             if not path.is_file():
                 log.warning(
                     "loop %s: [%d] projection for %s missing envelope at %s",
-                    loop_node.id, k, body_var, path,
+                    loop_node.id,
+                    k,
+                    body_var,
+                    path,
                 )
                 continue
             _write_projected(
@@ -520,9 +503,7 @@ def _read_last_envelope_text(
     """Read the highest-iteration envelope on disk for *var_name* in
     *loop_id*, capped at *final_iteration*."""
     for k in range(final_iteration, -1, -1):
-        p = paths.loop_variable_envelope_path(
-            job_slug, loop_id, var_name, k, root=root
-        )
+        p = paths.loop_variable_envelope_path(job_slug, loop_id, var_name, k, root=root)
         if p.is_file():
             return p.read_text()
     return None
@@ -544,13 +525,13 @@ def _build_list_envelope(
     inner_type_name: str | None = None
     repo: str | None = None
     for k in range(iterations_run):
-        p = paths.loop_variable_envelope_path(
-            job_slug, loop_node.id, body_var, k, root=root
-        )
+        p = paths.loop_variable_envelope_path(job_slug, loop_node.id, body_var, k, root=root)
         if not p.is_file():
             log.warning(
                 "loop %s: [*] aggregation skipping iter %d (%s missing)",
-                loop_node.id, k, body_var,
+                loop_node.id,
+                k,
+                body_var,
             )
             continue
         env = Envelope.model_validate_json(p.read_text())
@@ -563,7 +544,8 @@ def _build_list_envelope(
     if inner_type_name is None and workflow_var_type is None:
         log.warning(
             "loop %s: [*] aggregation %s found no envelopes and no declared type — skipping",
-            loop_node.id, body_var,
+            loop_node.id,
+            body_var,
         )
         return None
 
@@ -605,9 +587,7 @@ def _write_projected(
 ) -> None:
     """Write *envelope_text* either to plain or to outer-loop-indexed path."""
     if parent_loop_context is None:
-        target = paths.variable_envelope_path(
-            job_slug, external_name, root=root
-        )
+        target = paths.variable_envelope_path(job_slug, external_name, root=root)
     else:
         target = paths.loop_variable_envelope_path(
             job_slug,
@@ -629,21 +609,15 @@ class _LoopError(Exception):
     """Internal: ``count`` resolution failure surfaced to dispatch."""
 
 
-_COUNT_REF_RE = re.compile(
-    r"^\$(?P<var>[a-zA-Z][a-zA-Z0-9_.\-]*)$"
-)
+_COUNT_REF_RE = re.compile(r"^\$(?P<var>[a-zA-Z][a-zA-Z0-9_.\-]*)$")
 
 
-def _resolve_count(
-    raw: int | str, *, workflow: Workflow, job_slug: str, root: Path
-) -> int:
+def _resolve_count(raw: int | str, *, workflow: Workflow, job_slug: str, root: Path) -> int:
     """Resolve a literal int or ``$ref`` form to a concrete int."""
     if isinstance(raw, int):
         return raw
     if not isinstance(raw, str):
-        raise _LoopError(
-            f"count must be int or `$ref`, got {type(raw).__name__}"
-        )
+        raise _LoopError(f"count must be int or `$ref`, got {type(raw).__name__}")
     text = raw.strip()
     # Try literal int in string form.
     try:
@@ -701,8 +675,7 @@ def _resolve_count(
             raise _LoopError(str(exc)) from exc
     if not isinstance(value, int):
         raise _LoopError(
-            f"count ref {text!r} resolved to non-int value of type "
-            f"{type(value).__name__}"
+            f"count ref {text!r} resolved to non-int value of type {type(value).__name__}"
         )
     return int(value)
 

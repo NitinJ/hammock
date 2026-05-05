@@ -18,9 +18,9 @@ from shared.v1.types.impl_plan import (
     ImplPlanType,
     ImplPlanValue,
 )
-from shared.v1.types.impl_spec import ImplSpecType, ImplSpecValue
+from shared.v1.types.impl_spec import ImplSpecType
 from shared.v1.types.protocol import VariableTypeError
-from shared.v1.types.registry import REGISTRY, get_type, known_type_names
+from shared.v1.types.registry import REGISTRY, known_type_names
 from shared.v1.types.summary import SummaryType, SummaryValue
 
 
@@ -105,18 +105,14 @@ def test_impl_plan_count_field_walkable_by_predicate(tmp_path: Path) -> None:
 
 
 def test_impl_plan_produce_rejects_negative_count(tmp_path: Path) -> None:
-    (tmp_path / "impl_plan.json").write_text(
-        json.dumps({"count": -1, "stages": []})
-    )
+    (tmp_path / "impl_plan.json").write_text(json.dumps({"count": -1, "stages": []}))
     t = ImplPlanType()
     with pytest.raises(VariableTypeError, match="schema invalid"):
         t.produce(t.Decl(), FakeNodeCtx(var_name="impl_plan", job_dir=tmp_path))
 
 
 def test_impl_plan_produce_zero_count_ok(tmp_path: Path) -> None:
-    (tmp_path / "impl_plan.json").write_text(
-        json.dumps({"count": 0, "stages": []})
-    )
+    (tmp_path / "impl_plan.json").write_text(json.dumps({"count": 0, "stages": []}))
     t = ImplPlanType()
     val = t.produce(t.Decl(), FakeNodeCtx(var_name="impl_plan", job_dir=tmp_path))
     assert val.count == 0

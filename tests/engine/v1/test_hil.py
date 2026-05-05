@@ -50,9 +50,7 @@ def _human_review_workflow() -> Workflow:
 def test_write_pending_creates_file(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     p = pending_marker_path("j", "review-design-spec-human", root=tmp_path)
     assert p.is_file()
 
@@ -60,9 +58,7 @@ def test_write_pending_creates_file(tmp_path: Path) -> None:
 def test_list_pending_reads_from_disk(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     items = list_pending("j", root=tmp_path)
     assert len(items) == 1
     item = items[0]
@@ -79,9 +75,7 @@ def test_list_pending_returns_empty_when_no_dir(tmp_path: Path) -> None:
 def test_remove_pending_marker_idempotent(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     remove_pending_marker("j", "review-design-spec-human", root=tmp_path)
     remove_pending_marker("j", "review-design-spec-human", root=tmp_path)  # again
     assert not pending_marker_path("j", "review-design-spec-human", root=tmp_path).exists()
@@ -95,9 +89,7 @@ def test_remove_pending_marker_idempotent(tmp_path: Path) -> None:
 def test_submit_writes_envelope_and_clears_marker(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     submit_hil_answer(
         job_slug="j",
         node_id="review-design-spec-human",
@@ -189,9 +181,7 @@ def test_submit_invalid_payload_rejected_and_no_envelope_left(tmp_path: Path) ->
     """Verification failure must not leave a half-written envelope on disk."""
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     with pytest.raises(HilSubmissionError, match="rejected"):
         submit_hil_answer(
             job_slug="j",
@@ -233,9 +223,7 @@ def test_wait_returns_true_when_marker_already_gone(tmp_path: Path) -> None:
 def test_wait_returns_false_on_timeout(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
     ok = wait_for_node_outputs(
         node=wf.nodes[0],
         workflow=wf,
@@ -255,9 +243,7 @@ def test_wait_returns_true_after_concurrent_submission(tmp_path: Path) -> None:
 
     paths.ensure_job_layout("j", root=tmp_path)
     wf = _human_review_workflow()
-    write_pending_marker(
-        job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path
-    )
+    write_pending_marker(job_slug="j", node=wf.nodes[0], workflow=wf, root=tmp_path)
 
     def submit_after_delay() -> None:
         _time.sleep(0.1)

@@ -38,12 +38,9 @@ def load_workflow(path: Path) -> Workflow:
         raise WorkflowLoadError(f"YAML parse error in {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise WorkflowLoadError(
-            f"workflow YAML at {path} must be a top-level mapping, got "
-            f"{type(data).__name__}"
+            f"workflow YAML at {path} must be a top-level mapping, got {type(data).__name__}"
         )
     try:
         return Workflow.model_validate(data)
     except ValidationError as exc:
-        raise WorkflowLoadError(
-            f"workflow schema validation failed for {path}:\n{exc}"
-        ) from exc
+        raise WorkflowLoadError(f"workflow schema validation failed for {path}:\n{exc}") from exc

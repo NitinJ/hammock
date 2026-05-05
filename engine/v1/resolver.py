@@ -10,7 +10,6 @@ design-patch §1.5.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,9 +22,7 @@ from shared.v1.envelope import Envelope
 from shared.v1.types.registry import get_type
 from shared.v1.workflow import ArtifactNode, Workflow
 
-_VAR_REF_RE = re.compile(
-    r"^\$([a-zA-Z][a-zA-Z0-9_-]*)((?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)$"
-)
+_VAR_REF_RE = re.compile(r"^\$([a-zA-Z][a-zA-Z0-9_-]*)((?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)$")
 _LOOP_VAR_REF_RE = re.compile(
     r"^\$(?P<loop_id>[a-zA-Z][a-zA-Z0-9_-]*)\."
     r"(?P<var>[a-zA-Z_][a-zA-Z0-9_]*)"
@@ -97,15 +94,12 @@ def _walk_field_path(value: object, fields: list[str], ref: str) -> object:
         if isinstance(cursor, BaseModel):
             if field not in type(cursor).model_fields:
                 raise ResolutionError(
-                    f"reference {ref!r}: type {type(cursor).__name__} has no field "
-                    f"{field!r}"
+                    f"reference {ref!r}: type {type(cursor).__name__} has no field {field!r}"
                 )
             cursor = getattr(cursor, field)
         elif isinstance(cursor, dict):
             if field not in cursor:
-                raise ResolutionError(
-                    f"reference {ref!r}: dict has no key {field!r}"
-                )
+                raise ResolutionError(f"reference {ref!r}: dict has no key {field!r}")
             cursor = cursor[field]
         else:
             raise ResolutionError(
@@ -126,9 +120,7 @@ def _highest_loop_iteration(
     if not matches:
         return None
     suffix_re = re.compile(rf"loop_{re.escape(safe)}_{re.escape(var_name)}_(\d+)\.json")
-    indices = [
-        int(m.group(1)) for f in matches if (m := suffix_re.match(f.name))
-    ]
+    indices = [int(m.group(1)) for f in matches if (m := suffix_re.match(f.name))]
     return max(indices) if indices else None
 
 
@@ -204,17 +196,13 @@ def _read_loop_or_plain_envelope(
         idx = _resolve_loop_index(idx_form, current_iteration, job_slug, loop_id, var_name, root)
         if idx is None:
             return None
-        path = paths.loop_variable_envelope_path(
-            job_slug, loop_id, var_name, idx, root=root
-        )
+        path = paths.loop_variable_envelope_path(job_slug, loop_id, var_name, idx, root=root)
         return _read_envelope(path)
 
     m_plain = _VAR_REF_RE.match(text)
     if m_plain is not None:
         var_name = m_plain.group(1)
-        return _read_envelope(
-            paths.variable_envelope_path(job_slug, var_name, root=root)
-        )
+        return _read_envelope(paths.variable_envelope_path(job_slug, var_name, root=root))
     raise ResolutionError(f"malformed variable reference {ref!r}")
 
 

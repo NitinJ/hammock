@@ -52,16 +52,12 @@ class PRMergeConfirmationType:
     Decl: ClassVar[type[PRMergeConfirmationDecl]] = PRMergeConfirmationDecl
     Value: ClassVar[type[PRMergeConfirmationValue]] = PRMergeConfirmationValue
 
-    def produce(
-        self, decl: PRMergeConfirmationDecl, ctx: NodeContext
-    ) -> PRMergeConfirmationValue:
+    def produce(self, decl: PRMergeConfirmationDecl, ctx: NodeContext) -> PRMergeConfirmationValue:
         """Read the human's submission (just the pr_url) from disk, then
         query gh to confirm the PR is merged. Reject otherwise."""
         path = ctx.expected_path()
         if not path.is_file():
-            raise VariableTypeError(
-                f"pr-merge-confirmation not produced at {path}"
-            )
+            raise VariableTypeError(f"pr-merge-confirmation not produced at {path}")
         try:
             data = json.loads(path.read_text())
         except json.JSONDecodeError as exc:
@@ -71,9 +67,7 @@ class PRMergeConfirmationType:
 
         pr_url = data.get("pr_url")
         if not pr_url or not isinstance(pr_url, str):
-            raise VariableTypeError(
-                "submission must include a non-empty `pr_url` string"
-            )
+            raise VariableTypeError("submission must include a non-empty `pr_url` string")
 
         # Verify against GitHub. Use --jq to extract a raw scalar string
         # so we don't have to parse gh's JSON output (which sometimes
@@ -102,21 +96,15 @@ class PRMergeConfirmationType:
 
         match = _PR_NUMBER_RE.search(pr_url)
         if not match:
-            raise VariableTypeError(
-                f"could not parse PR number from {pr_url!r}"
-            )
-        return PRMergeConfirmationValue(
-            pr_url=pr_url, pr_number=int(match.group(1))
-        )
+            raise VariableTypeError(f"could not parse PR number from {pr_url!r}")
+        return PRMergeConfirmationValue(pr_url=pr_url, pr_number=int(match.group(1)))
 
-    def render_for_producer(
-        self, decl: PRMergeConfirmationDecl, ctx: PromptContext
-    ) -> str:
+    def render_for_producer(self, decl: PRMergeConfirmationDecl, ctx: PromptContext) -> str:
         # Not directly producer-rendered (humans see a form). Form
         # schema is below; this string is shown if any flow renders it.
         return (
             f"### Output `{ctx.var_name}` (pr-merge-confirmation)\n\n"
-            "Merge the PR on GitHub, then submit `{\"pr_url\": \"<url>\"}`. "
+            'Merge the PR on GitHub, then submit `{"pr_url": "<url>"}`. '
             "The engine will verify via `gh pr view` that the PR is in state "
             "`MERGED` before accepting."
         )
@@ -132,7 +120,5 @@ class PRMergeConfirmationType:
             f"PR #{value.pr_number} merged: {value.pr_url}"
         )
 
-    def form_schema(
-        self, decl: PRMergeConfirmationDecl
-    ) -> FormSchema | None:
+    def form_schema(self, decl: PRMergeConfirmationDecl) -> FormSchema | None:
         return FormSchema(fields=[("pr_url", "url")])

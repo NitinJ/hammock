@@ -99,9 +99,7 @@ def test_after_references_existing_passes() -> None:
     wf = _make_workflow(
         variables={"x": VariableSpec(type="bug-report")},
         nodes=[
-            ArtifactNode(
-                id="a", kind="artifact", actor="agent", inputs={}, outputs={"o": "$x"}
-            ),
+            ArtifactNode(id="a", kind="artifact", actor="agent", inputs={}, outputs={"o": "$x"}),
             ArtifactNode(
                 id="b",
                 kind="artifact",
@@ -150,9 +148,7 @@ def test_no_cycle_passes() -> None:
     wf = _make_workflow(
         variables={"x": VariableSpec(type="bug-report")},
         nodes=[
-            ArtifactNode(
-                id="a", kind="artifact", actor="agent", inputs={}, outputs={"o": "$x"}
-            ),
+            ArtifactNode(id="a", kind="artifact", actor="agent", inputs={}, outputs={"o": "$x"}),
             ArtifactNode(
                 id="b",
                 kind="artifact",
@@ -238,8 +234,7 @@ def test_field_access_reference_passes() -> None:
     findings = validate(wf)
     # Only undeclared-variable / malformed findings would matter here.
     assert all(
-        "undeclared variable" not in f.message and "malformed" not in f.message
-        for f in findings
+        "undeclared variable" not in f.message and "malformed" not in f.message for f in findings
     )
 
 

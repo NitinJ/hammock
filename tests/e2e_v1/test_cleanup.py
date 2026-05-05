@@ -42,9 +42,7 @@ class FakeRunner:
 
         self._handlers[prefix] = handler
 
-    def __call__(
-        self, args: list[str], **_: object
-    ) -> subprocess.CompletedProcess[str]:
+    def __call__(self, args: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         self.calls.append(_Call(list(args)))
         best: tuple[str, ...] | None = None
         for prefix in self._handlers:
@@ -160,7 +158,9 @@ def test_deletes_only_new_branches(tmp_path: Path) -> None:
     assert deleted == {"hammock/jobs/abc", "hammock/stages/abc/x"}
 
 
-def test_continues_on_branch_delete_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_continues_on_branch_delete_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     runner = FakeRunner()
     runner.expect(
         ("gh", "api"),
@@ -209,9 +209,7 @@ def test_closes_open_prs_before_branch_delete(tmp_path: Path) -> None:
         keep_root=True,
         runner=runner,
     )
-    close_calls = [
-        c for c in runner.calls if c.args[:3] == ["gh", "pr", "close"]
-    ]
+    close_calls = [c for c in runner.calls if c.args[:3] == ["gh", "pr", "close"]]
     assert len(close_calls) == 2
     assert "42" in close_calls[0].args
     assert "43" in close_calls[1].args

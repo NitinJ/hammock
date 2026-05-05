@@ -48,9 +48,7 @@ _PR_URL_RE = re.compile(r"https://github\.com/[^\s]+/pull/\d+")
 # ---------------------------------------------------------------------------
 
 
-def clone_repo(
-    repo_url: str, dest: Path, *, runner: CmdRunner | None = None
-) -> None:
+def clone_repo(repo_url: str, dest: Path, *, runner: CmdRunner | None = None) -> None:
     """Clone *repo_url* into *dest*. Idempotent: if *dest* already exists
     and is a git repo, skip."""
     runner = runner or _default_runner
@@ -61,18 +59,13 @@ def clone_repo(
     result = runner(["git", "clone", repo_url, str(dest)])
     if result.returncode != 0:
         raise GitError(
-            f"git clone {repo_url} failed: rc={result.returncode}\n"
-            f"stderr={result.stderr.strip()}"
+            f"git clone {repo_url} failed: rc={result.returncode}\nstderr={result.stderr.strip()}"
         )
 
 
-def fetch(
-    repo_dir: Path, *, ref: str = "main", runner: CmdRunner | None = None
-) -> None:
+def fetch(repo_dir: Path, *, ref: str = "main", runner: CmdRunner | None = None) -> None:
     runner = runner or _default_runner
-    result = runner(
-        ["git", "fetch", "origin", ref], cwd=repo_dir
-    )
+    result = runner(["git", "fetch", "origin", ref], cwd=repo_dir)
     if result.returncode != 0:
         raise GitError(
             f"git fetch origin {ref!r} failed in {repo_dir}: "
@@ -119,9 +112,7 @@ def update_local_branch_to_remote(
         )
 
 
-def branch_exists_local(
-    repo_dir: Path, branch: str, *, runner: CmdRunner | None = None
-) -> bool:
+def branch_exists_local(repo_dir: Path, branch: str, *, runner: CmdRunner | None = None) -> bool:
     runner = runner or _default_runner
     result = runner(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
@@ -130,9 +121,7 @@ def branch_exists_local(
     return result.returncode == 0
 
 
-def branch_exists_remote(
-    repo_dir: Path, branch: str, *, runner: CmdRunner | None = None
-) -> bool:
+def branch_exists_remote(repo_dir: Path, branch: str, *, runner: CmdRunner | None = None) -> bool:
     """True iff the remote 'origin' has *branch*. Cheap remote-aware check."""
     runner = runner or _default_runner
     result = runner(
@@ -215,9 +204,7 @@ def add_worktree(
                     # for verifying branch match; we just don't re-add.
                     return
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    result = runner(
-        ["git", "worktree", "add", str(worktree_path), branch], cwd=repo_dir
-    )
+    result = runner(["git", "worktree", "add", str(worktree_path), branch], cwd=repo_dir)
     if result.returncode != 0:
         raise GitError(
             f"git worktree add {worktree_path}/{branch} failed: "
@@ -256,9 +243,7 @@ def latest_commit_subject(
     runner: CmdRunner | None = None,
 ) -> str:
     runner = runner or _default_runner
-    result = runner(
-        ["git", "log", "-1", "--pretty=%s", branch], cwd=repo_dir
-    )
+    result = runner(["git", "log", "-1", "--pretty=%s", branch], cwd=repo_dir)
     if result.returncode != 0:
         raise GitError(
             f"git log subject for {branch} failed: rc={result.returncode} "
@@ -274,9 +259,7 @@ def latest_commit_body(
     runner: CmdRunner | None = None,
 ) -> str:
     runner = runner or _default_runner
-    result = runner(
-        ["git", "log", "-1", "--pretty=%b", branch], cwd=repo_dir
-    )
+    result = runner(["git", "log", "-1", "--pretty=%b", branch], cwd=repo_dir)
     if result.returncode != 0:
         raise GitError(
             f"git log body for {branch} failed: rc={result.returncode} "
@@ -319,14 +302,9 @@ def gh_create_pr(
         args.append("--draft")
     result = runner(args, cwd=repo_dir)
     if result.returncode != 0:
-        raise GhError(
-            f"gh pr create failed: rc={result.returncode} stderr={result.stderr.strip()}"
-        )
+        raise GhError(f"gh pr create failed: rc={result.returncode} stderr={result.stderr.strip()}")
     # gh's stdout typically contains the PR URL (and possibly other lines).
     match = _PR_URL_RE.search(result.stdout)
     if not match:
-        raise GhError(
-            f"gh pr create succeeded but no PR URL found in stdout: "
-            f"{result.stdout!r}"
-        )
+        raise GhError(f"gh pr create succeeded but no PR URL found in stdout: {result.stdout!r}")
     return match.group(0)

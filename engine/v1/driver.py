@@ -96,9 +96,7 @@ def submit_job(
         workflow_path=workflow_path.resolve(),
         repo_slug=repo_slug,
     )
-    atomic_write_text(
-        paths.job_config_path(job_slug, root=root), cfg.model_dump_json(indent=2)
-    )
+    atomic_write_text(paths.job_config_path(job_slug, root=root), cfg.model_dump_json(indent=2))
 
     # Seed the job-request typed variable so the first node can consume it.
     if "request" in workflow.variables:
@@ -134,9 +132,7 @@ def submit_job(
                 repo_slug=repo_slug,
             )
         except SubstrateError as exc:
-            raise JobSubmissionError(
-                f"could not set up job repo: {exc}"
-            ) from exc
+            raise JobSubmissionError(f"could not set up job repo: {exc}") from exc
 
     return cfg
 
@@ -192,15 +188,11 @@ def run_job(
             NodeRunState.SUCCEEDED,
             NodeRunState.SKIPPED,
         }:
-            log.info(
-                "node %s already %s — skipping", node.id, existing.state.value
-            )
+            log.info("node %s already %s — skipping", node.id, existing.state.value)
             continue
 
         if not isinstance(node, ArtifactNode | CodeNode | LoopNode):
-            raise DriverError(
-                f"node {node.id!r} has unsupported kind {type(node).__name__}"
-            )
+            raise DriverError(f"node {node.id!r} has unsupported kind {type(node).__name__}")
 
         # runs_if: skip the node when the predicate evaluates false. Per
         # design-patch §1.6 rule 3, a skipped node produces no outputs;
@@ -229,7 +221,8 @@ def run_job(
             if not holds:
                 log.info(
                     "node %s: runs_if=%r evaluated false — SKIPPED",
-                    node.id, runs_if,
+                    node.id,
+                    runs_if,
                 )
                 _persist_node_run(
                     make_node_run(node.id),
@@ -355,9 +348,7 @@ def run_job(
                 timeout_seconds=hil_timeout_seconds,
             )
             if not ok:
-                log.warning(
-                    "node %s timed out waiting for HIL submission", node.id
-                )
+                log.warning("node %s timed out waiting for HIL submission", node.id)
                 _persist_node_run(
                     make_node_run(node.id),
                     state=NodeRunState.FAILED,
@@ -389,9 +380,7 @@ def run_job(
             claude_runner=claude_runner,
         )
         if not result.succeeded:
-            log.warning(
-                "node %s failed: %s — marking job FAILED", node.id, result.error
-            )
+            log.warning("node %s failed: %s — marking job FAILED", node.id, result.error)
             _persist_node_run(
                 make_node_run(node.id),
                 state=NodeRunState.FAILED,
@@ -436,13 +425,9 @@ def _dispatch_human_node(
     Submission verification is the API's job (`engine.v1.hil.submit_hil_answer`
     runs the type's `produce` synchronously). By the time the marker is
     gone, the typed envelopes are already on disk and validated."""
-    write_pending_marker(
-        job_slug=job_slug, node=node, workflow=workflow, root=root
-    )
+    write_pending_marker(job_slug=job_slug, node=node, workflow=workflow, root=root)
     _persist_state(cfg, JobState.BLOCKED_ON_HUMAN, root=root)
-    log.info(
-        "node %s blocked on human; pending marker written, waiting...", node.id
-    )
+    log.info("node %s blocked on human; pending marker written, waiting...", node.id)
     return wait_for_node_outputs(
         node=node,
         workflow=workflow,
@@ -495,12 +480,8 @@ def _topological_order(workflow: Workflow) -> list:
     return order
 
 
-def _persist_state(
-    cfg: JobConfig, new_state: JobState, *, root: Path
-) -> JobConfig:
-    updated = cfg.model_copy(
-        update={"state": new_state, "updated_at": datetime.now(UTC)}
-    )
+def _persist_state(cfg: JobConfig, new_state: JobState, *, root: Path) -> JobConfig:
+    updated = cfg.model_copy(update={"state": new_state, "updated_at": datetime.now(UTC)})
     atomic_write_text(
         paths.job_config_path(cfg.job_slug, root=root),
         updated.model_dump_json(indent=2),
@@ -508,9 +489,7 @@ def _persist_state(
     return updated
 
 
-def _read_node_run(
-    job_slug: str, node_id: str, *, root: Path
-) -> NodeRun | None:
+def _read_node_run(job_slug: str, node_id: str, *, root: Path) -> NodeRun | None:
     p = paths.node_state_path(job_slug, node_id, root=root)
     if not p.is_file():
         return None
@@ -532,12 +511,17 @@ def _persist_node_run(
             "state": state,
             "attempts": attempts,
             "last_error": last_error,
-            "started_at": base.started_at or now if state == NodeRunState.RUNNING else base.started_at,
-            "finished_at": now if state in {
+            "started_at": base.started_at or now
+            if state == NodeRunState.RUNNING
+            else base.started_at,
+            "finished_at": now
+            if state
+            in {
                 NodeRunState.SUCCEEDED,
                 NodeRunState.FAILED,
                 NodeRunState.SKIPPED,
-            } else base.finished_at,
+            }
+            else base.finished_at,
         }
     )
     p = paths.node_state_path(job_slug, base.node_id, root=root)

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -33,7 +32,6 @@ from tests.e2e_v1.preflight import (
     _slug_from_url,
     run_preflight,
 )
-
 
 _WORKFLOWS_DIR = Path(__file__).parent / "workflows"
 _SEED_DIR = Path(__file__).parent / "seed_test_repo"
@@ -208,9 +206,7 @@ def test_workflow(tmp_path: Path, workflow_yaml: str) -> None:
 
         # 8. Stitcher must not have recorded any errors.
         if stitcher is not None:
-            assert stitcher.errors == [], (
-                f"HIL stitcher recorded errors: {stitcher.errors}"
-            )
+            assert stitcher.errors == [], f"HIL stitcher recorded errors: {stitcher.errors}"
 
     finally:
         if stitcher is not None:

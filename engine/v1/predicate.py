@@ -17,7 +17,6 @@ and not None (per design-patch §1.6 rule 1).
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,9 +52,7 @@ _LITERAL_RE = re.compile(
     )\s*$""",
     re.VERBOSE,
 )
-_PREDICATE_RE = re.compile(
-    r"^\s*(?P<lhs>\$\S+)\s+(?P<op>==|!=)\s+(?P<rhs>.+)$"
-)
+_PREDICATE_RE = re.compile(r"^\s*(?P<lhs>\$\S+)\s+(?P<op>==|!=)\s+(?P<rhs>.+)$")
 
 
 @dataclass(frozen=True)
@@ -121,9 +118,7 @@ def parse_predicate(text: str) -> ParsedPredicate:
     )
 
 
-def _resolve_index(
-    index_form: str, current_iteration: int | None
-) -> int | None:
+def _resolve_index(index_form: str, current_iteration: int | None) -> int | None:
     """Translate index form to a concrete iteration index for envelope lookup.
 
     - 'i' → current_iteration (None if not in a loop context).
@@ -151,17 +146,13 @@ def _read_loop_envelope(
     iteration: int,
     root: Path,
 ) -> Envelope | None:
-    p = paths.loop_variable_envelope_path(
-        job_slug, loop_id, var_name, iteration, root=root
-    )
+    p = paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iteration, root=root)
     if not p.is_file():
         return None
     return Envelope.model_validate_json(p.read_text())
 
 
-def _read_plain_envelope(
-    *, job_slug: str, var_name: str, root: Path
-) -> Envelope | None:
+def _read_plain_envelope(*, job_slug: str, var_name: str, root: Path) -> Envelope | None:
     p = paths.variable_envelope_path(job_slug, var_name, root=root)
     if not p.is_file():
         return None
@@ -194,15 +185,12 @@ def _walk_field_path(value: object, fields: list[str], ref_text: str) -> object:
         if isinstance(cursor, BaseModel):
             if field not in type(cursor).model_fields:
                 raise PredicateError(
-                    f"reference {ref_text!r}: type {type(cursor).__name__} "
-                    f"has no field {field!r}"
+                    f"reference {ref_text!r}: type {type(cursor).__name__} has no field {field!r}"
                 )
             cursor = getattr(cursor, field)
         elif isinstance(cursor, dict):
             if field not in cursor:
-                raise PredicateError(
-                    f"reference {ref_text!r}: dict has no key {field!r}"
-                )
+                raise PredicateError(f"reference {ref_text!r}: dict has no key {field!r}")
             cursor = cursor[field]
         else:
             raise PredicateError(
@@ -236,9 +224,7 @@ def evaluate(
     if ref.loop_id is not None:
         # Loop-scoped reference.
         if ref.index_form is None:
-            raise PredicateError(
-                f"loop-scoped reference must have an index: {text!r}"
-            )
+            raise PredicateError(f"loop-scoped reference must have an index: {text!r}")
         idx = _resolve_index(ref.index_form, current_iteration)
         if idx is None:
             # `[i-1]` on iteration 0, or `[i]` outside a loop. Treat as absent.
@@ -257,9 +243,7 @@ def evaluate(
                     iteration=highest,
                     root=root,
                 )
-                value = (
-                    _materialise_envelope_value(envelope) if envelope else None
-                )
+                value = _materialise_envelope_value(envelope) if envelope else None
         else:
             envelope = _read_loop_envelope(
                 job_slug=job_slug,
@@ -270,9 +254,7 @@ def evaluate(
             )
             value = _materialise_envelope_value(envelope) if envelope else None
     else:
-        envelope = _read_plain_envelope(
-            job_slug=job_slug, var_name=ref.var_name, root=root
-        )
+        envelope = _read_plain_envelope(job_slug=job_slug, var_name=ref.var_name, root=root)
         value = _materialise_envelope_value(envelope) if envelope else None
 
     if value is not None and ref.field_path:

@@ -13,19 +13,13 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
-from engine.v1 import git_ops
 from engine.v1.loop_dispatch import (
-    LoopDispatchResult,
-    ParentLoopContext,
     dispatch_loop,
 )
 from engine.v1.substrate import JobRepo
-from shared.atomic import atomic_write_text
 from shared.v1 import paths
 from shared.v1.envelope import Envelope, make_envelope
 from shared.v1.workflow import (
@@ -36,7 +30,6 @@ from shared.v1.workflow import (
     Workflow,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -46,12 +39,8 @@ def _seed_envelope(
     *, root: Path, job_slug: str, var_name: str, type_name: str, value: dict
 ) -> None:
     paths.ensure_job_layout(job_slug, root=root)
-    env = make_envelope(
-        type_name=type_name, producer_node="<test>", value_payload=value
-    )
-    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(
-        env.model_dump_json()
-    )
+    env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
+    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(env.model_dump_json())
 
 
 def _seed_loop_envelope(
@@ -65,12 +54,10 @@ def _seed_loop_envelope(
     value: dict,
 ) -> None:
     paths.ensure_job_layout(job_slug, root=root)
-    env = make_envelope(
-        type_name=type_name, producer_node="<test>", value_payload=value
+    env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
+    paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iteration, root=root).write_text(
+        env.model_dump_json()
     )
-    paths.loop_variable_envelope_path(
-        job_slug, loop_id, var_name, iteration, root=root
-    ).write_text(env.model_dump_json())
 
 
 def _fake_artifact_runner_factory(produce_payloads: dict[str, dict]):
@@ -84,9 +71,7 @@ def _fake_artifact_runner_factory(produce_payloads: dict[str, dict]):
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
-        return subprocess.CompletedProcess(
-            args=["c"], returncode=0, stdout=b"", stderr=b""
-        )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     return fake
 
@@ -157,15 +142,17 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
             job_slug, "vlist", "verdict", iter_idx, root=tmp_path
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({
-            "verdict": "approved",
-            "summary": f"iter-{iter_idx}",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
-        }))
-        return subprocess.CompletedProcess(
-            args=["c"], returncode=0, stdout=b"", stderr=b""
+        target.write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": f"iter-{iter_idx}",
+                    "unresolved_concerns": [],
+                    "addressed_in_this_iteration": [],
+                }
+            )
         )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     result = dispatch_loop(
         node=workflow.nodes[0],
@@ -180,9 +167,7 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
     assert result.iterations_run == 2
     assert len(invocations) == 2
 
-    list_env_path = paths.variable_envelope_path(
-        job_slug, "verdict_list", root=tmp_path
-    )
+    list_env_path = paths.variable_envelope_path(job_slug, "verdict_list", root=tmp_path)
     assert list_env_path.is_file()
     list_env = Envelope.model_validate_json(list_env_path.read_text())
     assert list_env.type == "list[review-verdict]"
@@ -224,9 +209,7 @@ def test_count_loop_zero_iters_produces_empty_list(tmp_path: Path) -> None:
     # the engine produces an empty list[T] but our v1 implementation
     # logs and skips when there are no element envelopes — acceptable
     # for T5 (caller's outcome doesn't expect a list when count is 0).
-    list_env_path = paths.variable_envelope_path(
-        job_slug, "verdict_list", root=tmp_path
-    )
+    list_env_path = paths.variable_envelope_path(job_slug, "verdict_list", root=tmp_path)
     if list_env_path.is_file():
         env = Envelope.model_validate_json(list_env_path.read_text())
         assert env.value == []
@@ -250,7 +233,6 @@ def test_count_loop_negative_fails(tmp_path: Path) -> None:
 def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> None:
     """T6 capability: ``count: $other-loop.var[last].count`` reads the
     typed value's count field at dispatch time."""
-    from shared.atomic import atomic_write_text
     from shared.v1.envelope import make_envelope
 
     job_slug = "j"
@@ -300,8 +282,11 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
         ],
     )
     _seed_envelope(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
-        type_name="design-spec", value={"title": "x", "overview": "y"},
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "x", "overview": "y"},
     )
 
     invocations = []
@@ -314,27 +299,30 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
         idx = len(invocations) - 1
         paths.loop_variable_envelope_path(
             job_slug, "impl", "verdict", idx, root=tmp_path
-        ).write_text(json.dumps({
-            "verdict": "approved",
-            "summary": f"i{idx}",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
-        }))
-        return subprocess.CompletedProcess(
-            args=["c"], returncode=0, stdout=b"", stderr=b""
+        ).write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": f"i{idx}",
+                    "unresolved_concerns": [],
+                    "addressed_in_this_iteration": [],
+                }
+            )
         )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     result = dispatch_loop(
-        node=workflow.nodes[0], workflow=workflow,
-        job_slug=job_slug, root=tmp_path,
-        job_repo=None, artifact_claude_runner=fake,
+        node=workflow.nodes[0],
+        workflow=workflow,
+        job_slug=job_slug,
+        root=tmp_path,
+        job_repo=None,
+        artifact_claude_runner=fake,
     )
     assert result.succeeded, result.error
     # count was resolved from impl_plan.count == 2 → 2 iters.
     assert result.iterations_run == 2
-    list_path = paths.variable_envelope_path(
-        job_slug, "verdict_list", root=tmp_path
-    )
+    list_path = paths.variable_envelope_path(job_slug, "verdict_list", root=tmp_path)
     env = Envelope.model_validate_json(list_path.read_text())
     assert len(env.value) == 2
 
@@ -362,20 +350,25 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
         idx = len(invocations) - 1
         paths.loop_variable_envelope_path(
             job_slug, "vlist", "verdict", idx, root=tmp_path
-        ).write_text(json.dumps({
-            "verdict": "approved",
-            "summary": f"i-{idx}",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
-        }))
-        return subprocess.CompletedProcess(
-            args=["c"], returncode=0, stdout=b"", stderr=b""
+        ).write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": f"i-{idx}",
+                    "unresolved_concerns": [],
+                    "addressed_in_this_iteration": [],
+                }
+            )
         )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     result = dispatch_loop(
-        node=workflow.nodes[0], workflow=workflow,
-        job_slug=job_slug, root=tmp_path,
-        job_repo=None, artifact_claude_runner=fake,
+        node=workflow.nodes[0],
+        workflow=workflow,
+        job_slug=job_slug,
+        root=tmp_path,
+        job_repo=None,
+        artifact_claude_runner=fake,
     )
     assert result.succeeded, result.error
     assert result.iterations_run == 3
@@ -455,15 +448,17 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
         inner_iter = 0
         paths.loop_variable_envelope_path(
             job_slug, "inner", "verdict", inner_iter, root=tmp_path
-        ).write_text(json.dumps({
-            "verdict": "approved",
-            "summary": f"call-{invocation_count['n']}",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
-        }))
-        return subprocess.CompletedProcess(
-            args=["c"], returncode=0, stdout=b"", stderr=b""
+        ).write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": f"call-{invocation_count['n']}",
+                    "unresolved_concerns": [],
+                    "addressed_in_this_iteration": [],
+                }
+            )
         )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     result = dispatch_loop(
         node=workflow.nodes[0],
@@ -482,13 +477,9 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
         outer_indexed = paths.loop_variable_envelope_path(
             job_slug, "outer", "verdict", k, root=tmp_path
         )
-        assert outer_indexed.is_file(), (
-            f"outer-indexed inner projection missing for k={k}"
-        )
+        assert outer_indexed.is_file(), f"outer-indexed inner projection missing for k={k}"
     # Outer's [*] aggregated list at plain path.
-    list_path = paths.variable_envelope_path(
-        job_slug, "verdict_list", root=tmp_path
-    )
+    list_path = paths.variable_envelope_path(job_slug, "verdict_list", root=tmp_path)
     assert list_path.is_file()
     env = Envelope.model_validate_json(list_path.read_text())
     assert env.type == "list[review-verdict]"
@@ -537,8 +528,11 @@ def test_per_iteration_substrate_uses_unique_node_id_per_iter(
     )
 
     _seed_envelope(
-        root=tmp_path, job_slug=job_slug, var_name="design_spec",
-        type_name="design-spec", value={"title": "t", "overview": "o"},
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "t", "overview": "o"},
     )
 
     job_repo = JobRepo(
@@ -578,10 +572,14 @@ def test_per_iteration_substrate_uses_unique_node_id_per_iter(
         # Manually seed indexed pr envelopes the [*] projector reads.
         for k in range(2):
             _seed_loop_envelope(
-                root=tmp_path, job_slug=job_slug, loop_id="impl", var_name="pr",
-                iteration=k, type_name="pr",
+                root=tmp_path,
+                job_slug=job_slug,
+                loop_id="impl",
+                var_name="pr",
+                iteration=k,
+                type_name="pr",
                 value={
-                    "url": f"https://github.com/me/repo/pull/{k+1}",
+                    "url": f"https://github.com/me/repo/pull/{k + 1}",
                     "number": k + 1,
                     "repo": "me/repo",
                     "head_branch": f"hammock/stages/j/implement-{k}",

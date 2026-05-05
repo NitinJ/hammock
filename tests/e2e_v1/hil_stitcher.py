@@ -12,7 +12,6 @@ Runs in a background thread; the test's main thread runs the driver
 
 from __future__ import annotations
 
-import json
 import logging
 import subprocess
 import threading
@@ -120,8 +119,7 @@ def merge_pr_then_confirm(
         )
         if result.returncode != 0:
             raise RuntimeError(
-                f"merge_pr_then_confirm: `gh pr merge {pr_url}` failed: "
-                f"{result.stderr.strip()}"
+                f"merge_pr_then_confirm: `gh pr merge {pr_url}` failed: {result.stderr.strip()}"
             )
 
     return {"pr_url": pr_url}
@@ -168,9 +166,7 @@ class HilStitcher:
     def start(self) -> None:
         if self._thread is not None:
             return
-        self._thread = threading.Thread(
-            target=self._loop, name="hil-stitcher", daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop, name="hil-stitcher", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -204,9 +200,7 @@ class HilStitcher:
                     continue
                 policy = self.policies.get(item.node_id)
                 if policy is None:
-                    self.errors.append(
-                        f"no answer policy registered for node {item.node_id!r}"
-                    )
+                    self.errors.append(f"no answer policy registered for node {item.node_id!r}")
                     continue
 
                 # Submit each declared output variable. Track whether
@@ -224,9 +218,7 @@ class HilStitcher:
                             var_name=var_name,
                         )
                     except Exception as exc:
-                        self.errors.append(
-                            f"policy for {item.node_id}/{var_name} raised: {exc}"
-                        )
+                        self.errors.append(f"policy for {item.node_id}/{var_name} raised: {exc}")
                         gate_succeeded = False
                         continue
                     try:
@@ -249,12 +241,15 @@ class HilStitcher:
                     self._answered.add(answer_key)
                     log.info(
                         "stitcher: answered HIL gate %s (loop=%s iter=%s)",
-                        item.node_id, item.loop_id, item.iteration,
+                        item.node_id,
+                        item.loop_id,
+                        item.iteration,
                     )
                 else:
                     log.warning(
-                        "stitcher: gate %s (loop=%s iter=%s) had errors; "
-                        "will retry on next poll",
-                        item.node_id, item.loop_id, item.iteration,
+                        "stitcher: gate %s (loop=%s iter=%s) had errors; will retry on next poll",
+                        item.node_id,
+                        item.loop_id,
+                        item.iteration,
                     )
             time.sleep(self.poll_interval)

@@ -12,8 +12,6 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-import pytest
-
 from engine.v1.artifact import dispatch_artifact_agent
 from shared.v1 import paths
 from shared.v1.envelope import Envelope, make_envelope
@@ -29,9 +27,7 @@ def _seed_request(*, root: Path, job_slug: str, text: str = "Fix the bug") -> No
         producer_node="<engine>",
         value_payload={"text": text},
     )
-    paths.variable_envelope_path(job_slug, "request", root=root).write_text(
-        env.model_dump_json()
-    )
+    paths.variable_envelope_path(job_slug, "request", root=root).write_text(env.model_dump_json())
 
 
 def _make_writer_fake(
@@ -63,9 +59,7 @@ def _make_failing_fake() -> Callable[[str, Path], subprocess.CompletedProcess[st
     def fake(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("(fake) agent crashed\n")
-        return subprocess.CompletedProcess(
-            args=["claude"], returncode=2, stdout=b"", stderr=b""
-        )
+        return subprocess.CompletedProcess(args=["claude"], returncode=2, stdout=b"", stderr=b"")
 
     return fake
 

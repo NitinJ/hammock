@@ -22,7 +22,6 @@ from shared.v1.types.protocol import (
     VariableTypeError,
 )
 
-
 _PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
 
 
@@ -82,8 +81,7 @@ class PRType:
         ):
             if not hasattr(ctx, attr):
                 raise VariableTypeError(
-                    f"`pr` produce requires NodeContext with {attr!r}; "
-                    "the node must be `code` kind"
+                    f"`pr` produce requires NodeContext with {attr!r}; the node must be `code` kind"
                 )
 
         stage_branch = ctx.stage_branch  # type: ignore[attr-defined]
@@ -115,8 +113,7 @@ class PRType:
         match = _PR_NUMBER_RE.search(url)
         if not match:
             raise VariableTypeError(
-                f"could not parse PR number from URL {url!r} (expected "
-                "pattern '/pull/<n>')"
+                f"could not parse PR number from URL {url!r} (expected pattern '/pull/<n>')"
             )
         return PRValue(
             url=url.strip(),
@@ -144,16 +141,10 @@ class PRType:
             f"**Do not run `git push` or `gh pr create` yourself.** The "
             f"engine pushes the branch and opens a PR against `{base_branch}` "
             "after your stage exits.\n"
-            + (
-                "\n_The PR will be opened as a draft._\n"
-                if decl.draft
-                else ""
-            )
+            + ("\n_The PR will be opened as a draft._\n" if decl.draft else "")
         )
 
-    def render_for_consumer(
-        self, decl: PRDecl, value: PRValue, ctx: PromptContext
-    ) -> str:
+    def render_for_consumer(self, decl: PRDecl, value: PRValue, ctx: PromptContext) -> str:
         return (
             f"### Input `{ctx.var_name}` (pr)\n\n"
             f"PR #{value.number}: {value.url}\n"

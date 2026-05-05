@@ -62,9 +62,7 @@ class ImplSpecType:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise VariableTypeError(
-                f"impl-spec at {path} is not valid JSON: {exc}"
-            ) from exc
+            raise VariableTypeError(f"impl-spec at {path} is not valid JSON: {exc}") from exc
         try:
             return ImplSpecValue.model_validate(data)
         except ValidationError as exc:

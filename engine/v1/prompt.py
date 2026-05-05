@@ -114,13 +114,9 @@ def build_prompt(
         for slot_name, slot in inputs.items():
             if not slot.present:
                 if slot.optional:
-                    parts.append(
-                        f"### Input `{slot_name}` (optional, not produced)"
-                    )
+                    parts.append(f"### Input `{slot_name}` (optional, not produced)")
                     parts.append("")
-                    parts.append(
-                        "(no upstream value yet — proceed without it)"
-                    )
+                    parts.append("(no upstream value yet — proceed without it)")
                     parts.append("")
                 continue
             # Walk back from the value to its variable type. The value can
@@ -133,9 +129,7 @@ def build_prompt(
                 if type_name:
                     type_obj = get_type(type_name)
                     ctx = _PromptCtx(var_name=slot_name, job_dir=job_dir)
-                    rendered = type_obj.render_for_consumer(
-                        type_obj.Decl(), slot.value, ctx
-                    )
+                    rendered = type_obj.render_for_consumer(type_obj.Decl(), slot.value, ctx)
                     parts.append(rendered)
                     parts.append("")
                     continue

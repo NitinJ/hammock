@@ -303,7 +303,10 @@ def test_gh_create_pr_returns_url_from_stdout(tmp_path: Path) -> None:
     )
     url = gh_create_pr(
         tmp_path,
-        head="x", base="main", title="t", body="b",
+        head="x",
+        base="main",
+        title="t",
+        body="b",
         runner=runner,
     )
     assert url == "https://github.com/me/repo/pull/42"
@@ -316,8 +319,13 @@ def test_gh_create_pr_passes_draft_flag(tmp_path: Path) -> None:
         stdout="https://github.com/me/repo/pull/1",
     )
     gh_create_pr(
-        tmp_path, head="x", base="main", title="t", body="b",
-        draft=True, runner=runner,
+        tmp_path,
+        head="x",
+        base="main",
+        title="t",
+        body="b",
+        draft=True,
+        runner=runner,
     )
     assert "--draft" in runner.calls[0].args
 
@@ -327,7 +335,11 @@ def test_gh_create_pr_failure_raises(tmp_path: Path) -> None:
     runner.expect(("gh", "pr", "create"), returncode=1, stderr="conflict")
     with pytest.raises(GhError, match="gh pr create"):
         gh_create_pr(
-            tmp_path, head="x", base="main", title="t", body="b",
+            tmp_path,
+            head="x",
+            base="main",
+            title="t",
+            body="b",
             runner=runner,
         )
 
@@ -337,6 +349,10 @@ def test_gh_create_pr_no_url_in_stdout_raises(tmp_path: Path) -> None:
     runner.expect(("gh", "pr", "create"), stdout="(silence)")
     with pytest.raises(GhError, match="no PR URL"):
         gh_create_pr(
-            tmp_path, head="x", base="main", title="t", body="b",
+            tmp_path,
+            head="x",
+            base="main",
+            title="t",
+            body="b",
             runner=runner,
         )

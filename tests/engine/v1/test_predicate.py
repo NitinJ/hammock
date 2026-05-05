@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -15,13 +14,11 @@ from engine.v1.predicate import (
 )
 from shared.v1 import paths
 from shared.v1.envelope import make_envelope
-from shared.v1.workflow import VariableSpec, Workflow
+from shared.v1.workflow import Workflow
 
 
 def _empty_workflow() -> Workflow:
-    return Workflow.model_validate(
-        {"workflow": "t", "variables": {}, "nodes": []}
-    )
+    return Workflow.model_validate({"workflow": "t", "variables": {}, "nodes": []})
 
 
 # ---------------------------------------------------------------------------
@@ -115,35 +112,30 @@ def _seed_plain_envelope(
     *, root: Path, job_slug: str, var_name: str, type_name: str, value: dict
 ) -> None:
     paths.ensure_job_layout(job_slug, root=root)
-    env = make_envelope(
-        type_name=type_name, producer_node="<test>", value_payload=value
-    )
-    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(
-        env.model_dump_json()
-    )
+    env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
+    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(env.model_dump_json())
 
 
 def test_evaluate_bare_ref_truthy_when_present(tmp_path: Path) -> None:
     _seed_plain_envelope(
-        root=tmp_path, job_slug="j", var_name="tests_pr",
+        root=tmp_path,
+        job_slug="j",
+        var_name="tests_pr",
         type_name="pr",
         value={
             "url": "https://github.com/x/y/pull/1",
-            "number": 1, "branch": "b", "base": "bb", "repo": "x/y",
+            "number": 1,
+            "branch": "b",
+            "base": "bb",
+            "repo": "x/y",
         },
     )
-    assert (
-        evaluate("$tests_pr", workflow=_empty_workflow(), job_slug="j", root=tmp_path)
-        is True
-    )
+    assert evaluate("$tests_pr", workflow=_empty_workflow(), job_slug="j", root=tmp_path) is True
 
 
 def test_evaluate_bare_ref_falsy_when_absent(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
-    assert (
-        evaluate("$missing", workflow=_empty_workflow(), job_slug="j", root=tmp_path)
-        is False
-    )
+    assert evaluate("$missing", workflow=_empty_workflow(), job_slug="j", root=tmp_path) is False
 
 
 # ---------------------------------------------------------------------------
@@ -162,28 +154,32 @@ def _seed_loop_envelope(
     value: dict,
 ) -> None:
     paths.ensure_job_layout(job_slug, root=root)
-    env = make_envelope(
-        type_name=type_name, producer_node="<test>", value_payload=value
+    env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
+    paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iteration, root=root).write_text(
+        env.model_dump_json()
     )
-    paths.loop_variable_envelope_path(
-        job_slug, loop_id, var_name, iteration, root=root
-    ).write_text(env.model_dump_json())
 
 
 def test_evaluate_loop_i_at_current_iteration(tmp_path: Path) -> None:
     _seed_loop_envelope(
-        root=tmp_path, job_slug="j", loop_id="L", var_name="r",
+        root=tmp_path,
+        job_slug="j",
+        loop_id="L",
+        var_name="r",
         iteration=0,
         type_name="review-verdict",
         value={
-            "verdict": "merged", "summary": "ok",
+            "verdict": "merged",
+            "summary": "ok",
             "unresolved_concerns": [],
             "addressed_in_this_iteration": [],
         },
     )
     ok = evaluate(
         "$L.r[i].verdict == 'merged'",
-        workflow=_empty_workflow(), job_slug="j", root=tmp_path,
+        workflow=_empty_workflow(),
+        job_slug="j",
+        root=tmp_path,
         current_iteration=0,
     )
     assert ok is True
@@ -197,7 +193,9 @@ def test_evaluate_loop_i_minus_1_on_first_iter_returns_false(
     paths.ensure_job_layout("j", root=tmp_path)
     ok = evaluate(
         "$L.r[i-1].verdict == 'merged'",
-        workflow=_empty_workflow(), job_slug="j", root=tmp_path,
+        workflow=_empty_workflow(),
+        job_slug="j",
+        root=tmp_path,
         current_iteration=0,
     )
     assert ok is False
@@ -207,36 +205,48 @@ def test_evaluate_loop_last_finds_highest_iteration(tmp_path: Path) -> None:
     """`[last]` reads the highest iteration's envelope."""
     for i, v in enumerate(["needs-revision", "merged"]):
         _seed_loop_envelope(
-            root=tmp_path, job_slug="j", loop_id="L", var_name="r",
+            root=tmp_path,
+            job_slug="j",
+            loop_id="L",
+            var_name="r",
             iteration=i,
             type_name="review-verdict",
             value={
-                "verdict": v, "summary": "x",
+                "verdict": v,
+                "summary": "x",
                 "unresolved_concerns": [],
                 "addressed_in_this_iteration": [],
             },
         )
     ok = evaluate(
         "$L.r[last].verdict == 'merged'",
-        workflow=_empty_workflow(), job_slug="j", root=tmp_path,
+        workflow=_empty_workflow(),
+        job_slug="j",
+        root=tmp_path,
     )
     assert ok is True
 
 
 def test_evaluate_neq_on_string(tmp_path: Path) -> None:
     _seed_loop_envelope(
-        root=tmp_path, job_slug="j", loop_id="L", var_name="r",
+        root=tmp_path,
+        job_slug="j",
+        loop_id="L",
+        var_name="r",
         iteration=0,
         type_name="review-verdict",
         value={
-            "verdict": "needs-revision", "summary": "x",
+            "verdict": "needs-revision",
+            "summary": "x",
             "unresolved_concerns": [],
             "addressed_in_this_iteration": [],
         },
     )
     ok = evaluate(
         "$L.r[i].verdict != 'merged'",
-        workflow=_empty_workflow(), job_slug="j", root=tmp_path,
+        workflow=_empty_workflow(),
+        job_slug="j",
+        root=tmp_path,
         current_iteration=0,
     )
     assert ok is True
@@ -249,7 +259,9 @@ def test_evaluate_neq_on_string(tmp_path: Path) -> None:
 
 def test_evaluate_missing_field_returns_falsy(tmp_path: Path) -> None:
     _seed_plain_envelope(
-        root=tmp_path, job_slug="j", var_name="report",
+        root=tmp_path,
+        job_slug="j",
+        var_name="report",
         type_name="bug-report",
         value={"summary": "x"},
     )
@@ -257,7 +269,9 @@ def test_evaluate_missing_field_returns_falsy(tmp_path: Path) -> None:
     assert (
         evaluate(
             "$report.no_such_field == 'x'",
-            workflow=_empty_workflow(), job_slug="j", root=tmp_path,
+            workflow=_empty_workflow(),
+            job_slug="j",
+            root=tmp_path,
         )
         is False
     )

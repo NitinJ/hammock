@@ -62,9 +62,7 @@ def node_runs_dir(job_slug: str, node_id: str, *, root: Path) -> Path:
     return node_dir(job_slug, node_id, root=root) / "runs"
 
 
-def node_attempt_dir(
-    job_slug: str, node_id: str, attempt: int, *, root: Path
-) -> Path:
+def node_attempt_dir(job_slug: str, node_id: str, attempt: int, *, root: Path) -> Path:
     return node_runs_dir(job_slug, node_id, root=root) / str(attempt)
 
 

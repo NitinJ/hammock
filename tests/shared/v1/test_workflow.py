@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from shared.v1.workflow import ArtifactNode, CodeNode, VariableSpec, Workflow
 
-
 # ---------------------------------------------------------------------------
 # VariableSpec
 # ---------------------------------------------------------------------------

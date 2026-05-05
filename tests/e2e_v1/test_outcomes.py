@@ -74,9 +74,7 @@ def _seed_envelope(
         producer_node="<test>",
         value_payload=value,
     )
-    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(
-        env.model_dump_json()
-    )
+    paths.variable_envelope_path(job_slug, var_name, root=root).write_text(env.model_dump_json())
 
 
 def _seed_node_run(
@@ -135,23 +133,32 @@ def test_job_completed_fails_when_config_missing(tmp_path: Path) -> None:
 
 def test_all_outputs_produced_passes(tmp_path: Path) -> None:
     _seed_envelope(
-        root=tmp_path, job_slug="j", var_name="bug_report",
-        type_name="bug-report", value={"summary": "x"},
+        root=tmp_path,
+        job_slug="j",
+        var_name="bug_report",
+        type_name="bug-report",
+        value={"summary": "x"},
     )
     _seed_envelope(
-        root=tmp_path, job_slug="j", var_name="design_spec",
-        type_name="design-spec", value={"title": "t", "overview": "o"},
+        root=tmp_path,
+        job_slug="j",
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "t", "overview": "o"},
     )
     assert_all_declared_outputs_produced(tmp_path, "j", _t1_workflow())
 
 
 def test_all_outputs_produced_fails_when_one_missing(tmp_path: Path) -> None:
     _seed_envelope(
-        root=tmp_path, job_slug="j", var_name="bug_report",
-        type_name="bug-report", value={"summary": "x"},
+        root=tmp_path,
+        job_slug="j",
+        var_name="bug_report",
+        type_name="bug-report",
+        value={"summary": "x"},
     )
     # design_spec missing
-    with pytest.raises(AssertionError, match="design_spec.*missing"):
+    with pytest.raises(AssertionError, match=r"design_spec.*missing"):
         assert_all_declared_outputs_produced(tmp_path, "j", _t1_workflow())
 
 
@@ -181,17 +188,18 @@ def test_all_outputs_produced_ignores_optional_missing(tmp_path: Path) -> None:
 
 def test_envelopes_well_formed_passes(tmp_path: Path) -> None:
     _seed_envelope(
-        root=tmp_path, job_slug="j", var_name="bug_report",
-        type_name="bug-report", value={"summary": "x"},
+        root=tmp_path,
+        job_slug="j",
+        var_name="bug_report",
+        type_name="bug-report",
+        value={"summary": "x"},
     )
     assert_envelopes_well_formed(tmp_path, "j", _t1_workflow())
 
 
 def test_envelopes_well_formed_fails_on_corrupt_json(tmp_path: Path) -> None:
     paths.ensure_job_layout("j", root=tmp_path)
-    paths.variable_envelope_path("j", "bug_report", root=tmp_path).write_text(
-        "{ broken"
-    )
+    paths.variable_envelope_path("j", "bug_report", root=tmp_path).write_text("{ broken")
     with pytest.raises(AssertionError, match="schema validation"):
         assert_envelopes_well_formed(tmp_path, "j", _t1_workflow())
 
@@ -200,7 +208,9 @@ def test_envelopes_well_formed_fails_on_type_mismatch(tmp_path: Path) -> None:
     """An envelope claims one type, but the workflow declared another for
     that variable name."""
     _seed_envelope(
-        root=tmp_path, job_slug="j", var_name="bug_report",
+        root=tmp_path,
+        job_slug="j",
+        var_name="bug_report",
         type_name="design-spec",  # WRONG
         value={"title": "t", "overview": "o"},
     )
@@ -210,7 +220,9 @@ def test_envelopes_well_formed_fails_on_type_mismatch(tmp_path: Path) -> None:
 
 def test_envelopes_well_formed_fails_on_invalid_value_payload(tmp_path: Path) -> None:
     _seed_envelope(
-        root=tmp_path, job_slug="j", var_name="bug_report",
+        root=tmp_path,
+        job_slug="j",
+        var_name="bug_report",
         type_name="bug-report",
         value={"summary": ""},  # empty summary violates min_length=1
     )
@@ -226,7 +238,9 @@ def test_envelopes_well_formed_fails_on_invalid_value_payload(tmp_path: Path) ->
 def test_all_nodes_succeeded_passes(tmp_path: Path) -> None:
     for node_id in ("write-bug-report", "write-design-spec"):
         _seed_node_run(
-            root=tmp_path, job_slug="j", node_id=node_id,
+            root=tmp_path,
+            job_slug="j",
+            node_id=node_id,
             state=NodeRunState.SUCCEEDED,
         )
     assert_all_nodes_succeeded_or_skipped(tmp_path, "j", _t1_workflow())
@@ -234,7 +248,9 @@ def test_all_nodes_succeeded_passes(tmp_path: Path) -> None:
 
 def test_all_nodes_fails_on_failed_node(tmp_path: Path) -> None:
     _seed_node_run(
-        root=tmp_path, job_slug="j", node_id="write-bug-report",
+        root=tmp_path,
+        job_slug="j",
+        node_id="write-bug-report",
         state=NodeRunState.FAILED,
     )
     with pytest.raises(AssertionError, match="state failed"):
@@ -257,11 +273,15 @@ def test_all_nodes_fails_when_state_file_missing_for_unconditional_node(
 
 def test_node_artefacts_present_passes(tmp_path: Path) -> None:
     _seed_node_run(
-        root=tmp_path, job_slug="j", node_id="write-bug-report",
+        root=tmp_path,
+        job_slug="j",
+        node_id="write-bug-report",
         state=NodeRunState.SUCCEEDED,
     )
     _seed_node_run(
-        root=tmp_path, job_slug="j", node_id="write-design-spec",
+        root=tmp_path,
+        job_slug="j",
+        node_id="write-design-spec",
         state=NodeRunState.SUCCEEDED,
     )
     assert_node_artefacts_present(tmp_path, "j", _t1_workflow())
@@ -269,13 +289,17 @@ def test_node_artefacts_present_passes(tmp_path: Path) -> None:
 
 def test_node_artefacts_fails_on_missing_prompt(tmp_path: Path) -> None:
     _seed_node_run(
-        root=tmp_path, job_slug="j", node_id="write-bug-report",
+        root=tmp_path,
+        job_slug="j",
+        node_id="write-bug-report",
         state=NodeRunState.SUCCEEDED,
     )
     # delete prompt.md
     (paths.node_attempt_dir("j", "write-bug-report", 1, root=tmp_path) / "prompt.md").unlink()
     _seed_node_run(
-        root=tmp_path, job_slug="j", node_id="write-design-spec",
+        root=tmp_path,
+        job_slug="j",
+        node_id="write-design-spec",
         state=NodeRunState.SUCCEEDED,
     )
     with pytest.raises(AssertionError, match="missing artefact"):
