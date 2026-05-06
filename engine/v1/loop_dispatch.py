@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from engine.v1 import predicate
@@ -51,6 +52,7 @@ from engine.v1.substrate import (
 from shared.atomic import atomic_write_text
 from shared.v1 import paths
 from shared.v1.envelope import Envelope, make_envelope
+from shared.v1.job import NodeRun, NodeRunState
 from shared.v1.workflow import (
     ArtifactNode,
     CodeNode,
@@ -299,6 +301,8 @@ def _dispatch_body_node(
 ) -> _BodyDispatchOk:
     if isinstance(body_node, LoopNode):
         # Nested loop: recurse with parent context = this loop's iter.
+        # Body-node state.json doesn't apply here — the inner loop's own
+        # body dispatches will handle their own persistence.
         result = dispatch_loop(
             node=body_node,
             workflow=workflow,
@@ -313,24 +317,54 @@ def _dispatch_body_node(
         )
         return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
 
+    # Mark RUNNING on entry. state.json is overwritten per iteration —
+    # the dashboard's per-iter row state is refined client-side using
+    # envelope existence, but the underlying row needs *some* state file
+    # to exist so /api/jobs/{slug}/nodes/{id} doesn't 404.
+    attempts = iteration + 1
+    _persist_body_state(
+        job_slug=job_slug,
+        node_id=body_node.id,
+        root=root,
+        state=NodeRunState.RUNNING,
+        attempts=attempts,
+        started=True,
+    )
+
     if isinstance(body_node, CodeNode):
         if code_substrate is None:
+            _persist_body_state(
+                job_slug=job_slug,
+                node_id=body_node.id,
+                root=root,
+                state=NodeRunState.FAILED,
+                attempts=attempts,
+                last_error="no substrate allocated for code body node",
+            )
             return _BodyDispatchOk(
                 succeeded=False,
                 error=(f"loop body has code node {body_node.id!r} but no substrate was allocated"),
             )
-        result = dispatch_code_agent(
+        code_result = dispatch_code_agent(
             node=body_node,
             workflow=workflow,
             job_slug=job_slug,
             root=root,
             substrate=code_substrate,
-            attempt=iteration + 1,
+            attempt=attempts,
             claude_runner=code_claude_runner,
             loop_id=loop_node.id,
             iteration=iteration,
         )
-        return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
+        _persist_body_state(
+            job_slug=job_slug,
+            node_id=body_node.id,
+            root=root,
+            state=NodeRunState.SUCCEEDED if code_result.succeeded else NodeRunState.FAILED,
+            attempts=attempts,
+            last_error=None if code_result.succeeded else code_result.error,
+        )
+        return _BodyDispatchOk(succeeded=code_result.succeeded, error=code_result.error)
 
     # Artifact body node — agent or human actor.
     if body_node.actor == "human":
@@ -351,10 +385,25 @@ def _dispatch_body_node(
             timeout_seconds=hil_timeout_seconds,
         )
         if not ok:
+            _persist_body_state(
+                job_slug=job_slug,
+                node_id=body_node.id,
+                root=root,
+                state=NodeRunState.FAILED,
+                attempts=attempts,
+                last_error="timed out waiting for human submission",
+            )
             return _BodyDispatchOk(
                 succeeded=False,
                 error=(f"loop body {body_node.id!r} timed out waiting for HIL submission"),
             )
+        _persist_body_state(
+            job_slug=job_slug,
+            node_id=body_node.id,
+            root=root,
+            state=NodeRunState.SUCCEEDED,
+            attempts=attempts,
+        )
         return _BodyDispatchOk(succeeded=True)
 
     # Artifact + agent.
@@ -363,12 +412,69 @@ def _dispatch_body_node(
         workflow=workflow,
         job_slug=job_slug,
         root=root,
-        attempt=iteration + 1,
+        attempt=attempts,
         claude_runner=artifact_claude_runner,
         loop_id=loop_node.id,
         iteration=iteration,
     )
+    _persist_body_state(
+        job_slug=job_slug,
+        node_id=body_node.id,
+        root=root,
+        state=NodeRunState.SUCCEEDED if result.succeeded else NodeRunState.FAILED,
+        attempts=attempts,
+        last_error=None if result.succeeded else result.error,
+    )
     return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
+
+
+def _persist_body_state(
+    *,
+    job_slug: str,
+    node_id: str,
+    root: Path,
+    state: NodeRunState,
+    attempts: int,
+    last_error: str | None = None,
+    started: bool = False,
+) -> None:
+    """Write/overwrite ``nodes/<node_id>/state.json`` for a loop body node.
+
+    Per ``docs/projects-management.md``-era dashboard contract: the
+    dashboard's per-node detail endpoint (``GET /api/jobs/{slug}/nodes/
+    {id}``) reads this file. Without it, clicking a body row 404s and
+    the row appears stuck pending. The file reflects the *latest*
+    iteration; per-iter row state is refined client-side from envelope
+    existence."""
+    sp = paths.node_state_path(job_slug, node_id, root=root)
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+
+    # Preserve started_at across iterations so the dashboard timestamp
+    # reflects when the engine first reached this body node.
+    started_at: datetime | None = now if started else None
+    finished_at: datetime | None = (
+        now
+        if state in {NodeRunState.SUCCEEDED, NodeRunState.FAILED, NodeRunState.SKIPPED}
+        else None
+    )
+    if sp.is_file():
+        try:
+            existing = NodeRun.model_validate_json(sp.read_text())
+        except Exception:
+            existing = None
+        if existing is not None:
+            started_at = existing.started_at or started_at
+
+    nr = NodeRun(
+        node_id=node_id,
+        state=state,
+        attempts=attempts,
+        last_error=last_error,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+    atomic_write_text(sp, nr.model_dump_json(indent=2))
 
 
 # ---------------------------------------------------------------------------

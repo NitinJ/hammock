@@ -175,6 +175,65 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
     assert list_env.value[1]["summary"] == "iter-1"
 
 
+def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> None:
+    """Loop body nodes must write ``nodes/<id>/state.json`` (overwritten
+    per iteration) so the dashboard's per-node detail endpoint has
+    something to return.
+
+    Bug: top-level nodes get state.json from the driver's main loop,
+    but body nodes are dispatched only by ``_dispatch_body_node`` which
+    didn't persist state. Result: clicking a succeeded body row 404'd
+    and the row showed pending forever.
+    """
+    job_slug = "j"
+    _seed_envelope(
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "x", "overview": "y"},
+    )
+    workflow = _count_loop_workflow_simple()
+
+    def fake_runner(prompt: str, attempt_dir: Path):
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "stderr.log").write_text("")
+        # write body envelope at the iter path
+        envs = list(paths.variables_dir(job_slug, root=tmp_path).glob("loop_vlist_verdict_*.json"))
+        iter_idx = len(envs)
+        target = paths.loop_variable_envelope_path(
+            job_slug, "vlist", "verdict", iter_idx, root=tmp_path
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"verdict": "approved", "summary": f"iter-{iter_idx}"}))
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    result = dispatch_loop(
+        node=workflow.nodes[0],
+        workflow=workflow,
+        job_slug=job_slug,
+        root=tmp_path,
+        job_repo=None,
+        artifact_claude_runner=fake_runner,
+    )
+    assert result.succeeded, result.error
+
+    state_path = paths.node_state_path(job_slug, "pick", root=tmp_path)
+    assert state_path.is_file(), (
+        f"loop body node 'pick' should have nodes/<id>/state.json after "
+        f"successful dispatch; not found at {state_path}"
+    )
+    from shared.v1.job import NodeRun, NodeRunState
+
+    nr = NodeRun.model_validate_json(state_path.read_text())
+    assert nr.node_id == "pick"
+    assert nr.state == NodeRunState.SUCCEEDED
+    # State.json reflects the latest iteration; for a count-of-2 loop,
+    # attempts is 2.
+    assert nr.attempts == 2
+
+
 def test_count_loop_zero_iters_produces_empty_list(tmp_path: Path) -> None:
     """count: 0 → body never runs → [*] projection writes an empty
     list[T] envelope."""
