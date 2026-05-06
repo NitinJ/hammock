@@ -34,10 +34,10 @@ export interface JobListItem {
   repo_slug: string | null;
 }
 
-/** Top-level rows have iter=[] and parent_loop_id=null. Rows inside
- *  loops have iter=[i] (one int per nesting level) and parent_loop_id
- *  set to the innermost enclosing loop. Loop nodes themselves are not
- *  emitted. */
+/** Top-level rows have iter=[], loop_path=[], parent_loop_id=null.
+ *  Rows inside loops have iter=[i] (one int per nesting level),
+ *  loop_path=[loop_id] parallel to iter, parent_loop_id = innermost
+ *  enclosing loop. Loop nodes themselves are not emitted. */
 export interface NodeListEntry {
   node_id: string;
   kind: NodeKind | null;
@@ -48,6 +48,7 @@ export interface NodeListEntry {
   started_at: string | null;
   finished_at: string | null;
   iter: number[];
+  loop_path: string[];
   parent_loop_id: string | null;
 }
 

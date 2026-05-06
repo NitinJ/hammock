@@ -33,7 +33,7 @@
               class="px-3 py-1 text-xs uppercase text-text-secondary"
               :style="{ paddingLeft: `${0.75 + row.depth * 1.25}rem` }"
             >
-              iter {{ row.label }}
+              {{ row.label }}
             </li>
             <li
               v-else
@@ -137,7 +137,19 @@
           <div v-else class="text-xs text-text-secondary">No outputs produced yet.</div>
         </div>
         <div v-else-if="nodeDetail.isPending.value" class="text-text-secondary">Loading…</div>
-        <div v-else class="text-text-secondary">No on-disk state for this node yet.</div>
+        <div v-else-if="isNodeNotStartedError" class="space-y-2">
+          <div class="text-text-secondary">
+            <span class="font-mono text-sm text-text-primary">{{ selectedNodeId }}</span>
+            <span v-if="iterParam.length > 0"> · iter [{{ iterParam.join(", ") }}]</span>
+          </div>
+          <p class="text-text-secondary">
+            Not started yet. The engine writes node state on first dispatch — once it reaches this
+            node, detail and outputs will show here.
+          </p>
+        </div>
+        <div v-else class="text-red-400">
+          Failed to load node detail: {{ nodeDetail.error.value?.message ?? "unknown error" }}
+        </div>
       </main>
     </div>
   </section>
@@ -146,6 +158,7 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import { ApiError } from "@/api/client";
 import { useAnswerExplicitHil, useHilQueue, useJob, useNodeDetail } from "@/api/queries";
 import type { HilQueueItem, NodeListEntry } from "@/api/schema.d";
 import StateBadge from "@/components/shared/StateBadge.vue";
@@ -221,6 +234,16 @@ async function submitExplicit(varName: string, value: Record<string, string>): P
 const hasOutputs = computed(() => {
   const d = nodeDetail.data.value;
   return !!d && Object.keys(d.outputs ?? {}).length > 0;
+});
+
+/** Distinguish "node hasn't been dispatched yet" (404) from real failures.
+ *  Loop body rows always render in the left pane (so the operator sees
+ *  workflow structure upfront) but the engine only writes
+ *  ``nodes/<id>/state.json`` on first dispatch — clicking a not-yet-run
+ *  row 404s. Surface a friendly placeholder for that case. */
+const isNodeNotStartedError = computed(() => {
+  const err = nodeDetail.error.value;
+  return err instanceof ApiError && err.status === 404;
 });
 
 function formatDate(iso: string): string {
