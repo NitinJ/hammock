@@ -12,6 +12,7 @@
     "format": "prettier --check \"src/**/*.{ts,vue}\"",
     "format:fix": "prettier --write \"src/**/*.{ts,vue}\"",
     "type-check": "vue-tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
     "schema:sync": "openapi-typescript http://localhost:8765/openapi.json -o src/api/schema.d.ts"
   },
   "dependencies": {
