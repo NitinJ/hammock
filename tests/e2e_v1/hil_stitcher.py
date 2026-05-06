@@ -13,6 +13,7 @@ Runs in a background thread; the test's main thread runs the driver
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import threading
 import time
@@ -65,25 +66,17 @@ def merge_pr_then_submit_review(
     The stitcher first ensures the PR is actually merged on GitHub
     (idempotent) so the engine's verification succeeds.
     """
-    # Find the pr envelope this iteration produced — look for the
-    # loop-indexed `pr` envelope first; fall back to plain.
-    pr_url: str | None = None
-    if pending.loop_id is not None and pending.iteration is not None:
-        pr_path = paths.loop_variable_envelope_path(
-            job_slug, pending.loop_id, "pr", pending.iteration, root=root
-        )
-        if pr_path.is_file():
-            pr_env = Envelope.model_validate_json(pr_path.read_text())
-            pr_url = pr_env.value.get("url")
-    if pr_url is None:
-        plain_pr = paths.variable_envelope_path(job_slug, "pr", root=root)
-        if plain_pr.is_file():
-            pr_env = Envelope.model_validate_json(plain_pr.read_text())
-            pr_url = pr_env.value.get("url")
+    # Find the pr envelope referenced by this node's inputs. The HIL
+    # node may declare its upstream `pr`-typed input under any name
+    # (e.g. ``$pr-merged-loop.pr[i]`` inside the loop, or ``$tests_pr``
+    # at top level). We walk the node's declared inputs to find the
+    # one that resolves to a `pr`-typed variable, then read its
+    # envelope (loop-indexed when applicable).
+    pr_url = _find_pr_url_for_node(pending=pending, workflow=workflow, job_slug=job_slug, root=root)
     if pr_url is None:
         raise RuntimeError(
-            f"merge_pr_then_submit_review: no `pr` envelope found for node "
-            f"{pending.node_id!r} (loop_id={pending.loop_id!r}, "
+            f"merge_pr_then_submit_review: no `pr`-typed input envelope "
+            f"found for node {pending.node_id!r} (loop_id={pending.loop_id!r}, "
             f"iteration={pending.iteration!r})"
         )
 
@@ -115,6 +108,86 @@ def merge_pr_then_submit_review(
 
     # Submission shape per pr-review-verdict: just the verdict.
     return {"verdict": "merged"}
+
+
+def _find_pr_url_for_node(
+    *,
+    pending: PendingHil,
+    workflow: Workflow,
+    job_slug: str,
+    root: Path,
+) -> str | None:
+    """Resolve the upstream PR url for a HIL node by walking its inputs.
+
+    The HIL node's input may reference a top-level pr variable
+    (``$tests_pr``) or a loop-indexed one (``$pr-merged-loop.pr[i]``).
+    We walk ``node.inputs``, keep only inputs whose target variable's
+    type is ``pr``, and read the matching envelope.
+    """
+    node = _find_node_by_id(workflow, pending.node_id)
+    if node is None:
+        return None
+
+    for _input_name, ref in (node.inputs or {}).items():
+        var_name, idx_form = _parse_pr_ref(ref)
+        if var_name is None:
+            continue
+        if workflow.variables.get(var_name, _Sentinel()).type != "pr":
+            continue
+        # Loop-indexed reference like ``$loop-id.pr[i]`` resolves
+        # against the pending marker's iteration.
+        if idx_form is not None:
+            loop_id = ref.lstrip("$").split(".", 1)[0]
+            if pending.iteration is None:
+                continue
+            iter_idx = pending.iteration if idx_form == "i" else pending.iteration - 1
+            if iter_idx < 0:
+                continue
+            env_path = paths.loop_variable_envelope_path(
+                job_slug, loop_id, var_name, iter_idx, root=root
+            )
+        else:
+            env_path = paths.variable_envelope_path(job_slug, var_name, root=root)
+        if env_path.is_file():
+            env = Envelope.model_validate_json(env_path.read_text())
+            url = env.value.get("url") if isinstance(env.value, dict) else None
+            if isinstance(url, str) and url:
+                return url
+    return None
+
+
+def _find_node_by_id(workflow: Workflow, node_id: str):  # type: ignore[no-untyped-def]
+    """DFS through workflow.nodes (top-level + loop bodies) for an id."""
+    stack: list[Any] = list(workflow.nodes)
+    while stack:
+        node = stack.pop()
+        if getattr(node, "id", None) == node_id:
+            return node
+        for inner in getattr(node, "body", []) or []:
+            stack.append(inner)
+    return None
+
+
+_PLAIN_REF = re.compile(r"^\$([A-Za-z][A-Za-z0-9_-]*)$")
+_LOOP_REF = re.compile(r"^\$([A-Za-z][A-Za-z0-9_-]*)\.([A-Za-z][A-Za-z0-9_-]*)\[(i|i-1|last)\]$")
+
+
+def _parse_pr_ref(ref: str) -> tuple[str | None, str | None]:
+    """Parse a $var or $loop.var[idx] reference. Returns
+    (var_name, idx_form) where idx_form is None for plain refs,
+    "i"/"i-1"/"last" for loop-indexed refs, or (None, None) on miss."""
+    text = ref.strip()
+    m = _LOOP_REF.match(text)
+    if m is not None:
+        return m.group(2), m.group(3)
+    m = _PLAIN_REF.match(text)
+    if m is not None:
+        return m.group(1), None
+    return None, None
+
+
+class _Sentinel:
+    type = ""
 
 
 # Back-compat alias (some test wiring may still import the old name);
