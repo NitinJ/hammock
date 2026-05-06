@@ -57,12 +57,16 @@ def _format_change(change: CacheChange, scope: str) -> str:
     }
     if classified.job_slug is not None:
         data["job_slug"] = classified.job_slug
-    if classified.stage_id is not None:
-        data["stage_id"] = classified.stage_id
+    if classified.node_id is not None:
+        data["node_id"] = classified.node_id
+    if classified.var_name is not None:
+        data["var_name"] = classified.var_name
+    if classified.loop_id is not None:
+        data["loop_id"] = classified.loop_id
+    if classified.iteration is not None:
+        data["iteration"] = classified.iteration
     if classified.project_slug is not None:
         data["project_slug"] = classified.project_slug
-    if classified.hil_id is not None:
-        data["hil_id"] = classified.hil_id
     # Stage 12.5 (A4): emit as unnamed event (no ``event:`` line) so the browser
     # fires ``EventSource.onmessage``.  Named events only reach ``addEventListener``
     # listeners, which the frontend does not register.
@@ -257,16 +261,16 @@ async def sse_job(request: Request, job_slug: str) -> StreamingResponse:
     )
 
 
-@router.get("/sse/stage/{job_slug}/{stage_id}")
-async def sse_stage(request: Request, job_slug: str, stage_id: str) -> StreamingResponse:
-    """Stage-scoped events — the high-volume stream fed by the Agent0 pane."""
+@router.get("/sse/node/{job_slug}/{node_id}")
+async def sse_node(request: Request, job_slug: str, node_id: str) -> StreamingResponse:
+    """Node-scoped events — drilldown stream for one node-execution."""
     pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
     events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
     root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
     return _sse_response(
         _event_stream(
             request,
-            f"stage:{job_slug}:{stage_id}",
+            f"node:{job_slug}/{node_id}",
             pubsub,
             root,
             _parse_last_event_id(request),

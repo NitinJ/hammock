@@ -1,21 +1,10 @@
-"""HIL plane — domain layer.
+"""HIL plane — Stage 3 v1 cutover.
 
-Per design doc § HIL bridge § HIL lifecycle. Three modules:
+The v0 contract / state-machine / orphan-sweeper code is gone. v1 HIL
+flows through ``engine/v1/hil.submit_hil_answer``; the dashboard's
+``api/hil.py`` is a thin wrapper over it.
 
-- ``state_machine``: pure transition logic, no I/O.
-- ``contract``: ``HilContract`` exposes ``get_open_items`` and ``submit_answer``
-  as a thin layer over the cache + filesystem.
-- ``orphan_sweeper``: cancels all ``awaiting`` HIL items for a stage on restart.
+The remaining v0-shaped modules (``orphan_sweeper.py``,
+``state_machine.py``, ``template_registry.py``) are dead code that the
+Stage 6 frontend rewrite retires; this PR no longer re-exports them.
 """
-
-from dashboard.hil.contract import HilContract, HilFilter
-from dashboard.hil.orphan_sweeper import OrphanSweeper
-from dashboard.hil.state_machine import InvalidTransitionError, transition
-
-__all__ = [
-    "HilContract",
-    "HilFilter",
-    "InvalidTransitionError",
-    "OrphanSweeper",
-    "transition",
-]

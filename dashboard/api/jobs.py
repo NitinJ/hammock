@@ -1,8 +1,7 @@
 """Job endpoints: list, detail, and submit.
 
-Per design doc § Presentation plane § URL topology. Stage 9 ships ``GET``
-endpoints; Stage 14 adds ``POST /api/jobs`` (compile + spawn driver).
-Cancel / restart / chat POST sub-resources land in Stage 15.
+Per impl-patch §Stage 3: every handler reads disk directly via the
+pure-function projections in ``dashboard.state.projections``. No cache.
 """
 
 from __future__ import annotations
@@ -21,7 +20,8 @@ from dashboard.driver.lifecycle import spawn_driver
 from dashboard.state import projections
 from dashboard.state.projections import JobDetail, JobListItem
 from shared import paths
-from shared.models import JobState, ProjectConfig
+from shared.models import ProjectConfig
+from shared.v1.job import JobState
 
 log = logging.getLogger(__name__)
 
@@ -58,17 +58,17 @@ class JobSubmitResponse(BaseModel):
 @router.get("", response_model=list[JobListItem])
 async def list_jobs(
     request: Request,
-    project: Annotated[str | None, Query(description="filter by project slug")] = None,
-    status: Annotated[JobState | None, Query(description="filter by job state")] = None,
+    repo_slug: Annotated[str | None, Query(description="filter by repo slug (owner/repo)")] = None,
+    state: Annotated[JobState | None, Query(description="filter by job state")] = None,
 ) -> list[JobListItem]:
-    cache = request.app.state.cache  # type: ignore[attr-defined]
-    return projections.job_list(cache, project_slug=project, status=status)
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    return projections.job_list(settings.root, repo_slug=repo_slug, state=state)
 
 
 @router.get("/{job_slug}", response_model=JobDetail)
 async def get_job(request: Request, job_slug: str) -> JobDetail:
-    cache = request.app.state.cache  # type: ignore[attr-defined]
-    detail = projections.job_detail(cache, job_slug)
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    detail = projections.job_detail(settings.root, job_slug)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"job {job_slug!r} not found")
     return detail
@@ -94,12 +94,6 @@ async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitRespo
         )
 
     if not result.dry_run:
-        # v0 alignment Plan #2 + #8: create the per-job branch in the
-        # project's repo before spawning the driver. Best-effort: if the
-        # repo isn't a real git repo (some test fixtures point at fake
-        # paths), log a warning and continue. For a registered real
-        # repo, surface git failures as a structured 500 so the
-        # operator sees them (Codex review of PR #24, MEDIUM 2).
         try:
             _create_job_branch_best_effort(
                 project_slug=body.project_slug,
@@ -136,23 +130,14 @@ def _create_job_branch_best_effort(
 ) -> None:
     """Read project.json + create ``hammock/jobs/<slug>`` in the repo.
 
-    Codex review of PR #24 narrowed the best-effort posture: only the
-    "this isn't a git repo at all" case is silenced (synthetic test
-    fixtures, v0 fake-fixture flows). Real git failures against a
-    *registered* repo (permissions, refs/locks, disk-full) propagate
-    so the operator can act on them — silent degradation to
-    unisolated execution is the wrong default for a real job.
-
     Silenced (logged, not raised):
-
     - project.json missing or unreadable.
     - repo_path doesn't exist on disk.
     - repo_path isn't a git repo (no ``.git/``).
 
     Propagates:
-
     - Any ``CalledProcessError`` from ``git branch`` against an
-      otherwise-valid registered repo (the operator needs to see it).
+      otherwise-valid registered repo.
     """
     try:
         project = ProjectConfig.model_validate_json(
@@ -175,5 +160,4 @@ def _create_job_branch_best_effort(
         )
         return
 
-    # Real registered repo: any git failure here is operator-actionable.
     create_job_branch(repo, job_slug, base=project.default_branch)

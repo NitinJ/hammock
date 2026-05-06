@@ -185,14 +185,14 @@ def _jsonl_paths_for_scope(scope: str, *, root: Path) -> list[Path]:
     constrain the scope shape via path parameters; an internal caller
     that constructs an unsupported scope string will see this exception.
     """
-    from shared import paths as _paths  # local import avoids dashboard→shared→dashboard cycle
+    from shared.v1 import paths as _v1paths
 
     if scope == "global":
-        jdir = _paths.jobs_dir(root=root)
+        jdir = _v1paths.jobs_dir(root=root)
         if not jdir.exists():
             return []
         return [
-            _paths.job_events_jsonl(job_dir.name, root=root)
+            _v1paths.events_jsonl(job_dir.name, root=root)
             for job_dir in sorted(jdir.iterdir())
             if job_dir.is_dir()
         ]
@@ -200,14 +200,18 @@ def _jsonl_paths_for_scope(scope: str, *, root: Path) -> list[Path]:
         slug = scope[4:]
         if not slug:
             raise ValueError(f"malformed 'job:' scope: missing slug ({scope!r})")
-        return [_paths.job_events_jsonl(slug, root=root)]
-    if scope.startswith("stage:"):
-        rest = scope[6:]
-        sep = rest.find(":")
+        return [_v1paths.events_jsonl(slug, root=root)]
+    if scope.startswith("node:"):
+        # v1 node scope: events filter against the job's events.jsonl;
+        # SSE consumer can post-filter on payload.node_id. Returning the
+        # whole job stream is a strict-superset of what's relevant — the
+        # frontend filters in the browser.
+        rest = scope[5:]
+        sep = rest.find("/")
         if sep == -1:
-            raise ValueError(f"malformed 'stage:' scope: expected 'stage:<job>:<sid>' ({scope!r})")
-        job_slug, stage_id = rest[:sep], rest[sep + 1 :]
-        if not job_slug or not stage_id:
-            raise ValueError(f"malformed 'stage:' scope: empty job or stage part ({scope!r})")
-        return [_paths.stage_events_jsonl(job_slug, stage_id, root=root)]
+            raise ValueError(f"malformed 'node:' scope: expected 'node:<job>/<id>' ({scope!r})")
+        job_slug = rest[:sep]
+        if not job_slug:
+            raise ValueError(f"malformed 'node:' scope: empty job slug ({scope!r})")
+        return [_v1paths.events_jsonl(job_slug, root=root)]
     raise ValueError(f"unknown scope: {scope!r}")
