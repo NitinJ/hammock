@@ -8,7 +8,7 @@ in v1 (each is ~50 lines).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -24,7 +24,6 @@ from shared.v1.types.registry import (
     known_type_names,
 )
 from shared.v1.types.review_verdict import (
-    Concern,
     ReviewVerdictType,
     ReviewVerdictValue,
 )
@@ -34,6 +33,7 @@ from shared.v1.types.review_verdict import (
 class FakeNodeCtx:
     var_name: str
     job_dir: Path
+    inputs: dict[str, object] = field(default_factory=dict)
 
     def expected_path(self) -> Path:
         return self.job_dir / f"{self.var_name}.json"
@@ -202,12 +202,7 @@ def test_design_spec_render_for_consumer_lists_changes() -> None:
 
 def test_review_verdict_produce_happy_path(tmp_path: Path) -> None:
     t = ReviewVerdictType()
-    payload = {
-        "verdict": "approved",
-        "summary": "looks good",
-        "unresolved_concerns": [],
-        "addressed_in_this_iteration": [],
-    }
+    payload = {"verdict": "approved", "summary": "looks good"}
     (tmp_path / "verdict.json").write_text(json.dumps(payload))
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     value = t.produce(t.Decl(), ctx)
@@ -215,22 +210,14 @@ def test_review_verdict_produce_happy_path(tmp_path: Path) -> None:
     assert value.verdict == "approved"
 
 
-def test_review_verdict_produce_with_concerns(tmp_path: Path) -> None:
+def test_review_verdict_produce_needs_revision(tmp_path: Path) -> None:
     t = ReviewVerdictType()
-    payload = {
-        "verdict": "needs-revision",
-        "summary": "rework section 3",
-        "unresolved_concerns": [
-            {"severity": "major", "concern": "section 3 unclear", "location": "§3"},
-            {"severity": "minor", "concern": "typo", "location": None},
-        ],
-    }
+    payload = {"verdict": "needs-revision", "summary": "rework section 3"}
     (tmp_path / "verdict.json").write_text(json.dumps(payload))
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     value = t.produce(t.Decl(), ctx)
     assert value.verdict == "needs-revision"
-    assert len(value.unresolved_concerns) == 2
-    assert value.unresolved_concerns[0].severity == "major"
+    assert value.summary == "rework section 3"
 
 
 def test_review_verdict_produce_invalid_verdict_rejected(tmp_path: Path) -> None:
@@ -243,20 +230,43 @@ def test_review_verdict_produce_invalid_verdict_rejected(tmp_path: Path) -> None
         t.produce(t.Decl(), ctx)
 
 
-def test_review_verdict_render_for_consumer_includes_concerns() -> None:
+def test_review_verdict_rejects_obsolete_fields(tmp_path: Path) -> None:
+    """Stage 2 simplification: unresolved_concerns / addressed_in_this_iteration
+    no longer accepted (extra='forbid')."""
     t = ReviewVerdictType()
-    value = ReviewVerdictValue(
-        verdict="needs-revision",
-        summary="please fix",
-        unresolved_concerns=[
-            Concern(severity="blocker", concern="missing test", location="t.py"),
-        ],
+    (tmp_path / "verdict.json").write_text(
+        json.dumps(
+            {
+                "verdict": "approved",
+                "summary": "x",
+                "unresolved_concerns": [],
+            }
+        )
     )
+    ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
+    with pytest.raises(VariableTypeError, match="schema invalid"):
+        t.produce(t.Decl(), ctx)
+
+
+def test_review_verdict_rejects_merged_verdict(tmp_path: Path) -> None:
+    """Stage 2: 'merged' moved to pr-review-verdict; review-verdict no
+    longer accepts it."""
+    t = ReviewVerdictType()
+    (tmp_path / "verdict.json").write_text(
+        json.dumps({"verdict": "merged", "summary": "x"})
+    )
+    ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
+    with pytest.raises(VariableTypeError, match="schema invalid"):
+        t.produce(t.Decl(), ctx)
+
+
+def test_review_verdict_render_for_consumer_minimal() -> None:
+    t = ReviewVerdictType()
+    value = ReviewVerdictValue(verdict="needs-revision", summary="please fix")
     ctx = FakePromptCtx(var_name="verdict", job_dir=Path("/tmp"))
     rendered = t.render_for_consumer(t.Decl(), value, ctx)
     assert "needs-revision" in rendered
-    assert "[blocker]" in rendered
-    assert "missing test" in rendered
+    assert "please fix" in rendered
 
 
 def test_review_verdict_form_schema_defined() -> None:
@@ -266,5 +276,4 @@ def test_review_verdict_form_schema_defined() -> None:
     schema = t.form_schema(t.Decl())
     assert schema is not None
     field_names = [name for name, _ in schema.fields]
-    assert "verdict" in field_names
-    assert "summary" in field_names
+    assert field_names == ["verdict", "summary"]

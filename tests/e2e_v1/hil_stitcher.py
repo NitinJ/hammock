@@ -46,8 +46,6 @@ def approve_review_verdict(**_: object) -> dict[str, Any]:
     return {
         "verdict": "approved",
         "summary": "auto-approved by test stitcher",
-        "unresolved_concerns": [],
-        "addressed_in_this_iteration": [],
     }
 
 
