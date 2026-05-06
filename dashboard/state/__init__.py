@@ -1,22 +1,27 @@
-"""In-memory state layer — typed cache + scoped pub/sub.
+"""Disk-state layer — path classification + scoped pub/sub.
 
-This package owns the dashboard's read-side. Both the FastAPI routes (Stage 9+)
-and the SSE handlers (Stage 10) read from the cache; the watcher (Stage 1)
-writes into it via ``apply_change``.
+Per impl-patch §Stage 3: there is no in-memory cache. The watcher
+classifies paths via ``dashboard.state.classify`` and publishes
+PathChange messages over ``dashboard.state.pubsub``. Subscribers read
+disk on demand to materialize responses.
 
-Nothing here imports from ``api/``. The Domain/Transport split holds at the
-import-direction level; CI will enforce it once the import-linter rule lands
-in Stage 8.
+Nothing here imports from ``dashboard.api/``. Domain/Transport split
+holds at the import-direction level.
 """
 
-from dashboard.state.cache import Cache, ChangeKind, ClassifiedPath, classify_path
+from dashboard.state.classify import (
+    ChangeKind,
+    ClassifiedPath,
+    classify_path,
+    scopes_for,
+)
 from dashboard.state.pubsub import InProcessPubSub, PubSubSubscription
 
 __all__ = [
-    "Cache",
     "ChangeKind",
     "ClassifiedPath",
     "InProcessPubSub",
     "PubSubSubscription",
     "classify_path",
+    "scopes_for",
 ]

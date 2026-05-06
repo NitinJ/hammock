@@ -424,15 +424,17 @@ until: $pr-merged-loop.pr_review[i].verdict == 'merged'
 
 ## 3.1 Goal
 
-Delete `dashboard/state/cache.py`. Delete `dashboard/hil/contract.py`. Every dashboard handler reads disk directly. HIL POST becomes a thin wrapper over `engine/v1/hil.submit_hil_answer`.
+Delete `dashboard/state/cache.py`. Delete `dashboard/hil/contract.py`. Every dashboard handler reads disk directly **against the v1 disk layout** (`shared/v1/paths.py`). HIL POST becomes a thin wrapper over `engine/v1/hil.submit_hil_answer`.
+
+Stage 3 also folds in the **dashboard's read-side cutover to v1**. Reason: the Stage 1 integration suites that protect Stage 3 assert against `FakeEngine`-scripted v1 disk state; reading v0 paths would leave them red. v0 is gone from the dashboard read path from this PR onward — no backwards compatibility. Stage 5 retains the remaining v0 deletion (`job_driver/`, spawn / compile pipeline).
 
 ## 3.2 Decisions
 
 ### Cache deletes entirely
 
 - `dashboard/state/cache.py` removes.
-- Every dashboard HTTP handler reads disk directly (job dir layout per `shared/paths.py`).
-- `dashboard/state/projections.py` becomes pure functions of `(job_dir → response payload)`. No in-memory state.
+- Every dashboard HTTP handler reads disk directly via the v1 layout helpers in `shared/v1/paths.py`.
+- `dashboard/state/projections.py` becomes pure functions of `(root: Path, ...) → response payload`. No in-memory state.
 - `dashboard/state/pubsub.py` stays as the SSE fan-out primitive; the watcher tails `events.jsonl` and pushes lines to subscribers.
 - Caching can come back if a real workload demands it. None does today.
 
