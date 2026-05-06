@@ -246,16 +246,21 @@ Critical detail: `run_background_tasks=True` (the existing `populated_root` fixt
 
 ## 1.6 Test surface
 
-| Suite | What it asserts |
-|---|---|
-| `test_disk_contract.py` | For every v1 path (`job.json`, `nodes/<id>/state.json`, `nodes/<id>/runs/<n>/*`, `variables/<var>.json`, `variables/loop_<id>_<var>_<i>.json`, `events.jsonl`, `pending/<node_id>.json`): writing it via `FakeEngine` results in the watcher classifying it correctly. |
-| `test_projections.py` | Given a scripted disk sequence, `GET /api/jobs/:slug` and `GET /api/jobs/:slug/nodes/:id` return the expected JSON shape — including loop iterations unrolled, skipped nodes marked SKIPPED, variable envelopes resolved. |
-| `test_sse_replay_live.py` | Open SSE; assert replay returns events ≤ now. Reconnect with `Last-Event-ID`; assert no duplicates, no gaps. Push new events via `FakeEngine`; assert they arrive live. Verify scope filters (job vs stage vs global). |
-| `test_hil_path_a.py` | Explicit HIL: `FakeEngine.request_hil(...)`. Read pending via API. POST answer. Assert pending gone, envelope on disk, SSE event emitted, `assert_hil_answered` returns the submitted value. |
-| `test_hil_path_b_dashboard.py` | Implicit HIL (dashboard side only): identical to Path A from the dashboard's perspective. The MCP server's role is in the separate roundtrip test below. |
-| `test_loop_unroll.py` | 3-iteration outer loop with one nested 2-iteration inner. Assert API response unrolls iterations as indented sections; SSE scoped to `iter=(2,1)` only delivers events for that iteration. |
-| `test_skipped_node.py` | Drive `runs_if` evaluation to false. Assert node renders SKIPPED with the recorded reason; downstream nodes that depend on it don't block. |
-| `test_ask_human_roundtrip.py` | Spawn `dashboard/mcp/server.py` as subprocess. Send MCP `ask_human` tool call via stdio. Assert pending marker on disk. Write answered marker (simulating dashboard POST). Assert MCP returns the answer over stdio. |
+Stage 1 ships the harness itself (FakeEngine + live dashboard fixture). The dashboard suites in §1.6 below are *spec stubs* — descriptive test names + `NotImplementedError` bodies — that later stages fill in as those stages enable the corresponding behavior. This keeps Stage 1 KISS while leaving the spec visible from day one.
+
+| Suite | Owned by | What it asserts |
+|---|---|---|
+| `test_harness.py` | **Stage 1** (concrete tests) | FakeEngine writes the right files at the right paths via `shared.atomic.*`. Dashboard fixture starts cleanly with the watcher running, binds a localhost port, exposes a working httpx async client, and shuts down without leaks. End-to-end smoke: `fake_engine.start_job(...)` followed by `dashboard.client.get("/api/health")` returns 200. |
+| `test_disk_contract.py` | **Stage 3** (disk-first dashboard) | Writing each v1 path via `FakeEngine` is observable to the dashboard. Asserts on `GET /api/jobs/:slug`, `GET /api/jobs/:slug/nodes/:id` and similar — drives Stage 3's disk-first projection rewrite. |
+| `test_projections.py` | **Stage 3** | API JSON shape including loop iterations unrolled, SKIPPED nodes, resolved envelopes. |
+| `test_sse_replay_live.py` | **Stage 3** | SSE replay + `Last-Event-ID` continuity + scope filters. |
+| `test_hil_path_a.py` | **Stage 3** | Explicit HIL round-trip through dashboard's thin handler. |
+| `test_hil_path_b_dashboard.py` | **Stage 3** | Dashboard-side of MCP-initiated HIL (same handler). |
+| `test_loop_unroll.py` | **Stage 3** | 3-iteration outer + 2-iteration inner unrolls correctly in the API. |
+| `test_skipped_node.py` | **Stage 3** | `runs_if`-skipped nodes render SKIPPED. |
+| `test_ask_human_roundtrip.py` | **Stage 4** (MCP slim) | MCP server subprocess writes pending marker + reads answer. |
+
+This means Stage 1's Step 1 deliverable is `test_harness.py` (concrete failing tests). The remaining suites are committed as Step-0 stubs with `NotImplementedError` so they're discoverable but don't fail the Stage 1 DoD. Each later stage's Step 1 = filling in its owned suite.
 
 ## 1.7 Order of work
 
@@ -275,7 +280,8 @@ Critical detail: `run_background_tasks=True` (the existing `populated_root` fixt
 
 ## 1.8 Definition of done
 
-- All §1.6 suites green on a single run, no flakes.
+- `tests/integration/test_harness.py` green on a single run, no flakes — proves FakeEngine + dashboard fixture work.
+- All other suites (`test_disk_contract.py`, `test_projections.py`, etc.) collect under pytest with `NotImplementedError` bodies. They are the spec for later stages.
 - `tests/integration/` runs in <60s on a laptop, no network, no API keys.
 - `tests/e2e_v1/test_workflow.py` (real Claude + real GitHub) unchanged and still green pre-merge.
 - A `scripts/play-fake-job.py <scenario>` CLI that drives the dev-server dashboard from a `FakeEngine` script — for visual debugging during Stage 6.
