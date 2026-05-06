@@ -36,13 +36,13 @@ variables:
 
   # implement loop
   pr:                            { type: pr }
-  pr_merge:                      { type: pr-merge-confirmation }
+  pr_review:                      { type: pr-review-verdict }
   pr_list:                       { type: "list[pr]" }
-  pr_merge_list:                 { type: "list[pr-merge-confirmation]" }
+  pr_review_list:                 { type: "list[pr-review-verdict]" }
 
   # tests-and-fix
   tests_pr:                      { type: pr }
-  tests_pr_merge:                { type: pr-merge-confirmation }
+  tests_pr_review:                { type: pr-review-verdict }
 
   # final
   summary:                       { type: summary }
@@ -186,7 +186,7 @@ nodes:
     body:
       - id: pr-merged-loop
         kind: loop
-        until: $pr-merged-loop.pr_merge[i]
+        until: $pr-merged-loop.pr_review[i].verdict == 'merged'
         max_iterations: 2
         substrate: shared
         body:
@@ -198,21 +198,21 @@ nodes:
               design_spec: $design_spec
             outputs:
               pr: $pr
-          - id: pr-merge-hil
+          - id: pr-review-hil
             kind: artifact
             actor: human
             inputs:
               pr: $pr-merged-loop.pr[i]
             outputs:
-              pr_merge: $pr_merge
+              pr_review: $pr_review
             presentation:
               title: "Merge the PR on GitHub, then submit pr_url"
         outputs:
           pr: $pr-merged-loop.pr[last]
-          pr_merge: $pr-merged-loop.pr_merge[last]
+          pr_review: $pr-merged-loop.pr_review[last]
     outputs:
       pr_list: $implement-loop.pr[*]
-      pr_merge_list: $implement-loop.pr_merge[*]
+      pr_review_list: $implement-loop.pr_review[*]
 
   # ----- Tests + fix (single agent node; optional pr if anything to fix) -----
   - id: tests-and-fix
@@ -225,7 +225,7 @@ nodes:
       tests_pr?: $tests_pr
 
   # ----- Conditional HIL: only if tests-and-fix produced a PR -----
-  - id: tests-pr-merge-hil
+  - id: tests-pr-review-hil
     kind: artifact
     actor: human
     after: [tests-and-fix]
@@ -235,9 +235,9 @@ nodes:
     outputs:
       # Optional because the node itself is gated by runs_if; if
       # tests-and-fix didn't produce tests_pr, this node is SKIPPED and
-      # tests_pr_merge isn't produced. Outcome assertions tolerate
+      # tests_pr_review isn't produced. Outcome assertions tolerate
       # absent optional outputs.
-      pr_merge?: $tests_pr_merge
+      pr_review?: $tests_pr_review
     presentation:
       title: "Merge the tests-and-fix PR"
 
@@ -245,7 +245,7 @@ nodes:
   - id: write-summary
     kind: artifact
     actor: agent
-    after: [tests-and-fix, tests-pr-merge-hil]
+    after: [tests-and-fix, tests-pr-review-hil]
     inputs:
       bug_report: $bug_report
       design_spec: $design_spec

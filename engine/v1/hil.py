@@ -233,12 +233,45 @@ def submit_hil_answer(
     # can read it via expected_path().
     atomic_write_text(target_path, json.dumps(value_payload))
 
+    # 4b. Best-effort resolve the node's declared inputs so human-actor
+    # types like pr-review-verdict can read upstream variables (the
+    # linked PR URL) via ctx.inputs. Inputs that the resolver can't
+    # produce are simply omitted; the type's produce decides whether
+    # the absence is fatal (review-verdict ignores ctx.inputs entirely;
+    # pr-review-verdict requires "pr" and raises VariableTypeError if
+    # missing, which we translate to HilSubmissionError below).
+    from engine.v1 import resolver as _resolver
+
+    inputs_map: dict[str, Any] = {}
+    for input_name, ref in node.inputs.items():
+        slot = input_name[:-1] if input_name.endswith("?") else input_name
+        try:
+            envelope = _resolver._read_loop_or_plain_envelope(
+                ref=ref,
+                job_slug=job_slug,
+                root=root,
+                current_iteration=iteration,
+            )
+        except _resolver.ResolutionError:
+            continue
+        if envelope is None:
+            continue
+        try:
+            value: Any = _resolver._materialise_value(envelope)
+            fields = _resolver._field_path_for_ref(ref)
+            if fields:
+                value = _resolver._walk_field_path(value, fields, ref)
+        except _resolver.ResolutionError:
+            continue
+        inputs_map[slot] = value
+
     @dataclass
     class _Ctx:
         var_name: str
         job_dir: Path
         loop_id: str | None
         iteration: int | None
+        inputs: dict[str, Any]
 
         def expected_path(self) -> Path:
             if self.loop_id is not None and self.iteration is not None:
@@ -258,6 +291,7 @@ def submit_hil_answer(
         job_dir=paths.job_dir(job_slug, root=root),
         loop_id=loop_id,
         iteration=iteration,
+        inputs=inputs_map,
     )
     try:
         validated = type_obj.produce(type_obj.Decl(), ctx)

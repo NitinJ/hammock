@@ -49,7 +49,7 @@ def approve_review_verdict(**_: object) -> dict[str, Any]:
     }
 
 
-def merge_pr_then_confirm(
+def merge_pr_then_submit_review(
     *,
     pending: PendingHil,
     workflow: Workflow,
@@ -58,12 +58,12 @@ def merge_pr_then_confirm(
     var_name: str,
     **_: object,
 ) -> dict[str, Any]:
-    """Answer policy for `pr-merge-confirmation`-typed gates.
+    """Answer policy for `pr-review-verdict`-typed gates.
 
-    1. Reads the upstream `pr` variable (loop-indexed) to get the URL.
-    2. Actually merges the PR on GitHub via `gh pr merge --squash --admin`.
-    3. Returns ``{"pr_url": <url>}`` for the engine's
-       pr-merge-confirmation type to verify.
+    Per design-patch §9.4: the human submits ONLY ``{verdict: "merged"}``;
+    the engine's pr-review-verdict.produce verifies via ``gh pr view``.
+    The stitcher first ensures the PR is actually merged on GitHub
+    (idempotent) so the engine's verification succeeds.
     """
     # Find the pr envelope this iteration produced — look for the
     # loop-indexed `pr` envelope first; fall back to plain.
@@ -76,39 +76,31 @@ def merge_pr_then_confirm(
             pr_env = Envelope.model_validate_json(pr_path.read_text())
             pr_url = pr_env.value.get("url")
     if pr_url is None:
-        # Plain pr fallback (T3-shape).
         plain_pr = paths.variable_envelope_path(job_slug, "pr", root=root)
         if plain_pr.is_file():
             pr_env = Envelope.model_validate_json(plain_pr.read_text())
             pr_url = pr_env.value.get("url")
     if pr_url is None:
         raise RuntimeError(
-            f"merge_pr_then_confirm: no `pr` envelope found for node "
+            f"merge_pr_then_submit_review: no `pr` envelope found for node "
             f"{pending.node_id!r} (loop_id={pending.loop_id!r}, "
             f"iteration={pending.iteration!r})"
         )
 
-    # Idempotent: check current state first. If already MERGED (e.g. a
-    # prior stitcher iteration succeeded but submit_hil_answer failed
-    # downstream), skip the merge call. Saves us a second `gh pr merge`
-    # which fails with "already merged".
+    # Idempotent merge: check current state first; skip if already MERGED.
     import os as _os
 
-    env = {**_os.environ, "NO_COLOR": "1"}
+    gh_env = {**_os.environ, "NO_COLOR": "1"}
     state_check = subprocess.run(
         ["gh", "pr", "view", pr_url, "--json", "state", "--jq", ".state"],
         capture_output=True,
         text=True,
         check=False,
-        env=env,
+        env=gh_env,
     )
     current_state = state_check.stdout.strip() if state_check.returncode == 0 else ""
 
     if current_state != "MERGED":
-        # Merge the PR on GitHub. --admin lets the user merge their own PR
-        # even when branch protection requires reviews; --squash keeps
-        # history tidy. We don't pass --delete-branch — teardown handles
-        # branch cleanup.
         result = subprocess.run(
             ["gh", "pr", "merge", pr_url, "--squash", "--admin"],
             capture_output=True,
@@ -117,10 +109,17 @@ def merge_pr_then_confirm(
         )
         if result.returncode != 0:
             raise RuntimeError(
-                f"merge_pr_then_confirm: `gh pr merge {pr_url}` failed: {result.stderr.strip()}"
+                f"merge_pr_then_submit_review: `gh pr merge {pr_url}` failed: "
+                f"{result.stderr.strip()}"
             )
 
-    return {"pr_url": pr_url}
+    # Submission shape per pr-review-verdict: just the verdict.
+    return {"verdict": "merged"}
+
+
+# Back-compat alias (some test wiring may still import the old name);
+# kept until all callers migrate, then deletable.
+merge_pr_then_confirm = merge_pr_then_submit_review
 
 
 class HilStitcher:

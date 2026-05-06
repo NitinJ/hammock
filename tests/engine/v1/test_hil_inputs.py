@@ -72,10 +72,8 @@ def seeded_pr(tmp_path: Path) -> Path:
         value_payload={
             "url": "https://github.com/example/repo/pull/42",
             "number": 42,
-            "title": "Add foo",
-            "head_branch": "feat/foo",
-            "base_branch": "main",
-            "head_sha": "deadbeef",
+            "branch": "feat/foo",
+            "base": "main",
             "repo": "example/repo",
         },
     )
@@ -199,7 +197,7 @@ nodes:
     spec_env = make_envelope(
         type_name="design-spec",
         producer_node="write-spec",
-        value_payload={"text": "the spec"},
+        value_payload={"title": "Design", "overview": "the spec"},
     )
     atomic_write_text(
         paths.variable_envelope_path("j", "spec", root=tmp_path),

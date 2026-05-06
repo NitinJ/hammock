@@ -252,9 +252,7 @@ def test_review_verdict_rejects_merged_verdict(tmp_path: Path) -> None:
     """Stage 2: 'merged' moved to pr-review-verdict; review-verdict no
     longer accepts it."""
     t = ReviewVerdictType()
-    (tmp_path / "verdict.json").write_text(
-        json.dumps({"verdict": "merged", "summary": "x"})
-    )
+    (tmp_path / "verdict.json").write_text(json.dumps({"verdict": "merged", "summary": "x"}))
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     with pytest.raises(VariableTypeError, match="schema invalid"):
         t.produce(t.Decl(), ctx)
