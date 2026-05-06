@@ -184,3 +184,116 @@ async def test_loop_indexed_envelopes_resolve_per_iteration(
     assert rows[(0,)]["state"] == "succeeded"
     # iter 1 is the latest seen; envelope present, so still succeeded.
     assert rows[(1,)]["state"] == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# loop-rendering-fixes — projection-side contract changes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_with_no_envelopes_still_shows_iter_zero_pending(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """A loop that hasn't produced any output yet must still surface
+    its iter-0 body rows so the operator sees what's about to run.
+
+    Without this, a code-kind loop that's currently dispatching but
+    hasn't written its first envelope is invisible — the user only
+    sees the rows after the first iteration succeeds (Issue 1)."""
+    fake_engine.start_job(workflow=_outer_count_workflow(3), request="x")
+    # No envelopes seeded — the loop is conceptually "just about to run".
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    rows = resp.json()["nodes"]
+    write_rows = [n for n in rows if n["node_id"] == "write-one"]
+    assert len(write_rows) == 1
+    assert write_rows[0]["iter"] == [0]
+    assert write_rows[0]["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_node_carries_loop_path_parallel_to_iter(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """Each row carries ``loop_path: list[str]`` parallel to ``iter`` so
+    the frontend can distinguish sibling loops whose iterations happen
+    to be the same indices.
+
+    Without this, two sibling top-level loops both emit body rows tagged
+    ``iter=[0,0]`` and the renderer can't tell which loop they belong
+    to (Issue 4)."""
+    fake_engine.start_job(workflow=_nested_workflow(), request="x")
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    rows = resp.json()["nodes"]
+    write_rows = [n for n in rows if n["node_id"] == "write-one"]
+    assert len(write_rows) >= 1
+    for r in write_rows:
+        # loop_path is parallel to iter — same length, one loop_id per
+        # nesting level.
+        assert "loop_path" in r, f"expected loop_path on row, got: {r}"
+        assert len(r["loop_path"]) == len(r["iter"])
+        # Innermost loop is "inner".
+        assert r["loop_path"][-1] == "inner"
+        # Outermost loop is "outer".
+        assert r["loop_path"][0] == "outer"
+
+
+@pytest.mark.asyncio
+async def test_sibling_loops_have_distinct_loop_paths(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """Two sibling top-level loops both produce body rows at iter [0],
+    but their loop_path differs so the renderer can break the section
+    header per loop."""
+    workflow = {
+        "workflow": "T-siblings",
+        "variables": {
+            "bug_report": {"type": "bug-report"},
+            "bugs": {"type": "list[bug-report]"},
+        },
+        "nodes": [
+            {
+                "id": "loop-a",
+                "kind": "loop",
+                "count": 1,
+                "body": [
+                    {
+                        "id": "body-a",
+                        "kind": "artifact",
+                        "actor": "agent",
+                        "outputs": {"bug_report": "$bug_report"},
+                    }
+                ],
+                "outputs": {"bugs": "$loop-a.bug_report[*]"},
+            },
+            {
+                "id": "loop-b",
+                "kind": "loop",
+                "count": 1,
+                "body": [
+                    {
+                        "id": "body-b",
+                        "kind": "artifact",
+                        "actor": "agent",
+                        "outputs": {"bug_report": "$bug_report"},
+                    }
+                ],
+                "outputs": {"bugs": "$loop-b.bug_report[*]"},
+            },
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    rows = resp.json()["nodes"]
+    a_rows = [n for n in rows if n["node_id"] == "body-a"]
+    b_rows = [n for n in rows if n["node_id"] == "body-b"]
+    assert len(a_rows) == 1
+    assert len(b_rows) == 1
+    # Same iter index from sibling loops, but distinct loop_paths.
+    assert a_rows[0]["iter"] == [0]
+    assert b_rows[0]["iter"] == [0]
+    assert a_rows[0]["loop_path"] == ["loop-a"]
+    assert b_rows[0]["loop_path"] == ["loop-b"]

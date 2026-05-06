@@ -75,7 +75,11 @@ class NodeListEntry(BaseModel):
     the iteration index list (one int per nesting level — ``[0]`` for a
     body node inside one loop, ``[0, 1]`` inside a nested loop). Loop
     nodes themselves are NOT emitted as rows; the frontend synthesises
-    "iter N:" headers from the ``iter`` field on body rows.
+    section headers from ``loop_path`` and ``iter`` on body rows.
+
+    ``loop_path`` is parallel to ``iter`` — one loop_id per nesting
+    level — so sibling loops at the same depth (whose iter indices
+    coincide) can be distinguished by loop_id.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -88,6 +92,7 @@ class NodeListEntry(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     iter: list[int] = Field(default_factory=list)
+    loop_path: list[str] = Field(default_factory=list)
     parent_loop_id: str | None = None
 
 
@@ -315,7 +320,7 @@ def _list_nodes(root: Path, job_slug: str, workflow: Workflow | None) -> list[No
     """Build the unrolled node list for a job.
 
     With a loadable workflow: walk declaration order; loops are expanded
-    into per-iteration body rows tagged with ``iter`` and
+    into per-iteration body rows tagged with ``iter`` + ``loop_path`` +
     ``parent_loop_id``. Without one: fall back to a flat enumeration of
     ``nodes/<id>/state.json`` files (useful when the workflow file is
     gone or malformed)."""
@@ -324,7 +329,13 @@ def _list_nodes(root: Path, job_slug: str, workflow: Workflow | None) -> list[No
     out: list[NodeListEntry] = []
     for node in workflow.nodes:
         _emit_node_rows(
-            node, root=root, job_slug=job_slug, out=out, iter_path=[], parent_loop_id=None
+            node,
+            root=root,
+            job_slug=job_slug,
+            out=out,
+            iter_path=[],
+            loop_path=[],
+            parent_loop_id=None,
         )
     return out
 
@@ -363,12 +374,23 @@ def _emit_node_rows(
     job_slug: str,
     out: list[NodeListEntry],
     iter_path: list[int],
+    loop_path: list[str],
     parent_loop_id: str | None,
 ) -> None:
     """Append rows for *node*. Loop nodes are not emitted directly — their
-    body nodes are emitted per iteration with ``iter_path`` extended."""
+    body nodes are emitted per iteration with ``iter_path`` and
+    ``loop_path`` extended.
+
+    Always emits at least iter 0 of every loop, even when no envelopes
+    have landed on disk yet. That way the operator sees the workflow
+    structure upfront; body rows display ``pending`` until the engine
+    reaches them."""
     if isinstance(node, LoopNode):
-        iters = _count_loop_iterations_seen(node.id, job_slug, root)
+        # Always show at least iter 0 — workflow structure visible to
+        # the operator before the engine produces its first envelope.
+        # Once iter 0 lands an envelope, _count_loop_iterations_seen
+        # returns 1; iter 1 only shows when a second envelope appears.
+        iters = max(1, _count_loop_iterations_seen(node.id, job_slug, root))
         for i in range(iters):
             for body in node.body:
                 _emit_node_rows(
@@ -377,6 +399,7 @@ def _emit_node_rows(
                     job_slug=job_slug,
                     out=out,
                     iter_path=[*iter_path, i],
+                    loop_path=[*loop_path, node.id],
                     parent_loop_id=node.id,
                 )
         return
@@ -386,6 +409,7 @@ def _emit_node_rows(
             root=root,
             job_slug=job_slug,
             iter_path=iter_path,
+            loop_path=loop_path,
             parent_loop_id=parent_loop_id,
         )
     )
@@ -397,6 +421,7 @@ def _build_node_entry(
     root: Path,
     job_slug: str,
     iter_path: list[int],
+    loop_path: list[str],
     parent_loop_id: str | None,
 ) -> NodeListEntry:
     """Read on-disk state for *node* and synthesise the per-row entry.
@@ -445,6 +470,7 @@ def _build_node_entry(
         started_at=started_at,
         finished_at=finished_at,
         iter=list(iter_path),
+        loop_path=list(loop_path),
         parent_loop_id=parent_loop_id,
     )
 

@@ -148,6 +148,9 @@ export function useNodeDetail(
     queryKey: computed(() => QUERY_KEYS.node(toValue(jobSlug), toValue(nodeId) ?? "")),
     queryFn: () => api.get<NodeDetail>(`/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}`),
     enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
+    // 404 is the common failure mode (node not dispatched yet). Don't
+    // retry — the JobOverview surface treats 404 as "not started".
+    retry: false,
   });
 }
 
