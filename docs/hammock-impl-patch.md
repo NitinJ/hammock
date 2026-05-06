@@ -203,14 +203,18 @@ class FakeEngine:
         *,
         iter: tuple[int, ...] = (),
         prompt: str | None = None,
+        output_var_names: list[str] | None = None,
     ) -> str:
-        """Drops hil/pending/<id>.json. Returns the hil_id."""
+        """Drops a pending marker at pending/<node_id>.json. Returns the
+        node_id (used as the gate identifier by dashboard + stitcher)."""
         ...
 
-    def assert_hil_answered(self, hil_id: str) -> BaseModel:
-        """Reads hil/answered/<id>.json + the variable envelope written
-        alongside it. Returns the parsed value. Raises if pending still
-        exists or envelope is missing."""
+    def assert_hil_answered(self, node_id: str, *, iter: tuple[int, ...] = ()) -> BaseModel:
+        """Verify the HIL gate has been answered: pending marker is gone
+        AND the corresponding variable envelope (loop-indexed when iter
+        is non-empty) exists. Returns the parsed Value. Raises if either
+        precondition fails. There is no separate hil/answered/ — the
+        envelope's existence IS the answer."""
         ...
 ```
 
@@ -244,7 +248,7 @@ Critical detail: `run_background_tasks=True` (the existing `populated_root` fixt
 
 | Suite | What it asserts |
 |---|---|
-| `test_disk_contract.py` | For every v1 path (`job.json`, `nodes/<id>/state.json`, `nodes/<id>/iterations/<n>/...`, `vars/*.json`, `events.jsonl`, `hil/pending/*.json`, `hil/answered/*.json`, `logs/*.log`): writing it via `FakeEngine` results in the watcher classifying it correctly. |
+| `test_disk_contract.py` | For every v1 path (`job.json`, `nodes/<id>/state.json`, `nodes/<id>/runs/<n>/*`, `variables/<var>.json`, `variables/loop_<id>_<var>_<i>.json`, `events.jsonl`, `pending/<node_id>.json`): writing it via `FakeEngine` results in the watcher classifying it correctly. |
 | `test_projections.py` | Given a scripted disk sequence, `GET /api/jobs/:slug` and `GET /api/jobs/:slug/nodes/:id` return the expected JSON shape — including loop iterations unrolled, skipped nodes marked SKIPPED, variable envelopes resolved. |
 | `test_sse_replay_live.py` | Open SSE; assert replay returns events ≤ now. Reconnect with `Last-Event-ID`; assert no duplicates, no gaps. Push new events via `FakeEngine`; assert they arrive live. Verify scope filters (job vs stage vs global). |
 | `test_hil_path_a.py` | Explicit HIL: `FakeEngine.request_hil(...)`. Read pending via API. POST answer. Assert pending gone, envelope on disk, SSE event emitted, `assert_hil_answered` returns the submitted value. |
