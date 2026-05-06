@@ -18,7 +18,7 @@ Adding a new type = define `Decl`, define `Value`, implement 3-4 methods.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -63,6 +63,20 @@ class NodeContext(Protocol):
 
     var_name: str
     job_dir: Path
+
+    inputs: dict[str, Any]
+    """Resolved upstream variable values keyed by input slot name (with
+    ``?`` stripped). Populated by the engine before invoking ``produce``
+    so human-actor types like ``pr-review-verdict`` can read upstream
+    state (the linked PR URL, etc.) directly. For agent / code dispatch
+    the engine populates this from `engine/v1/resolver.resolve_node_inputs`;
+    for HIL submissions, ``engine/v1/hil.submit_hil_answer`` populates it
+    from the same resolver.
+
+    Values are raw: a Pydantic ``Value`` instance for whole-variable
+    consumption, or a primitive when the YAML reference applied a field
+    path. Optional inputs that were not produced upstream are absent
+    from the dict (not present-with-None)."""
 
     def expected_path(self) -> Path:
         """Where engine stores files for this variable. Engine owns the

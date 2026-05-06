@@ -167,12 +167,10 @@ def test_evaluate_loop_i_at_current_iteration(tmp_path: Path) -> None:
         loop_id="L",
         var_name="r",
         iteration=0,
-        type_name="review-verdict",
+        type_name="pr-review-verdict",
         value={
             "verdict": "merged",
             "summary": "ok",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
         },
     )
     ok = evaluate(
@@ -210,12 +208,10 @@ def test_evaluate_loop_last_finds_highest_iteration(tmp_path: Path) -> None:
             loop_id="L",
             var_name="r",
             iteration=i,
-            type_name="review-verdict",
+            type_name="pr-review-verdict",
             value={
                 "verdict": v,
                 "summary": "x",
-                "unresolved_concerns": [],
-                "addressed_in_this_iteration": [],
             },
         )
     ok = evaluate(
@@ -234,12 +230,10 @@ def test_evaluate_neq_on_string(tmp_path: Path) -> None:
         loop_id="L",
         var_name="r",
         iteration=0,
-        type_name="review-verdict",
+        type_name="pr-review-verdict",
         value={
             "verdict": "needs-revision",
             "summary": "x",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
         },
     )
     ok = evaluate(

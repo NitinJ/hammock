@@ -97,8 +97,6 @@ def test_submit_writes_envelope_and_clears_marker(tmp_path: Path) -> None:
         value_payload={
             "verdict": "approved",
             "summary": "looks good",
-            "unresolved_concerns": [],
-            "addressed_in_this_iteration": [],
         },
         root=tmp_path,
         workflow=wf,
@@ -155,8 +153,6 @@ def test_submit_to_agent_node_raises(tmp_path: Path) -> None:
             value_payload={
                 "verdict": "approved",
                 "summary": "x",
-                "unresolved_concerns": [],
-                "addressed_in_this_iteration": [],
             },
             root=tmp_path,
             workflow=wf,
@@ -254,8 +250,6 @@ def test_wait_returns_true_after_concurrent_submission(tmp_path: Path) -> None:
             value_payload={
                 "verdict": "approved",
                 "summary": "ok",
-                "unresolved_concerns": [],
-                "addressed_in_this_iteration": [],
             },
             root=tmp_path,
             workflow=wf,

@@ -17,7 +17,7 @@ from shared.v1.types.impl_spec import ImplSpecType
 from shared.v1.types.job_request import JobRequestType
 from shared.v1.types.list_wrapper import ListType
 from shared.v1.types.pr import PRType
-from shared.v1.types.pr_merge_confirmation import PRMergeConfirmationType
+from shared.v1.types.pr_review_verdict import PRReviewVerdictType
 from shared.v1.types.review_verdict import ReviewVerdictType
 from shared.v1.types.summary import SummaryType
 
@@ -33,7 +33,7 @@ def _build_registry() -> dict[str, Any]:
         ImplPlanType(),
         ReviewVerdictType(),
         PRType(),
-        PRMergeConfirmationType(),
+        PRReviewVerdictType(),
         SummaryType(),
     ]
     return {t.name: t for t in types}

@@ -1,10 +1,10 @@
 workflow: t4-with-pr-merge-loop
 
-# T4: T3 + wrap implement + pr-merge-hil in an `until` loop. Tests:
+# T4: T3 + wrap implement + pr-review-hil in an `until` loop. Tests:
 #   - until-loop primitive with required max_iterations
 #   - substrate `shared` (one stage branch reused across iterations)
 #   - loop indexing: $loop-id.var[i] inside the loop body
-#   - pr-merge-confirmation type with real GitHub merge verification
+#   - pr-review-verdict type with real GitHub merge verification
 
 variables:
   request:                   { type: job-request }
@@ -13,7 +13,7 @@ variables:
   design_spec_review_agent:  { type: review-verdict }
   design_spec_review_human:  { type: review-verdict }
   pr:                        { type: pr }
-  pr_merge:                  { type: pr-merge-confirmation }
+  pr_review:                  { type: pr-review-verdict }
 
 nodes:
   - id: write-bug-report
@@ -57,7 +57,7 @@ nodes:
   - id: pr-merged-loop
     kind: loop
     after: [review-design-spec-human]
-    until: $pr-merged-loop.pr_merge[i]
+    until: $pr-merged-loop.pr_review[i].verdict == 'merged'
     max_iterations: 3
     substrate: shared
     body:
@@ -69,13 +69,13 @@ nodes:
         outputs:
           pr: $pr
 
-      - id: pr-merge-hil
+      - id: pr-review-hil
         kind: artifact
         actor: human
         inputs:
           pr: $pr-merged-loop.pr[i]
         outputs:
-          pr_merge: $pr_merge
+          pr_review: $pr_review
         presentation:
           title: "Merge the PR on GitHub, then submit pr_url"
     outputs: {}

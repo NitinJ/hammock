@@ -1,6 +1,13 @@
-"""`review-verdict` variable type — produced by reviewer nodes (agent or
-human). Carries a verdict enum + a short summary + a list of unresolved
-concerns. Used both for spec/plan reviews and for PR review/merge gates."""
+"""``review-verdict`` variable type — produced by reviewer nodes (agent or
+human). Carries a verdict enum + a short summary.
+
+Per design-patch §9.4 simplification:
+- Verdicts: approved | needs-revision | rejected. The "merged" verdict
+  moved to the new ``pr-review-verdict`` type, which owns PR-merge HIL.
+- The ``Concern`` sub-model + ``unresolved_concerns`` and
+  ``addressed_in_this_iteration`` fields are removed. Reviewer prose
+  goes into ``summary`` directly.
+"""
 
 from __future__ import annotations
 
@@ -16,18 +23,7 @@ from shared.v1.types.protocol import (
     VariableTypeError,
 )
 
-# Verdicts used in v1. The same type is reused across spec reviews and PR
-# review-and-merge gates; the loop predicate decides which verdicts mean
-# "exit" vs "iterate again".
-VerdictLiteral = Literal["approved", "needs-revision", "rejected", "merged"]
-
-
-class Concern(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    severity: Literal["blocker", "major", "minor"]
-    concern: str = Field(..., min_length=1)
-    location: str | None = None
+VerdictLiteral = Literal["approved", "needs-revision", "rejected"]
 
 
 class ReviewVerdictDecl(BaseModel):
@@ -42,26 +38,16 @@ class ReviewVerdictValue(BaseModel):
     summary: str = Field(..., min_length=1)
     """1-3 sentence human-readable summary of the verdict."""
 
-    unresolved_concerns: list[Concern] = Field(default_factory=list)
-    """Empty when verdict == 'approved' or 'merged'."""
-
-    addressed_in_this_iteration: list[str] = Field(default_factory=list)
-    """Concrete things this iteration addressed (informational; empty on
-    iteration 1)."""
-
 
 _PROMPT_HINT = """\
 Strict JSON. Allowed fields ONLY:
 
-- `verdict`: one of 'approved' | 'needs-revision' | 'rejected' | 'merged'.
+- `verdict`: one of 'approved' | 'needs-revision' | 'rejected'.
 - `summary`: 1-3 sentence string (required, non-empty).
-- `unresolved_concerns`: list of objects, each with
-  `{severity: 'blocker'|'major'|'minor', concern: string, location: string|null}`.
-  Empty list when verdict is 'approved' or 'merged'.
-- `addressed_in_this_iteration`: list of strings (empty on iteration 1).
 
-Schema uses extra='forbid'. Do NOT add fields like 'reviewer', 'strengths',
-'minor_suggestions', 'approval_conditions', 'reviewed_artifact'.\
+Schema uses extra='forbid'. Do NOT add fields like 'reviewer',
+'strengths', 'minor_suggestions', 'approval_conditions', 'unresolved_concerns',
+'addressed_in_this_iteration', or 'reviewed_artifact'.\
 """
 
 
@@ -96,24 +82,17 @@ class ReviewVerdictType:
     def render_for_consumer(
         self, decl: ReviewVerdictDecl, value: ReviewVerdictValue, ctx: PromptContext
     ) -> str:
-        lines = [
-            f"### Input `{ctx.var_name}` (review-verdict)",
-            "",
-            f"**Verdict:** {value.verdict}",
-            f"**Summary:** {value.summary}",
-        ]
-        if value.unresolved_concerns:
-            lines.append("\n**Unresolved concerns:**")
-            for c in value.unresolved_concerns:
-                loc = f" — {c.location}" if c.location else ""
-                lines.append(f"  - [{c.severity}] {c.concern}{loc}")
-        return "\n".join(lines)
+        return (
+            f"### Input `{ctx.var_name}` (review-verdict)\n"
+            f"\n"
+            f"**Verdict:** {value.verdict}\n"
+            f"**Summary:** {value.summary}"
+        )
 
     def form_schema(self, decl: ReviewVerdictDecl) -> FormSchema | None:
         return FormSchema(
             fields=[
-                ("verdict", "select:approved,needs-revision,rejected,merged"),
+                ("verdict", "select:approved,needs-revision,rejected"),
                 ("summary", "textarea"),
-                ("unresolved_concerns", "list[concern]"),
             ]
         )

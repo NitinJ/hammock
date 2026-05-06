@@ -147,8 +147,6 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
                 {
                     "verdict": "approved",
                     "summary": f"iter-{iter_idx}",
-                    "unresolved_concerns": [],
-                    "addressed_in_this_iteration": [],
                 }
             )
         )
@@ -304,8 +302,6 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
                 {
                     "verdict": "approved",
                     "summary": f"i{idx}",
-                    "unresolved_concerns": [],
-                    "addressed_in_this_iteration": [],
                 }
             )
         )
@@ -355,8 +351,6 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
                 {
                     "verdict": "approved",
                     "summary": f"i-{idx}",
-                    "unresolved_concerns": [],
-                    "addressed_in_this_iteration": [],
                 }
             )
         )
@@ -453,8 +447,6 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
                 {
                     "verdict": "approved",
                     "summary": f"call-{invocation_count['n']}",
-                    "unresolved_concerns": [],
-                    "addressed_in_this_iteration": [],
                 }
             )
         )

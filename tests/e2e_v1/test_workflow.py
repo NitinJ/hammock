@@ -24,7 +24,7 @@ from tests.e2e_v1.cleanup import take_snapshot, teardown
 from tests.e2e_v1.hil_stitcher import (
     HilStitcher,
     approve_review_verdict,
-    merge_pr_then_confirm,
+    merge_pr_then_submit_review,
 )
 from tests.e2e_v1.preflight import (
     PreflightFailure,
@@ -96,18 +96,18 @@ _HIL_POLICIES: dict[str, dict[str, Callable[..., dict[str, Any]]]] = {
     },
     "T4.yaml": {
         "review-design-spec-human": approve_review_verdict,
-        "pr-merge-hil": merge_pr_then_confirm,
+        "pr-review-hil": merge_pr_then_submit_review,
     },
     "T5.yaml": {
         "review-design-spec-human": approve_review_verdict,
-        "pr-merge-hil": merge_pr_then_confirm,
+        "pr-review-hil": merge_pr_then_submit_review,
     },
     "T6.yaml": {
         "review-design-spec-human": approve_review_verdict,
         "review-impl-spec-human": approve_review_verdict,
         "review-impl-plan-human": approve_review_verdict,
-        "pr-merge-hil": merge_pr_then_confirm,
-        "tests-pr-merge-hil": merge_pr_then_confirm,
+        "pr-review-hil": merge_pr_then_submit_review,
+        "tests-pr-review-hil": merge_pr_then_submit_review,
     },
 }
 
