@@ -1,34 +1,23 @@
-"""Dashboard MCP server: four tools the agent calls during a stage.
+"""Dashboard MCP server — v1 slim surface.
 
-Per design doc § HIL bridge § MCP tool surface and implementation.md § Stage 6.
-The dashboard exposes ``open_task``, ``update_task``, ``open_ask``, and
-``append_stages`` over stdio. One MCP server instance per active stage; the
-agent's session connects via the per-session settings produced by the
-:class:`~dashboard.mcp.manager.MCPManager`.
+Per design-patch §9.6: one tool (``ask_human``); one MCP server per
+job; agents inherit ``HAMMOCK_NODE_ID`` (and optionally
+``HAMMOCK_NODE_ITER``) so the server scopes tool calls correctly.
+
+The v0 four-tool surface (``open_task``, ``update_task``, ``open_ask``,
+``append_stages``) is gone; the dashboard's stream pane surfaces
+sub-task progress from agent stdout directly.
 """
 
 from __future__ import annotations
 
-from dashboard.mcp.channel import Channel, NudgeMessage
 from dashboard.mcp.manager import MCPManager, ServerHandle
-from dashboard.mcp.server import (
-    append_stages,
-    build_server,
-    open_ask,
-    open_task,
-    run_stdio,
-    update_task,
-)
+from dashboard.mcp.server import ask_human, build_server, run_stdio
 
 __all__ = [
-    "Channel",
     "MCPManager",
-    "NudgeMessage",
     "ServerHandle",
-    "append_stages",
+    "ask_human",
     "build_server",
-    "open_ask",
-    "open_task",
     "run_stdio",
-    "update_task",
 ]
