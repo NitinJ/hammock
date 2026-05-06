@@ -67,6 +67,8 @@ def _format_change(change: CacheChange, scope: str) -> str:
         data["iteration"] = classified.iteration
     if classified.project_slug is not None:
         data["project_slug"] = classified.project_slug
+    if classified.call_id is not None:
+        data["call_id"] = classified.call_id
     # Stage 12.5 (A4): emit as unnamed event (no ``event:`` line) so the browser
     # fires ``EventSource.onmessage``.  Named events only reach ``addEventListener``
     # listeners, which the frontend does not register.

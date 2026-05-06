@@ -179,9 +179,24 @@ export interface ReplaySseEvent {
 export interface LiveSseEvent {
   scope: string;
   change_kind: "added" | "modified" | "deleted";
-  file_kind: string;
+  file_kind:
+    | "project"
+    | "job"
+    | "node"
+    | "variable"
+    | "loop_variable"
+    | "pending"
+    | "ask"
+    | "events_jsonl"
+    | "unknown"
+    | string;
   job_slug?: string;
   node_id?: string;
+  var_name?: string;
+  loop_id?: string;
+  iteration?: number;
+  project_slug?: string;
+  call_id?: string;
 }
 
 export type SseEvent = ReplaySseEvent | LiveSseEvent;

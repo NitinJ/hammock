@@ -180,4 +180,85 @@ async def test_get_hil_lists_pending_for_job(
 async def test_loop_indexed_hil_round_trip(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
-    pytest.skip("Stage 6 — exercised when loop UI lands")
+    """A loop-indexed pending HIL surfaces with iter=[N] and answers
+    write the loop-indexed envelope path."""
+    # Reuse the path-A workflow but request HIL inside a loop iteration.
+    workflow_path = v1_paths.job_dir(fake_engine.job_slug, root=fake_engine.root) / "workflow.yaml"
+    workflow_path.parent.mkdir(parents=True, exist_ok=True)
+    workflow_path.write_text(
+        """\
+workflow: t-loop-hil
+
+variables:
+  request: { type: job-request }
+  spec:    { type: design-spec }
+  review:  { type: review-verdict }
+
+nodes:
+  - id: review-loop
+    kind: loop
+    count: 1
+    body:
+      - id: review-spec-human
+        kind: artifact
+        actor: human
+        inputs: { spec: $spec }
+        outputs: { review: $review }
+        presentation: { title: "Review" }
+    outputs:
+      reviews: $review-loop.review[*]
+"""
+    )
+    v1_paths.ensure_job_layout(fake_engine.job_slug, root=fake_engine.root)
+    cfg = make_job_config(
+        job_slug=fake_engine.job_slug,
+        workflow_name="t-loop-hil",
+        workflow_path=workflow_path,
+        repo_slug=None,
+    )
+    atomic_write_text(
+        v1_paths.job_config_path(fake_engine.job_slug, root=fake_engine.root),
+        cfg.model_dump_json(),
+    )
+    spec_env = make_envelope(
+        type_name="design-spec",
+        producer_node="write-spec",
+        value_payload={"title": "T", "overview": "the spec"},
+    )
+    atomic_write_text(
+        v1_paths.variable_envelope_path(fake_engine.job_slug, "spec", root=fake_engine.root),
+        spec_env.model_dump_json(),
+    )
+
+    fake_engine.request_hil(
+        "review-spec-human",
+        "review-verdict",
+        output_var_names=["review"],
+        iter=(0,),
+        loop_id="review-loop",
+    )
+
+    resp = await dashboard.client.get(f"/api/hil/{fake_engine.job_slug}")
+    items = resp.json()
+    assert len(items) == 1
+    item = items[0]
+    assert item["kind"] == "explicit"
+    assert item["iter"] == [0]
+
+    answer = {
+        "var_name": "review",
+        "value": {"verdict": "approved", "summary": "ok"},
+    }
+    resp = await dashboard.client.post(
+        f"/api/hil/{fake_engine.job_slug}/review-spec-human/answer", json=answer
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Loop-indexed envelope path lands on disk.
+    env_path = v1_paths.loop_variable_envelope_path(
+        fake_engine.job_slug, "review-loop", "review", 0, root=fake_engine.root
+    )
+    assert env_path.is_file()
+    env = json.loads(env_path.read_text())
+    assert env["type"] == "review-verdict"
+    assert env["value"]["verdict"] == "approved"
