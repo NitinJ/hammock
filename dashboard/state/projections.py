@@ -14,15 +14,20 @@ layout exclusively — v0 is gone.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from engine.v1.loader import WorkflowLoadError, load_workflow
 from shared.v1 import paths as v1_paths
 from shared.v1.envelope import Envelope
 from shared.v1.job import JobConfig, JobState, NodeRun, NodeRunState
+from shared.v1.workflow import ArtifactNode, CodeNode, LoopNode, Node, Workflow
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -58,15 +63,26 @@ class JobListItem(BaseModel):
 
 
 class NodeListEntry(BaseModel):
-    """One entry in the job-detail node list."""
+    """One entry in the job-detail node list.
+
+    For top-level nodes ``iter`` is empty; for loop body nodes it holds
+    the iteration index list (one int per nesting level — ``[0]`` for a
+    body node inside one loop, ``[0, 1]`` inside a nested loop). Loop
+    nodes themselves are NOT emitted as rows; the frontend synthesises
+    "iter N:" headers from the ``iter`` field on body rows.
+    """
 
     model_config = ConfigDict(extra="forbid")
     node_id: str
+    kind: Literal["artifact", "code"] | None = None
+    actor: Literal["agent", "human", "engine"] | None = None
     state: NodeRunState
     attempts: int
     last_error: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    iter: list[int] = Field(default_factory=list)
+    parent_loop_id: str | None = None
 
 
 class JobDetail(BaseModel):
@@ -97,17 +113,29 @@ class NodeDetail(BaseModel):
 
 
 class HilQueueItem(BaseModel):
-    """One pending HIL gate awaiting human input."""
+    """One pending HIL — either explicit (workflow-declared human-actor
+    node) or implicit (Claude calling the ``ask_human`` MCP tool).
+
+    The frontend dispatches on ``kind``: explicit items render
+    ``FormRenderer`` (typed schema → widget map); implicit items render
+    ``AskHumanDisplay`` (fixed shape: question in, answer out)."""
 
     model_config = ConfigDict(extra="forbid")
+    kind: Literal["explicit", "implicit"]
     job_slug: str
+    workflow_name: str
     node_id: str
-    output_var_names: list[str]
-    output_types: dict[str, str]
-    presentation: dict[str, Any]
-    loop_id: str | None = None
-    iteration: int | None = None
+    iter: list[int] = Field(default_factory=list)
     created_at: datetime | None = None
+
+    # Explicit-only (workflow-declared HIL gate).
+    output_var_names: list[str] = Field(default_factory=list)
+    output_types: dict[str, str] = Field(default_factory=dict)
+    presentation: dict[str, Any] = Field(default_factory=dict)
+
+    # Implicit-only (ask_human MCP call).
+    call_id: str | None = None
+    question: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +255,7 @@ def job_detail(root: Path, job_slug: str) -> JobDetail | None:
     cfg = _read_job_config(root, job_slug)
     if cfg is None:
         return None
+    workflow = _try_load_workflow(cfg.workflow_path)
     return JobDetail(
         job_slug=cfg.job_slug,
         workflow_name=cfg.workflow_name,
@@ -235,8 +264,24 @@ def job_detail(root: Path, job_slug: str) -> JobDetail | None:
         submitted_at=cfg.submitted_at,
         updated_at=cfg.updated_at,
         repo_slug=cfg.repo_slug,
-        nodes=_list_nodes(root, job_slug),
+        nodes=_list_nodes(root, job_slug, workflow),
     )
+
+
+def _try_load_workflow(workflow_path: str) -> Workflow | None:
+    """Best-effort workflow load.
+
+    Returns ``None`` when the file is missing, malformed, or doesn't
+    conform to ``Workflow``. Callers fall back to flat node enumeration
+    so the dashboard still renders something useful for debugging.
+    """
+    if not workflow_path:
+        return None
+    try:
+        return load_workflow(Path(workflow_path))
+    except WorkflowLoadError as exc:
+        log.warning("could not load workflow at %s: %s", workflow_path, exc)
+        return None
 
 
 def _read_job_config(root: Path, job_slug: str) -> JobConfig | None:
@@ -249,7 +294,26 @@ def _read_job_config(root: Path, job_slug: str) -> JobConfig | None:
         return None
 
 
-def _list_nodes(root: Path, job_slug: str) -> list[NodeListEntry]:
+def _list_nodes(root: Path, job_slug: str, workflow: Workflow | None) -> list[NodeListEntry]:
+    """Build the unrolled node list for a job.
+
+    With a loadable workflow: walk declaration order; loops are expanded
+    into per-iteration body rows tagged with ``iter`` and
+    ``parent_loop_id``. Without one: fall back to a flat enumeration of
+    ``nodes/<id>/state.json`` files (useful when the workflow file is
+    gone or malformed)."""
+    if workflow is None:
+        return _list_nodes_flat(root, job_slug)
+    out: list[NodeListEntry] = []
+    for node in workflow.nodes:
+        _emit_node_rows(
+            node, root=root, job_slug=job_slug, out=out, iter_path=[], parent_loop_id=None
+        )
+    return out
+
+
+def _list_nodes_flat(root: Path, job_slug: str) -> list[NodeListEntry]:
+    """Workflow-less fallback: read whichever state.json files exist."""
     nodes_dir = v1_paths.nodes_dir(job_slug, root=root)
     if not nodes_dir.is_dir():
         return []
@@ -273,6 +337,151 @@ def _list_nodes(root: Path, job_slug: str) -> list[NodeListEntry]:
             )
         )
     return out
+
+
+def _emit_node_rows(
+    node: Node,
+    *,
+    root: Path,
+    job_slug: str,
+    out: list[NodeListEntry],
+    iter_path: list[int],
+    parent_loop_id: str | None,
+) -> None:
+    """Append rows for *node*. Loop nodes are not emitted directly — their
+    body nodes are emitted per iteration with ``iter_path`` extended."""
+    if isinstance(node, LoopNode):
+        iters = _count_loop_iterations_seen(node.id, job_slug, root)
+        for i in range(iters):
+            for body in node.body:
+                _emit_node_rows(
+                    body,
+                    root=root,
+                    job_slug=job_slug,
+                    out=out,
+                    iter_path=[*iter_path, i],
+                    parent_loop_id=node.id,
+                )
+        return
+    out.append(
+        _build_node_entry(
+            node,
+            root=root,
+            job_slug=job_slug,
+            iter_path=iter_path,
+            parent_loop_id=parent_loop_id,
+        )
+    )
+
+
+def _build_node_entry(
+    node: ArtifactNode | CodeNode,
+    *,
+    root: Path,
+    job_slug: str,
+    iter_path: list[int],
+    parent_loop_id: str | None,
+) -> NodeListEntry:
+    """Read on-disk state for *node* and synthesise the per-row entry.
+
+    The engine writes a single ``nodes/<id>/state.json`` per node — for
+    loop body nodes that file reflects the *latest* iteration. We refine
+    state per iteration:
+
+    - If a loop-indexed output envelope exists for this iter → SUCCEEDED.
+    - Else if this is the latest iter on disk → use state.json.
+    - Else → PENDING (the loop hasn't reached this iter yet, which
+      shouldn't happen in a well-formed call but stays safe)."""
+    sp = v1_paths.node_state_path(job_slug, node.id, root=root)
+    nr: NodeRun | None = None
+    if sp.is_file():
+        try:
+            nr = NodeRun.model_validate_json(sp.read_text())
+        except Exception:
+            nr = None
+
+    state: NodeRunState = nr.state if nr is not None else NodeRunState.PENDING
+    attempts = nr.attempts if nr is not None else 0
+    last_error = nr.last_error if nr is not None else None
+    started_at = nr.started_at if nr is not None else None
+    finished_at = nr.finished_at if nr is not None else None
+
+    # For loop body rows, prefer envelope-existence as the truth signal.
+    if iter_path and parent_loop_id is not None:
+        innermost_iter = iter_path[-1]
+        latest_seen = _count_loop_iterations_seen(parent_loop_id, job_slug, root) - 1
+        if _node_iter_has_envelope(node, parent_loop_id, innermost_iter, job_slug, root):
+            state = NodeRunState.SUCCEEDED
+        elif innermost_iter < latest_seen:
+            # An older iteration with no envelope on disk — body finished
+            # without producing this output (e.g. runs_if false).
+            state = NodeRunState.SKIPPED
+        # iter == latest_seen: keep state.json as-is (RUNNING / PENDING / ...).
+
+    return NodeListEntry(
+        node_id=node.id,
+        kind=node.kind,
+        actor=node.actor,
+        state=state,
+        attempts=attempts,
+        last_error=last_error,
+        started_at=started_at,
+        finished_at=finished_at,
+        iter=list(iter_path),
+        parent_loop_id=parent_loop_id,
+    )
+
+
+def _node_iter_has_envelope(
+    node: ArtifactNode | CodeNode,
+    loop_id: str,
+    iteration: int,
+    job_slug: str,
+    root: Path,
+) -> bool:
+    """True iff a loop-indexed output envelope for *node* at *iteration*
+    is present on disk for any of the node's declared output var names."""
+    for output_ref in (node.outputs or {}).values():
+        var_name = output_ref.lstrip("$").split(".", 1)[0].rstrip("?")
+        if not var_name:
+            continue
+        env = v1_paths.loop_variable_envelope_path(
+            job_slug, loop_id, var_name, iteration, root=root
+        )
+        if env.is_file():
+            return True
+    return False
+
+
+def _count_loop_iterations_seen(loop_id: str, job_slug: str, root: Path) -> int:
+    """Highest visible iteration index for *loop_id* + 1. Zero if nothing
+    on disk yet.
+
+    Heuristic: scan ``variables/loop_<id>_*_<i>.json`` filenames. Engine
+    writes one file per (loop, body_var, iteration), so the highest
+    trailing integer across any matching file is the iteration count."""
+    var_dir = v1_paths.variables_dir(job_slug, root=root)
+    if not var_dir.is_dir():
+        return 0
+    safe_id = loop_id.replace("/", "_").replace(" ", "_")
+    prefix = f"loop_{safe_id}_"
+    suffix = ".json"
+    highest = -1
+    for p in var_dir.iterdir():
+        name = p.name
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        middle = name[len(prefix) : -len(suffix)]
+        last_us = middle.rfind("_")
+        if last_us == -1:
+            continue
+        try:
+            i = int(middle[last_us + 1 :])
+        except ValueError:
+            continue
+        if i > highest:
+            highest = i
+    return highest + 1
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +526,8 @@ def node_detail(root: Path, job_slug: str, node_id: str) -> NodeDetail | None:
 
 
 def hil_queue(root: Path, *, job_slug: str | None = None) -> list[HilQueueItem]:
-    """Enumerate every pending HIL gate, optionally filtered to one job."""
+    """Enumerate every pending HIL — explicit *and* implicit — across
+    all jobs (or one job when ``job_slug`` is set)."""
     items: list[HilQueueItem] = []
     if job_slug is not None:
         items.extend(_hil_queue_for_job(root, job_slug))
@@ -330,43 +540,145 @@ def hil_queue(root: Path, *, job_slug: str | None = None) -> list[HilQueueItem]:
 
 
 def _hil_queue_for_job(root: Path, job_slug: str) -> list[HilQueueItem]:
+    workflow_name = _workflow_name_for_job(root, job_slug)
+    out: list[HilQueueItem] = []
+    out.extend(_hil_explicit_for_job(root, job_slug, workflow_name))
+    out.extend(_hil_implicit_for_job(root, job_slug, workflow_name))
+    return out
+
+
+def _workflow_name_for_job(root: Path, job_slug: str) -> str:
+    cfg = _read_job_config(root, job_slug)
+    return cfg.workflow_name if cfg is not None else job_slug
+
+
+def _hil_explicit_for_job(root: Path, job_slug: str, workflow_name: str) -> list[HilQueueItem]:
     pending_dir = v1_paths.job_dir(job_slug, root=root) / "pending"
     if not pending_dir.is_dir():
         return []
     out: list[HilQueueItem] = []
     for f in sorted(pending_dir.glob("*.json")):
-        item = _read_pending_marker(root, job_slug, f)
+        item = _read_pending_marker(root, job_slug, workflow_name, f)
+        if item is not None:
+            out.append(item)
+    return out
+
+
+def _hil_implicit_for_job(root: Path, job_slug: str, workflow_name: str) -> list[HilQueueItem]:
+    asks_dir = v1_paths.job_dir(job_slug, root=root) / "asks"
+    if not asks_dir.is_dir():
+        return []
+    out: list[HilQueueItem] = []
+    for f in sorted(asks_dir.glob("*.json")):
+        item = _read_ask_marker(job_slug, workflow_name, f)
         if item is not None:
             out.append(item)
     return out
 
 
 def hil_queue_item(root: Path, job_slug: str, node_id: str) -> HilQueueItem | None:
+    """Return the explicit pending HIL for ``(job_slug, node_id)`` if any.
+
+    Implicit asks are addressed by ``call_id``, not ``node_id`` (one
+    node may have multiple in-flight asks). For implicit lookup use
+    :func:`hil_queue_ask`."""
     f = v1_paths.job_dir(job_slug, root=root) / "pending" / f"{node_id}.json"
     if not f.is_file():
         return None
-    return _read_pending_marker(root, job_slug, f)
+    workflow_name = _workflow_name_for_job(root, job_slug)
+    return _read_pending_marker(root, job_slug, workflow_name, f)
 
 
-def _read_pending_marker(root: Path, job_slug: str, path: Path) -> HilQueueItem | None:
+def hil_queue_ask(root: Path, job_slug: str, call_id: str) -> HilQueueItem | None:
+    """Return the implicit ``ask_human`` marker for ``(job_slug, call_id)``."""
+    f = v1_paths.job_dir(job_slug, root=root) / "asks" / f"{call_id}.json"
+    if not f.is_file():
+        return None
+    workflow_name = _workflow_name_for_job(root, job_slug)
+    return _read_ask_marker(job_slug, workflow_name, f)
+
+
+def _read_pending_marker(
+    root: Path, job_slug: str, workflow_name: str, path: Path
+) -> HilQueueItem | None:
     try:
         data = json.loads(path.read_text())
     except Exception:
         return None
-    created_at: datetime | None = None
-    raw_created = data.get("created_at")
-    if isinstance(raw_created, str):
-        try:
-            created_at = datetime.fromisoformat(raw_created)
-        except ValueError:
-            created_at = None
+    created_at = _parse_iso_or_none(data.get("created_at"))
+    iter_list = _iter_from_pending(data)
     return HilQueueItem(
+        kind="explicit",
         job_slug=job_slug,
+        workflow_name=workflow_name,
         node_id=data.get("node_id", path.stem),
+        iter=iter_list,
+        created_at=created_at,
         output_var_names=list(data.get("output_var_names") or []),
         output_types=dict(data.get("output_types") or {}),
         presentation=dict(data.get("presentation") or {}),
-        loop_id=data.get("loop_id"),
-        iteration=data.get("iteration"),
-        created_at=created_at,
     )
+
+
+def _read_ask_marker(job_slug: str, workflow_name: str, path: Path) -> HilQueueItem | None:
+    """Project an implicit-HIL ask marker. Returns ``None`` if the marker
+    has already been answered (``answer`` field present) or is malformed."""
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if "answer" in data:
+        # Already answered; the engine's MCP server will clean it up.
+        return None
+    question = data.get("question")
+    if not isinstance(question, str):
+        return None
+    iter_list = _iter_from_ask(data.get("iter"))
+    created_at = _parse_iso_or_none(data.get("created_at"))
+    return HilQueueItem(
+        kind="implicit",
+        job_slug=job_slug,
+        workflow_name=workflow_name,
+        node_id=str(data.get("node_id") or ""),
+        iter=iter_list,
+        created_at=created_at,
+        call_id=path.stem,
+        question=question,
+    )
+
+
+def _iter_from_pending(data: dict[str, Any]) -> list[int]:
+    """Pending markers carry ``loop_id`` + ``iteration`` (int). Convert to
+    ``iter`` list for parity with implicit shape."""
+    raw = data.get("iteration")
+    if isinstance(raw, int):
+        return [raw]
+    return []
+
+
+def _iter_from_ask(raw: Any) -> list[int]:
+    """``HAMMOCK_NODE_ITER`` env value as written by ``ask_human``: comma-
+    separated ints, possibly missing. ``"0,1"`` → ``[0, 1]``."""
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    parts = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            parts.append(int(tok))
+        except ValueError:
+            return []
+    return parts
+
+
+def _parse_iso_or_none(raw: Any) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
