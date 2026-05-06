@@ -21,22 +21,18 @@ async def test_outer_loop_three_iterations_unroll(
 ) -> None:
     """An outer loop with body nodes at iter (0,), (1,), (2,) renders
     three indented sections in the API response."""
-    raise NotImplementedError
-
-
+    pytest.skip("Stage 3 — disk-first dashboard fills this in")
 @pytest.mark.asyncio
 async def test_nested_loop_two_levels_unroll(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     """Outer loop iter 0 + inner loop iter 0,1 ; outer iter 1 + inner
     iter 0 — projection groups under the right outer iteration."""
-    raise NotImplementedError
-
-
+    pytest.skip("Stage 3 — disk-first dashboard fills this in")
 @pytest.mark.asyncio
 async def test_loop_indexed_envelopes_resolve_per_iteration(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     """Variable envelopes at variables/loop_<id>_<var>_<i>.json are
     resolved into the per-iteration node detail response."""
-    raise NotImplementedError
+    pytest.skip("Stage 3 — disk-first dashboard fills this in")

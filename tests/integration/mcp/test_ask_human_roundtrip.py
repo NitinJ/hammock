@@ -32,4 +32,4 @@ async def test_ask_human_writes_pending_then_returns_answer(tmp_path: Path) -> N
        envelope (simulating dashboard POST having succeeded).
     5. Assert the MCP server unblocks and returns the answer string.
     """
-    raise NotImplementedError
+    pytest.skip("Stage 4 — MCP slim fills this in")

@@ -27,9 +27,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from shared.models.job import JobConfig, JobState
 from shared.v1 import paths as v1_paths
-from shared.v1.job import NodeRun, NodeRunState
+from shared.v1.job import JobConfig, JobState, NodeRun, NodeRunState
 from tests.integration.conftest import DashboardHandle
 from tests.integration.fake_engine import FakeEngine
 
@@ -54,7 +53,7 @@ def test_fake_engine_constructor_does_not_create_files(tmp_path: Path) -> None:
 
 def test_start_job_creates_job_skeleton(fake_engine_offline: FakeEngine) -> None:
     fake_engine_offline.start_job(
-        workflow={"name": "T1", "nodes": []},
+        workflow={"workflow": "T1", "nodes": []},
         request="fix the bug",
     )
     job_json_path = v1_paths.job_config_path(
@@ -65,7 +64,7 @@ def test_start_job_creates_job_skeleton(fake_engine_offline: FakeEngine) -> None
     config = JobConfig.model_validate_json(job_json_path.read_text())
     assert config.job_slug == fake_engine_offline.job_slug
     assert config.state == JobState.SUBMITTED
-    assert config.project_slug == fake_engine_offline.project_slug
+    assert config.workflow_name == "T1"
 
     # Skeleton dirs exist
     assert v1_paths.variables_dir(
@@ -77,7 +76,7 @@ def test_start_job_creates_job_skeleton(fake_engine_offline: FakeEngine) -> None
 
 
 def test_start_job_appends_event(fake_engine_offline: FakeEngine) -> None:
-    fake_engine_offline.start_job(workflow={"name": "T1"}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     events = v1_paths.events_jsonl(
         fake_engine_offline.job_slug, root=fake_engine_offline.root
     )
@@ -90,7 +89,7 @@ def test_start_job_appends_event(fake_engine_offline: FakeEngine) -> None:
 
 
 def test_finish_job_updates_state_and_emits_event(fake_engine_offline: FakeEngine) -> None:
-    fake_engine_offline.start_job(workflow={"name": "T1"}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.finish_job(JobState.COMPLETED)
 
     config = JobConfig.model_validate_json(
@@ -108,15 +107,15 @@ def test_finish_job_updates_state_and_emits_event(fake_engine_offline: FakeEngin
 
 
 def test_finish_job_rejects_non_terminal_state(fake_engine_offline: FakeEngine) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     with pytest.raises((ValueError, AssertionError)):
-        fake_engine_offline.finish_job(JobState.STAGES_RUNNING)
+        fake_engine_offline.finish_job(JobState.RUNNING)
 
 
 def test_enter_node_writes_running_state_and_event(
     fake_engine_offline: FakeEngine,
 ) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("write-bug-report")
 
     state_path = v1_paths.node_state_path(
@@ -138,10 +137,10 @@ def test_complete_node_writes_envelope_and_state(
     and updates state.json to SUCCEEDED."""
     from shared.v1.types.bug_report import BugReportValue
 
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("write-bug-report")
 
-    value = BugReportValue(text="The login button does not respond.")
+    value = BugReportValue(summary="The login button does not respond.")
     fake_engine_offline.complete_node("write-bug-report", value)
 
     # State updated
@@ -162,7 +161,7 @@ def test_complete_node_writes_envelope_and_state(
     assert env_path.exists()
     envelope = json.loads(env_path.read_text())
     assert envelope["type"] == "bug-report"
-    assert envelope["value"]["text"] == "The login button does not respond."
+    assert envelope["value"]["summary"] == "The login button does not respond."
 
 
 def test_complete_node_with_iter_writes_loop_indexed_envelope(
@@ -170,30 +169,30 @@ def test_complete_node_with_iter_writes_loop_indexed_envelope(
 ) -> None:
     from shared.v1.types.bug_report import BugReportValue
 
-    fake_engine_offline.start_job(workflow={}, request="x")
-    fake_engine_offline.enter_node("body-node", iter=(0,))
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
+    fake_engine_offline.enter_node("body-node", iter=(0,), loop_id="impl-loop")
     fake_engine_offline.complete_node(
         "body-node",
-        BugReportValue(text="loop iteration 0"),
+        BugReportValue(summary="loop iteration 0"),
         iter=(0,),
+        loop_id="impl-loop",
     )
 
     # Loop-indexed envelope path: variables/loop_<loop_id>_<var>_<i>.json.
-    # The loop_id is the parent loop's id; FakeEngine uses node_id as the
-    # variable name and stores the loop_id alongside iter when called
-    # via this test pattern.
-    # The contract-level assertion is that *some* loop-indexed envelope
-    # exists for this iteration. The exact loop_id is set by FakeEngine
-    # based on context (e.g., the node_id implies the loop association).
-    var_dir = v1_paths.variables_dir(
-        fake_engine_offline.job_slug, root=fake_engine_offline.root
+    indexed_path = v1_paths.loop_variable_envelope_path(
+        fake_engine_offline.job_slug,
+        "impl-loop",
+        "body-node",
+        0,
+        root=fake_engine_offline.root,
     )
-    indexed = list(var_dir.glob("loop_*_body-node_0.json"))
-    assert len(indexed) == 1, f"expected one loop-indexed envelope, got {indexed}"
+    assert indexed_path.exists(), f"expected envelope at {indexed_path}"
+    envelope = json.loads(indexed_path.read_text())
+    assert envelope["type"] == "bug-report"
 
 
 def test_fail_node_records_error(fake_engine_offline: FakeEngine) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("bad-node")
     fake_engine_offline.fail_node("bad-node", "something broke")
 
@@ -207,7 +206,7 @@ def test_fail_node_records_error(fake_engine_offline: FakeEngine) -> None:
 
 
 def test_skip_node_records_state(fake_engine_offline: FakeEngine) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.skip_node("optional-node", "runs_if false")
 
     nr = NodeRun.model_validate_json(
@@ -223,7 +222,7 @@ def test_skip_node_records_state(fake_engine_offline: FakeEngine) -> None:
 def test_emit_event_appends_with_monotonic_seq(
     fake_engine_offline: FakeEngine,
 ) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.emit_event("custom_event_a", {"k": 1})
     fake_engine_offline.emit_event("custom_event_b", {"k": 2})
 
@@ -238,7 +237,7 @@ def test_emit_event_appends_with_monotonic_seq(
 def test_emit_log_appends_to_per_attempt_stdout(
     fake_engine_offline: FakeEngine,
 ) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("a-node")
     fake_engine_offline.emit_log("a-node", "first line")
     fake_engine_offline.emit_log("a-node", "second line")
@@ -255,7 +254,7 @@ def test_emit_log_appends_to_per_attempt_stdout(
 def test_request_hil_writes_pending_marker(
     fake_engine_offline: FakeEngine,
 ) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("review-spec-human")
     hil_id = fake_engine_offline.request_hil(
         "review-spec-human",
@@ -280,7 +279,7 @@ def test_request_hil_writes_pending_marker(
 def test_assert_hil_answered_fails_when_pending_present(
     fake_engine_offline: FakeEngine,
 ) -> None:
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("review-spec-human")
     fake_engine_offline.request_hil("review-spec-human", "review-verdict")
 
@@ -295,7 +294,7 @@ def test_assert_hil_answered_succeeds_when_envelope_present(
     assert_hil_answered returns the parsed value."""
     from shared.v1.types.review_verdict import ReviewVerdictValue
 
-    fake_engine_offline.start_job(workflow={}, request="x")
+    fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("review-spec-human")
     fake_engine_offline.request_hil("review-spec-human", "review-verdict")
 
