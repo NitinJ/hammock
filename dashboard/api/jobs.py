@@ -36,7 +36,12 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 class JobSubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    project_slug: str = Field(min_length=1)
+    project_slug: str = ""
+    """v0-compat field. v1 derives repo identity from the workflow's
+    first code-kind node, so for artifact-only workflows this can stay
+    empty. When set, the dashboard reads ``<root>/projects/<slug>/
+    project.json`` to locate the repo for branch creation."""
+
     job_type: str = Field(min_length=1)
     title: str = Field(min_length=1)
     request_text: str = Field(min_length=1)

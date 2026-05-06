@@ -39,8 +39,12 @@ class ProjectListItem(BaseModel):
     slug: str
     name: str
     repo_path: str
+    remote_url: str | None = None
+    default_branch: str | None = None
     open_jobs: int
     last_job_at: datetime | None
+    last_health_check_at: datetime | None = None
+    last_health_check_status: Literal["pass", "warn", "fail"] | None = None
 
 
 class ProjectDetail(BaseModel):
@@ -48,8 +52,10 @@ class ProjectDetail(BaseModel):
     slug: str
     name: str
     repo_path: str
-    remote_url: str
+    remote_url: str | None = None
     default_branch: str
+    last_health_check_at: datetime | None = None
+    last_health_check_status: Literal["pass", "warn", "fail"] | None = None
 
 
 class JobListItem(BaseModel):
@@ -178,8 +184,12 @@ def project_list_item(root: Path, slug: str) -> ProjectListItem | None:
         slug=slug,
         name=data.get("name", slug),
         repo_path=data.get("repo_path", ""),
+        remote_url=data.get("remote_url"),
+        default_branch=data.get("default_branch"),
         open_jobs=open_count,
         last_job_at=last_job,
+        last_health_check_at=_parse_iso_or_none(data.get("last_health_check_at")),
+        last_health_check_status=data.get("last_health_check_status"),
     )
 
 
@@ -192,8 +202,10 @@ def project_detail(root: Path, slug: str) -> ProjectDetail | None:
         slug=slug,
         name=data.get("name", slug),
         repo_path=data.get("repo_path", ""),
-        remote_url=data.get("remote_url", ""),
+        remote_url=data.get("remote_url"),
         default_branch=data.get("default_branch", "main"),
+        last_health_check_at=_parse_iso_or_none(data.get("last_health_check_at")),
+        last_health_check_status=data.get("last_health_check_status"),
     )
 
 

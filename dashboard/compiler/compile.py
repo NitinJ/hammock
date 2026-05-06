@@ -136,7 +136,16 @@ def compile_job(
             dry_run=True,
         )
 
-    # 2. Real submission via engine.v1.driver.
+    # 2. Resolve repo identity from the registered project (when given).
+    # Per docs/projects-management.md: for code-kind workflows we copy the
+    # operator's local checkout (project.repo_path) into <job_dir>/repo
+    # rather than cloning from a remote URL. project_slug → project.json
+    # gives us repo_path + repo_slug + default_branch.
+    repo_slug, repo_path, default_branch, repo_failure = _resolve_repo_identity(project_slug, root)
+    if repo_failure is not None:
+        return [repo_failure]
+
+    # 3. Real submission via engine.v1.driver.
     slug = _derive_slug(job_type, title)
     try:
         cfg = submit_job(
@@ -144,7 +153,9 @@ def compile_job(
             request_text=request_text,
             job_slug=slug,
             root=root,
-            repo_slug=project_slug or None,
+            repo_slug=repo_slug,
+            repo_path=repo_path,
+            default_branch=default_branch or "main",
         )
     except WorkflowLoadError as exc:
         return [CompileFailure(kind="load", stage_id=None, message=str(exc))]
@@ -160,6 +171,75 @@ def compile_job(
         stages=[],
         dry_run=False,
     )
+
+
+def _resolve_repo_identity(
+    project_slug: str | None, root: Path
+) -> tuple[str | None, Path | None, str | None, CompileFailure | None]:
+    """Read ``<root>/projects/<slug>/project.json`` and return
+    ``(repo_slug, repo_path, default_branch, failure)``.
+
+    ``repo_slug`` is the ``owner/repo`` form derived from the project's
+    ``remote_url`` (engine uses it for branch naming). ``repo_path`` is
+    the operator's local checkout (engine copies it into
+    ``<job_dir>/repo``). ``default_branch`` is the branch the engine
+    forks ``hammock/jobs/<slug>`` off.
+
+    Returns ``(None, None, None, None)`` when ``project_slug`` is
+    empty — artifact-only workflows don't need a repo. Returns a
+    ``CompileFailure`` when the slug is set but project.json is malformed.
+    Missing project.json (or missing fields within it) is a soft-fail
+    — the engine raises a clear error for code-kind workflows."""
+    import json as _json
+
+    from shared import paths as _shared_paths
+
+    if not project_slug:
+        return None, None, None, None
+
+    pj = _shared_paths.project_json(project_slug, root=root)
+    if not pj.is_file():
+        log.info(
+            "compile_job: project %r has no project.json at %s; submitting without repo identity",
+            project_slug,
+            pj,
+        )
+        return None, None, None, None
+    try:
+        data = _json.loads(pj.read_text())
+    except Exception as exc:
+        return (
+            None,
+            None,
+            None,
+            CompileFailure(
+                kind="project_malformed",
+                stage_id=None,
+                message=f"could not parse {pj}: {exc}",
+            ),
+        )
+
+    repo_path_str = data.get("repo_path") or ""
+    repo_path = Path(repo_path_str) if repo_path_str else None
+    remote_url = data.get("remote_url") or ""
+    default_branch = data.get("default_branch") or "main"
+    repo_slug = _derive_repo_slug(remote_url) if remote_url else project_slug
+    return repo_slug, repo_path, default_branch, None
+
+
+_GH_REPO_RE = re.compile(r"github\.com[/:](?P<owner>[^/]+)/(?P<repo>[^/.]+)")
+
+
+def _derive_repo_slug(remote_url: str) -> str:
+    """``https://github.com/owner/repo[.git]`` → ``owner/repo``.
+
+    Falls back to the input string when the URL doesn't match the
+    GitHub shape — non-GitHub remotes still need *some* slug for branch
+    naming."""
+    m = _GH_REPO_RE.search(remote_url)
+    if m is None:
+        return remote_url
+    return f"{m.group('owner')}/{m.group('repo')}"
 
 
 def _resolve_bundled_workflow(job_type: str) -> Path | None:

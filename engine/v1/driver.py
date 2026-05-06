@@ -35,6 +35,7 @@ from engine.v1.substrate import (
     JobRepo,
     SubstrateError,
     allocate_code_substrate,
+    copy_local_repo,
     set_up_job_repo,
 )
 from engine.v1.validator import assert_valid
@@ -77,6 +78,8 @@ def submit_job(
     root: Path,
     repo_url: str | None = None,
     repo_slug: str | None = None,
+    repo_path: Path | None = None,
+    default_branch: str = "main",
 ) -> JobConfig:
     """Create a fresh job dir + write JobConfig + seed job-request.
 
@@ -115,24 +118,49 @@ def submit_job(
             env.model_dump_json(),
         )
 
-    # Code-substrate set-up: clone the test repo + create job branch
-    # iff the workflow has any code nodes (top-level or inside a loop body).
+    # Code-substrate set-up: when the workflow has any code-kind nodes
+    # (top-level or inside a loop body) we need a working clone in
+    # ``<job_dir>/repo``. Two paths during the path-only migration:
+    #
+    # - ``repo_path`` set: copy from the operator's registered local
+    #   checkout. Per ``docs/projects-management.md`` this is the only
+    #   intended path going forward — preserves ``.env`` and other
+    #   uncommitted state the project needs to run.
+    # - ``repo_url`` set (deprecated): clone-from-remote. Kept until
+    #   all call sites migrate, then deleted.
     needs_repo = _has_code_node(workflow.nodes)
     if needs_repo:
-        if not repo_url or not repo_slug:
+        if repo_path is not None:
+            if not repo_slug:
+                raise JobSubmissionError(
+                    "workflow contains code-kind nodes; submit_job requires "
+                    "`repo_slug` when `repo_path` is set"
+                )
+            try:
+                copy_local_repo(
+                    job_slug=job_slug,
+                    root=root,
+                    repo_path=repo_path,
+                    repo_slug=repo_slug,
+                    default_branch=default_branch,
+                )
+            except SubstrateError as exc:
+                raise JobSubmissionError(f"could not set up job repo: {exc}") from exc
+        elif repo_url and repo_slug:
+            try:
+                set_up_job_repo(
+                    job_slug=job_slug,
+                    root=root,
+                    repo_url=repo_url,
+                    repo_slug=repo_slug,
+                )
+            except SubstrateError as exc:
+                raise JobSubmissionError(f"could not set up job repo: {exc}") from exc
+        else:
             raise JobSubmissionError(
                 "workflow contains code-kind nodes; submit_job requires "
-                "both `repo_url` and `repo_slug`"
+                "either `repo_path` (preferred) or `repo_url` + `repo_slug`"
             )
-        try:
-            set_up_job_repo(
-                job_slug=job_slug,
-                root=root,
-                repo_url=repo_url,
-                repo_slug=repo_slug,
-            )
-        except SubstrateError as exc:
-            raise JobSubmissionError(f"could not set up job repo: {exc}") from exc
 
     return cfg
 

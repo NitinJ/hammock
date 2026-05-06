@@ -8,6 +8,7 @@
       <NavLink :to="{ name: 'home' }" icon="⊞"> Dashboard </NavLink>
       <NavLink :to="{ name: 'jobs-list' }" icon="≡"> Jobs </NavLink>
       <NavLink :to="{ name: 'job-submit' }" icon="＋"> New Job </NavLink>
+      <NavLink :to="{ name: 'projects' }" icon="□"> Projects </NavLink>
 
       <li class="my-2 border-t border-border" />
 

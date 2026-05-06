@@ -34,13 +34,17 @@ import type {
   NodeDetail,
   ProjectDetail,
   ProjectListItem,
+  RegisterProjectRequest,
+  RegisterProjectResponse,
   SettingsResponse,
+  WorkflowListItem,
 } from "./schema.d";
 
 export const QUERY_KEYS = {
   health: ["health"] as const,
   projects: ["projects"] as const,
   project: (slug: string) => ["projects", slug] as const,
+  workflows: ["workflows"] as const,
   jobs: (repoSlug?: string | null, state?: JobState | null) =>
     ["jobs", "list", repoSlug ?? null, state ?? null] as const,
   job: (jobSlug: string) => ["jobs", "detail", jobSlug] as const,
@@ -48,6 +52,13 @@ export const QUERY_KEYS = {
   hil: (jobSlug?: string | null) => ["hil", jobSlug ?? "all"] as const,
   settings: ["settings"] as const,
 };
+
+export function useWorkflows() {
+  return useQuery({
+    queryKey: QUERY_KEYS.workflows,
+    queryFn: () => api.get<WorkflowListItem[]>("/workflows"),
+  });
+}
 
 export function useProjects() {
   return useQuery({
@@ -61,6 +72,38 @@ export function useProject(slug: MaybeRefOrGetter<string>) {
     queryKey: computed(() => QUERY_KEYS.project(toValue(slug))),
     queryFn: () => api.get<ProjectDetail>(`/projects/${toValue(slug)}`),
     enabled: computed(() => Boolean(toValue(slug))),
+  });
+}
+
+export function useRegisterProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RegisterProjectRequest) =>
+      api.post<RegisterProjectResponse>("/projects", body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.del<void>(`/projects/${slug}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useReverifyProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<RegisterProjectResponse>(`/projects/${slug}/verify`, {}),
+    onSuccess: (_data, slug) => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["projects", slug] });
+    },
   });
 }
 

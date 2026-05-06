@@ -128,20 +128,53 @@ export interface JobSubmitResponse {
 
 // ── Projects ─────────────────────────────────────────────────────────────
 
+export type HealthCheckStatus = "pass" | "warn" | "fail";
+
 export interface ProjectListItem {
   slug: string;
   name: string;
   repo_path: string;
+  remote_url: string | null;
+  default_branch: string | null;
   open_jobs: number;
   last_job_at: string | null;
+  last_health_check_at: string | null;
+  last_health_check_status: HealthCheckStatus | null;
 }
 
 export interface ProjectDetail {
   slug: string;
   name: string;
   repo_path: string;
-  remote_url: string;
+  remote_url: string | null;
   default_branch: string;
+  last_health_check_at: string | null;
+  last_health_check_status: HealthCheckStatus | null;
+}
+
+export interface RegisterProjectRequest {
+  path: string;
+  slug?: string;
+  name?: string;
+}
+
+export interface VerifyResult {
+  status: HealthCheckStatus;
+  remote_url: string | null;
+  default_branch: string | null;
+  reason: string | null;
+}
+
+export interface RegisterProjectResponse {
+  project: ProjectDetail;
+  verify: VerifyResult;
+}
+
+// ── Workflows (bundled) ──────────────────────────────────────────────────
+
+export interface WorkflowListItem {
+  job_type: string;
+  workflow_name: string;
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────
