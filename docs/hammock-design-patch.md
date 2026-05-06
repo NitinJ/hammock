@@ -859,3 +859,289 @@ Engine-derived (no per-type code):
 
 - Re-express the bundled fix-bug template per §6.
 - Drop the `plan.yaml` runtime-merge mechanism; the equivalent is a count-loop driven by `$impl-plan-loop.impl_plan[last].count`.
+
+---
+
+## 8. V0 → v1 component survey
+
+The v1 engine landed as a parallel tree (`engine/v1/`, `shared/v1/`) — none of the v0 dashboard, CLI, MCP, or frontend code is wired to it yet. This section triages every v0 module against the v1 design above so a follow-up implementation patch can plan the cutover with explicit per-module verdicts. It is not a wiring plan; it is the triage that precedes one.
+
+Categories:
+
+- **KEEP** — module is engine-agnostic; v1 doesn't change it.
+- **ADAPT** — module's role survives but it must read/call new v1 contracts (typed variables, disk-first state, node-shaped state files instead of stage-shaped).
+- **REPLACE** — module's role is taken over by an `engine/v1/` or `shared/v1/` module; v0 module deletes after cutover.
+- **WRAP** — v1 module exists; v0 module becomes a thin shim or one-time bridge.
+
+### 8.1 Dashboard — HTTP API (`dashboard/api/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `jobs.py` | ADAPT | Compile + spawn-driver endpoints. v1: compile → DAG validator + JobConfig write; spawn → `engine/v1/driver.py`. No more `stage-list.yaml`. |
+| `stages.py` | ADAPT | Listing + cancel/restart endpoints. v1: nodes replace stages; HTTP shape stays similar but data model is `ArtifactNode | CodeNode | LoopNode` state. Likely renames the route prefix. |
+| `hil.py` | ADAPT | GET pending / POST answer. v1: forms render from `VariableType.form_schema()`; submission goes through `engine/v1/hil.submit_hil_answer` (sync verification). Cache mutations go away. |
+| `costs.py`, `chat.py`, `artifacts.py`, `projects.py`, `settings.py`, `sse.py`, `observatory.py` | KEEP | No stage/workflow coupling. Cost rollup reads events, settings stores config, SSE streams events.jsonl — engine-agnostic. |
+
+### 8.2 Dashboard — driver process management (`dashboard/driver/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `lifecycle.py` | WRAP | `spawn_driver` double-forks. v1: same shape, different entrypoint (`python -m engine.v1.driver` rather than `python -m job_driver`). Thin adapter. |
+| `ipc.py` | ADAPT | command.json IPC for cancel/restart. v1 driver interprets the same commands, but stage-list mutation paths disappear. Minimal churn. |
+| `supervisor.py` | KEEP | Crash-restart loop; engine-neutral. |
+
+### 8.3 Dashboard — derived state (`dashboard/state/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `cache.py` | ADAPT | Per design-patch §3.2, cache becomes a derived view that **never gates visibility**. Reads `nodes/<id>/state.json` and `variables/<var>.json` instead of stage state. Disk reads are authoritative. |
+| `projections.py` | ADAPT | `StageListEntry`, `StageDetail` → `NodeListEntry`, `NodeDetail`. Field names change, projection logic survives. |
+| `pubsub.py` | KEEP | Cache pub/sub primitive; no engine coupling. |
+
+### 8.4 Dashboard — HIL (`dashboard/hil/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `state_machine.py` | KEEP | Pure state transitions (awaiting → answered / cancelled). |
+| `contract.py` | ADAPT | Mutates HilItem on disk today. v1: engine owns the writes (`engine/v1/hil` writes pending markers; submission API runs `produce` synchronously). Contract becomes a read-only coordinator that delegates to the v1 HIL submission API. |
+| `template_registry.py` | ADAPT | v1 forms are derived from `VariableType.form_schema()`. Per §1.4, the default schema comes from the `Value` Pydantic model; types override for custom widgets. The template registry stays as the per-type override hook (drop the per-stage-kind dispatch; index by variable type instead). |
+| `orphan_sweeper.py` | ADAPT | Cleans HIL on stage restart. v1: items are pinned to node-run id (and, per loop body, to `(loop_id, iteration, created_at)`); orphaning is naturally bounded. Logic simplifies. |
+
+### 8.5 Dashboard — plan compiler / specialist (`dashboard/specialist/`, `dashboard/compiler/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `compile.py` | REPLACE | Merges overrides, validates stages, writes `stage-list.yaml`. v1: load workflow YAML, call `engine/v1/validator.assert_valid`, write `job.json`. The cutover may need a version-aware dispatcher (open question §8.11.5). |
+| `compiler/validators.py` | REPLACE | DAG, loop_back, predicate validation. v1's `engine/v1/validator` owns all of this. |
+| `specialist/resolver.py`, `specialist/materialise.py`, `compiler/overrides.py` | KEEP | Deep-merge, specialist loading, template instantiation. Engine-agnostic — workflow templates still need rendering even with v1 syntax. |
+
+### 8.6 Dashboard — code substrate primitives (`dashboard/code/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `branches.py`, `worktrees.py` | KEEP | Primitives (create branch / add worktree / delete branch) are still the right shape. v1's `engine/v1/substrate.py` already calls into the same primitives via thin wrappers in `engine/v1/git_ops.py`. The dashboard helpers stay; the substrate allocator owns *when* they run. (Note: the v1 branch namespace is `hammock/stages/<slug>/<node-id>`, not a new `hammock/nodes/...` path — design-patch §2.4. Helpers don't need renaming.) |
+
+### 8.7 Dashboard — MCP for implicit HIL (`dashboard/mcp/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `server.py` | REPLACE | Today exposes 4 tools (`open_task`, `update_task`, `open_ask`, `append_stages`). v1 drops `append_stages` (no dynamic stage-list mutation); `open_ask` becomes `ask_human` and calls `engine/v1/hil` to write a typed pending marker. The other tools either disappear or get rewritten against typed variables. |
+| `channel.py`, `manager.py` | ADAPT | Per-node MCP spawning + agent I/O. Lifecycle survives; scoping rebinds from "per stage" to "per node". |
+
+### 8.8 Dashboard — top-level shell + watcher
+
+| Module | Verdict | Why |
+|---|---|---|
+| `app.py`, `settings.py`, `__main__.py` | KEEP | FastAPI assembly, config, entrypoint. |
+| `watcher/tailer.py` | KEEP | Tails append-only logs; engine-agnostic. |
+
+### 8.9 CLI (`cli/`) and v0 driver (`job_driver/`)
+
+| Module | Verdict | Why |
+|---|---|---|
+| `cli/job.py` | ADAPT | Routes to `compile_job` + `spawn_driver`, both of which adapt. Health checks reworded (stage → node). Minimal change. |
+| `cli/doctor.py` | ADAPT | Same pattern — health checks reword. |
+| `cli/_external.py`, `cli/project.py` | KEEP | External CLI bridge, project registry. |
+| `job_driver/runner.py`, `stage_runner.py`, `prompt_builder.py`, `job_driver/__main__.py` | REPLACE | Wholly subsumed by `engine/v1/driver.py`, `engine/v1/code_dispatch.py`, `engine/v1/artifact.py`, `engine/v1/prompt.py`. Delete after cutover. |
+| `job_driver/cost_summary.py`, `job_driver/archive.py`, `job_driver/stream_extractor.py` | KEEP | Engine-neutral utilities — cost rollup, archive, stream-event extraction. They might move into a non-engine package post-cutover. |
+
+### 8.10 Frontend (`dashboard/frontend/src/`)
+
+| Area | Verdict | Why |
+|---|---|---|
+| `components/jobs/*` | ADAPT | Timeline rows: `stage_id` → `node_id`, field rename, otherwise the data flow survives. |
+| `components/stage/*` | REPLACE | Stage detail view assumes a flat stage list with kind enum. v1: nodes form a DAG with three kinds and loop bodies. Either rebuild as a node-detail / DAG-aware view, or extend with kind-conditional rendering — open question §8.11.3. |
+| `components/forms/*` (`AskForm`, `ReviewForm`, `ManualStepForm`, `FormRenderer`, `TemplateRegistry.ts`) | ADAPT | Per-kind form components today. v1: a single `FormRenderer` driven by the variable type's `FormSchema`. Per-type overrides remain (e.g. `pr-merge-confirmation` form has a single `pr_url` URL field — already shown in §3.4 of design-patch). |
+| `components/shared/*`, navigation, layout | KEEP | UI primitives, navigation, layout. |
+| `stores/*`, `composables/*` | ADAPT | Pinia state: add `NodeRun`, remove stage-specific fields. Routes through adapted API client. |
+| `api/*` | ADAPT | OpenAPI/REST client mappings (`GET /jobs/{slug}/stages` → `GET /jobs/{slug}/nodes/{id}`). |
+
+### 8.11 Open questions (to discuss before the impl-patch chooses an order)
+
+1. **One driver vs. two during cutover.** Does the dashboard need to run v0 and v1 jobs side-by-side, or do we cut over in one pass and migrate any in-flight jobs by hand?
+2. **HIL form rendering.** Keep the per-type override registry (and add a default-from-Pydantic generator), or fully delete the registry and rely on the default for v1, with overrides re-introduced only if a real type asks for one?
+3. **Frontend stage-detail rebuild vs. extend.** The stage view assumes a flat list; the DAG with loops is a different mental model. Cleaner to rebuild a node-DAG viewer or extend with feature flags?
+4. **MCP scoping (per-job or per-node).** v0 was per-stage. v1 cleans up by being per-node, but does the existing channel/manager lifecycle code support that without rework?
+5. **Compile-endpoint dispatch.** When a job submits, should the API detect YAML version and route to v0 or v1 compile, or do we hard-cut to v1 syntax? Affects how long `dashboard/compiler/` keeps the v0 path.
+6. **`contract.py` role in v1.** Is v1's `engine/v1/hil.submit_hil_answer` the only writer, with `contract.py` becoming a read-only coordinator? Or does the dashboard keep a thin contract layer that calls into the v1 API?
+7. **Cache layout.** Does `dashboard/state/cache.py` track variable envelopes (`<job_dir>/variables/<var>.json`) eagerly, or load them on demand per HTTP request? Affects cache size and watcher fan-in.
+8. **Frontend versioning.** The Vue app currently assumes a single backend shape. Do we ship a v1 build alongside the v0 build, or do we feature-flag inside one build during the cutover?
+
+Resolving these will determine the order and cuts in the implementation patch (§ 9 of the impl-patch, to be added).
+
+---
+
+## 9. Decisions
+
+Captured 2026-05-05 from the §8 review session. Decisions here supersede any conflicting text in §8.11 (open questions). Items still under discussion are listed at the bottom (§9.5).
+
+### 9.1 Cutover model: clean cut to v1
+
+- The v0 engine (`job_driver/`) deletes after cutover. No backwards compatibility, no parallel v0+v1 driver, no version detection at the compile endpoint.
+- Frontend ships a single Vue build that talks only to the v1 backend. No feature flag, no v0 path inside the build.
+- Compile endpoint (`dashboard/compiler/compile.py` REPLACE) runs `engine/v1/validator.assert_valid` on every submitted YAML. v0 syntax is rejected.
+- Single driver process across the dashboard: `engine/v1/driver`. `dashboard/driver/lifecycle.py` adapts to spawn `python -m engine.v1.driver`.
+
+### 9.2 Cache deletes
+
+- `dashboard/state/cache.py` removes entirely.
+- Every dashboard HTTP handler reads disk directly (job dir layout per §1.7).
+- `dashboard/state/projections.py` becomes pure functions of `(job_dir → response payload)`. No in-memory state.
+- `dashboard/state/pubsub.py` stays as the SSE fan-out primitive; the watcher tails `events.jsonl` and pushes lines to subscribers.
+- Caching can come back if a real workload demands it — none does today.
+
+### 9.3 HIL form rendering: backend `FormSchema` + generic frontend widgets
+
+- HIL forms are driven by `VariableType.form_schema()` returning a structured `FormSchema(fields: list[(name, widget_type)])`.
+- Frontend has one generic `FormRenderer.vue` plus a small `Map<widget_type, VueComponent>`. Per-stage-kind dispatch in `template_registry.py` retires; per-variable-type dispatch replaces it.
+- Adding a new variable type that needs a custom widget = one entry in the widget map plus one ~30-line Vue component.
+- Implicit HIL (agent-initiated `ask_human` via MCP) keeps a separate, fixed shape: `{question}` in, `{answer}` out. Single dedicated component, no schema dispatch.
+
+### 9.4 Type rework: review-verdict simplified, pr-merge-confirmation replaced by pr-review-verdict
+
+#### review-verdict
+
+`shared/v1/types/review_verdict.py` simplifies. The `Concern` sub-model and the `unresolved_concerns` and `addressed_in_this_iteration` fields delete. Final shape:
+
+```python
+class ReviewVerdictValue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    verdict: Literal["approved", "needs-revision", "rejected"]
+    summary: str = Field(..., min_length=1)
+```
+
+`form_schema()` returns `FormSchema(fields=[("verdict", "select:approved,needs-revision,rejected"), ("summary", "textarea")])`.
+
+#### pr-review-verdict (new) replaces pr-merge-confirmation (delete)
+
+`shared/v1/types/pr_merge_confirmation.py` deletes. `shared/v1/types/pr_review_verdict.py` is added. Value:
+
+```python
+class PRReviewVerdictValue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    verdict: Literal["merged", "needs-revision"]
+    summary: str  # engine-populated, NOT human-typed
+```
+
+`form_schema()` returns `FormSchema(fields=[("verdict", "select:merged,needs-revision")])`. **Two buttons; no textarea.**
+
+`produce` behaviour:
+
+- Human submits `{verdict: "merged" | "needs-revision"}`. That is the entire submission payload.
+- Engine reads the upstream `pr` input from `ctx.inputs["pr"]` → `pr.url`.
+- If `verdict == "merged"`: `gh pr view <url> --json state` → reject submission if state ≠ MERGED. Set `value.summary = ""` (or a short confirmation string).
+- If `verdict == "needs-revision"`: `gh pr view <url> --json comments,reviews,statusCheckRollup` → format into structured prose covering reviewer feedback, inline comments, and failing checks. Set `value.summary` to that prose.
+- Envelope lands at `loop_pr-merged-loop_pr_review_<i>.json`. The next implement iteration reads `$pr-merged-loop.pr_review[i-1]?.summary` and gets the aggregated GitHub feedback in one blob.
+
+GitHub becomes the single surface for review activity (reviewer comments, agent comments, teammate comments, failing CI checks). Hammock pulls from gh on submission and gives the agent everything in one prose summary.
+
+#### NodeContext extension
+
+`shared/v1/types/protocol.py` extends `NodeContext` with `inputs: dict[str, Any]` so human-actor `produce` methods can read upstream variable values. Engine's `submit_hil_answer` resolves the node's declared inputs and populates this map before invoking `produce`.
+
+#### Workflow YAML adjustments
+
+T4 / T5 / T6 yamls swap `pr_merge: { type: pr-merge-confirmation }` for `pr_review: { type: pr-review-verdict }`; the inner-loop predicate becomes:
+
+```yaml
+until: $pr-merged-loop.pr_review[i].verdict == 'merged'
+```
+
+Test stitcher policy `merge_pr_then_confirm` simplifies to submitting `{verdict: "merged"}` (after `gh pr merge --squash --admin` succeeds).
+
+### 9.5 Frontend job page: two-pane node-centric rebuild (resolves §8.11.3)
+
+The v0 stage-detail surface (`StageLive.vue` + `components/stage/*`) is replaced. The new job page is built around the node primitive.
+
+#### Sidebar + jobs list
+
+- Sidebar gains a `Jobs` entry between `Projects` and `HIL`.
+- New route `/jobs` → jobs list page. Rows = `slug, state, cost, duration`. Click a row → job page.
+
+#### Job page (`/jobs/:slug`)
+
+Two-pane layout:
+
+- **Left pane** — node list. Workflow declaration order, with loops unrolled inline.
+  - Top-level nodes appear as flat rows.
+  - Loop nodes are not shown as a single row. Their iterations are unrolled and each iteration's body nodes appear under a per-iteration section header (`iter 0:`, `iter 1:`, …), indented one level.
+  - Nested loops recurse the same pattern: deeper indentation per nesting level.
+  - For `until` loops, iteration sections appear lazily — iter 0 visible while running; iter 1 appears when the predicate fails and the body runs again.
+- **Right pane** — stream view. Two modes:
+  - **Default** (no node selected): job-wide common stream — `events.jsonl` lifecycle events interleaved with per-node stdout/stderr in chronological order.
+  - **Node selected**: detail for that node-execution. Contents:
+    - State badge (RUNNING / SUCCEEDED / SKIPPED / FAILED).
+    - For `actor: agent`: prompt + stdout stream + `result.json`.
+    - For `kind: code`: the above plus worktree path, stage branch name, opened-PR link.
+    - For `actor: human`: the pending form (if open) or the submitted answer (if past).
+    - Resolved inputs (rendered via the variable types' `render_for_consumer`) + produced outputs (envelope JSON, prettified).
+
+#### Iteration identity in the URL
+
+The same node id can have multiple executions (one per iteration of an enclosing loop). The URL distinguishes them:
+
+```
+/jobs/:slug                                    # default — no node selected
+/jobs/:slug?node=write-bug-report              # top-level node, no iteration
+/jobs/:slug?node=implement&iter=0              # body node inside one loop
+/jobs/:slug?node=implement&iter=0,0            # body node inside nested loops
+                                               # iter list = (outer-iter, inner-iter, ...)
+```
+
+#### Routing churn
+
+| Today | Replacement |
+|---|---|
+| `/jobs/:jobSlug` (`JobOverview.vue`) | rebuild as the two-pane page. |
+| `/jobs/:jobSlug/stages/:stageId` (`StageLive.vue`) | delete; node-detail collapses into the right pane of `/jobs/:slug?node=…`. |
+| (no `/jobs` listing today; Home shows recent activity) | new `/jobs` listing route + `JobsList.vue` view. |
+
+#### Component churn
+
+- `components/stage/*` REPLACE → becomes `components/node/*`. The internal pieces (stream pane, state badge, budget bar) survive shape; the orchestration around them changes.
+- `views/StageLive.vue` deletes.
+- `views/JobOverview.vue` rewritten for the two-pane layout.
+- `views/JobsList.vue` new.
+- Router updated; old stage route removed.
+
+### 9.6 MCP: one server per job, slim tool surface (resolves §8.11.4)
+
+- One MCP server process per job. Spawned at job submit / driver bootstrap; torn down on terminal state.
+- Each agent subprocess inherits the MCP socket via env var **plus** `HAMMOCK_NODE_ID` (and an iteration descriptor when the call is inside a loop body) so the server can scope tool calls to the calling node.
+- `dashboard/mcp/manager.py`: spawn moves from per-stage to per-job.
+- `dashboard/mcp/server.py` tools become node-aware via the `HAMMOCK_NODE_ID` env var on the calling agent subprocess.
+
+**Tool inventory:**
+
+| v0 tool | v1 verdict |
+|---|---|
+| `open_ask` | Renamed `ask_human(question) -> answer`. Writes a node-scoped pending marker via `engine/v1/hil.write_pending_marker`, waits for the human submission, returns the answer string. |
+| `append_stages` | Drop (no dynamic stage-list mutation; static DAG per §1.7). |
+| `open_task` | Drop. Agent prints to stdout if a sub-task is worth surfacing; UI shows it in the stream pane. |
+| `update_task` | Drop, same reason. |
+
+Net surface: one tool (`ask_human`), down from four. Re-add `open_task` / `update_task` when their absence proves painful — not before.
+
+### 9.7 Deferred — chat surfaces (note for later)
+
+Captured here so we don't lose the idea; tackled in a future round once the v1 base lands.
+
+- **Per-node chat (agent-node detail page only).** While an agent node is running, the human can type into a chat panel to interject — ask a clarifying question, redirect, share missed context. The agent receives these messages mid-stream. Requires either (a) claude conversation/streaming mode rather than `-p`, or (b) a polling mechanism where the agent checks for queued messages between tool calls. Significant change to how the engine spawns agents.
+- **Job-level chat with a permanent "job assistant" agent.** A long-lived agent that runs for the job's lifetime, reads the job dir (outputs, events.jsonl, state.json), and answers human questions about the job's state. Can also relay questions to a currently-running node-agent (if one is active). Distinct from any node in the workflow — it's an out-of-band assistant.
+
+Neither is in the v1 base scope. Both are flagged for design once T1..T6 plus the dashboard cutover are done.
+
+### 9.8 `dashboard/hil/contract.py`: delete (resolves §8.11.6)
+
+`dashboard/hil/contract.py` deletes. v1's `engine/v1/hil.submit_hil_answer` already covers everything the contract layer did:
+
+- Validates the typed payload via the variable type's `produce`.
+- Writes the envelope to the correct path (loop-indexed when applicable).
+- Removes the pending marker atomically.
+- Raises `HilSubmissionError` with a human-readable message on failure.
+
+`dashboard/api/hil.py` becomes a thin FastAPI handler (~30 lines): parses the POST body, calls `engine/v1/hil.submit_hil_answer`, translates `HilSubmissionError` → HTTP 400 with the error message in the response body. SSE event emission stays implicit — the engine writes events.jsonl as part of `submit_hil_answer`'s atomic step; the dashboard's watcher tails events.jsonl and fans out to subscribers (unchanged from §9.2).
+
+### 9.9 Open-question status
+
+All eight items from §8.11 are now resolved (mapped to §9.1–§9.8). The design surface for the v1 cutover is locked. Implementation order is the impl-patch's responsibility.
