@@ -25,21 +25,29 @@ async def test_replay_returns_pre_subscribe_events(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_replay_then_live_seq_continuous(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_reconnect_with_last_event_id_no_duplicates(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_job_scope_does_not_receive_global_events(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_live_event_appears_for_subscriber(
     dashboard: DashboardHandle, fake_engine: FakeEngine

@@ -29,6 +29,8 @@ async def test_implicit_hil_marker_visible_in_api(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_implicit_hil_answer_removes_marker(
     dashboard: DashboardHandle, fake_engine: FakeEngine

@@ -21,40 +21,50 @@ from tests.integration.fake_engine import FakeEngine
 
 
 @pytest.mark.asyncio
-async def test_job_json_classified(
-    dashboard: DashboardHandle, fake_engine: FakeEngine
-) -> None:
+async def test_job_json_classified(dashboard: DashboardHandle, fake_engine: FakeEngine) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
-async def test_node_state_classified(
-    dashboard: DashboardHandle, fake_engine: FakeEngine
-) -> None:
+async def test_node_state_classified(dashboard: DashboardHandle, fake_engine: FakeEngine) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_loop_indexed_variable_envelope_classified(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_top_level_variable_envelope_classified(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_events_jsonl_append_classified(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_pending_marker_classified(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_pending_marker_removal_classified(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_node_run_attempt_artefact_classified(
     dashboard: DashboardHandle, fake_engine: FakeEngine

@@ -70,16 +70,12 @@ def test_start_job_creates_job_skeleton(fake_engine_offline: FakeEngine) -> None
     assert v1_paths.variables_dir(
         fake_engine_offline.job_slug, root=fake_engine_offline.root
     ).is_dir()
-    assert v1_paths.nodes_dir(
-        fake_engine_offline.job_slug, root=fake_engine_offline.root
-    ).is_dir()
+    assert v1_paths.nodes_dir(fake_engine_offline.job_slug, root=fake_engine_offline.root).is_dir()
 
 
 def test_start_job_appends_event(fake_engine_offline: FakeEngine) -> None:
     fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
-    events = v1_paths.events_jsonl(
-        fake_engine_offline.job_slug, root=fake_engine_offline.root
-    )
+    events = v1_paths.events_jsonl(fake_engine_offline.job_slug, root=fake_engine_offline.root)
     assert events.exists()
     lines = events.read_text().splitlines()
     assert len(lines) >= 1
@@ -99,9 +95,11 @@ def test_finish_job_updates_state_and_emits_event(fake_engine_offline: FakeEngin
     )
     assert config.state == JobState.COMPLETED
 
-    events_lines = v1_paths.events_jsonl(
-        fake_engine_offline.job_slug, root=fake_engine_offline.root
-    ).read_text().splitlines()
+    events_lines = (
+        v1_paths.events_jsonl(fake_engine_offline.job_slug, root=fake_engine_offline.root)
+        .read_text()
+        .splitlines()
+    )
     last = json.loads(events_lines[-1])
     assert last["event_type"] == "job_completed"
 
@@ -226,9 +224,11 @@ def test_emit_event_appends_with_monotonic_seq(
     fake_engine_offline.emit_event("custom_event_a", {"k": 1})
     fake_engine_offline.emit_event("custom_event_b", {"k": 2})
 
-    lines = v1_paths.events_jsonl(
-        fake_engine_offline.job_slug, root=fake_engine_offline.root
-    ).read_text().splitlines()
+    lines = (
+        v1_paths.events_jsonl(fake_engine_offline.job_slug, root=fake_engine_offline.root)
+        .read_text()
+        .splitlines()
+    )
     seqs = [json.loads(line)["seq"] for line in lines]
     assert seqs == sorted(seqs)
     assert len(set(seqs)) == len(seqs)  # strictly monotonic, no dupes
@@ -265,9 +265,7 @@ def test_request_hil_writes_pending_marker(
     assert hil_id == "review-spec-human"
 
     pending_path = (
-        v1_paths.job_dir(
-            fake_engine_offline.job_slug, root=fake_engine_offline.root
-        )
+        v1_paths.job_dir(fake_engine_offline.job_slug, root=fake_engine_offline.root)
         / "pending"
         / "review-spec-human.json"
     )
@@ -302,9 +300,7 @@ def test_assert_hil_answered_succeeds_when_envelope_present(
     # - remove pending marker
     # - write envelope
     pending_path = (
-        v1_paths.job_dir(
-            fake_engine_offline.job_slug, root=fake_engine_offline.root
-        )
+        v1_paths.job_dir(fake_engine_offline.job_slug, root=fake_engine_offline.root)
         / "pending"
         / "review-spec-human.json"
     )

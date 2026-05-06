@@ -20,6 +20,8 @@ async def test_skipped_node_renders_with_reason(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_skipped_node_does_not_block_downstream(
     dashboard: DashboardHandle, fake_engine: FakeEngine

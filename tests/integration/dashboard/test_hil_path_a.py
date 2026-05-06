@@ -29,21 +29,29 @@ async def test_review_verdict_round_trip(
 ) -> None:
     """Pending → GET (sees gate) → POST answer → pending gone, envelope on disk."""
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_post_answer_emits_sse_event(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_post_invalid_payload_is_rejected_pending_remains(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_get_hil_lists_pending_for_job(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_loop_indexed_hil_round_trip(
     dashboard: DashboardHandle, fake_engine: FakeEngine

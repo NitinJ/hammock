@@ -21,26 +21,34 @@ async def test_job_overview_after_start(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
-async def test_node_detail_running(
-    dashboard: DashboardHandle, fake_engine: FakeEngine
-) -> None:
+async def test_node_detail_running(dashboard: DashboardHandle, fake_engine: FakeEngine) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_node_detail_succeeded_with_envelope(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_node_detail_skipped_carries_reason(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_loop_iterations_unroll_in_overview(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
     pytest.skip("Stage 3 — disk-first dashboard fills this in")
+
+
 @pytest.mark.asyncio
 async def test_nested_loop_iterations_unroll(
     dashboard: DashboardHandle, fake_engine: FakeEngine

@@ -91,9 +91,7 @@ def _resolve_envelope_path(
             "FakeEngine v1 supports single-level loop iteration only; "
             "nested coordinates require multi-level loop_id encoding."
         )
-    return v1_paths.loop_variable_envelope_path(
-        job_slug, loop_id, var_name, iter[0], root=root
-    )
+    return v1_paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iter[0], root=root)
 
 
 class FakeEngine:
@@ -178,9 +176,7 @@ class FakeEngine:
             started_at=started_at,
             finished_at=finished_at,
         )
-        _write_json_atomic(
-            v1_paths.node_state_path(self.job_slug, node_id, root=self.root), nr
-        )
+        _write_json_atomic(v1_paths.node_state_path(self.job_slug, node_id, root=self.root), nr)
 
     # ------------------------------------------------------------------
     # Job lifecycle
@@ -204,9 +200,7 @@ class FakeEngine:
             workflow_path=workflow_path,
             repo_slug=None,
         )
-        _write_json_atomic(
-            v1_paths.job_config_path(self.job_slug, root=self.root), config
-        )
+        _write_json_atomic(v1_paths.job_config_path(self.job_slug, root=self.root), config)
 
         # Track the request alongside (helpful for the dashboard's
         # job-overview rendering even though it's not part of JobConfig).
@@ -221,15 +215,11 @@ class FakeEngine:
         """Update job.json's ``state`` field and append a terminal-state
         event. ``state`` must be a terminal state."""
         if state not in _TERMINAL_STATES:
-            raise ValueError(
-                f"finish_job requires a terminal state; got {state.value!r}"
-            )
+            raise ValueError(f"finish_job requires a terminal state; got {state.value!r}")
 
         path = v1_paths.job_config_path(self.job_slug, root=self.root)
         config = JobConfig.model_validate_json(path.read_text())
-        updated = config.model_copy(
-            update={"state": state, "updated_at": _utc_now()}
-        )
+        updated = config.model_copy(update={"state": state, "updated_at": _utc_now()})
         _write_json_atomic(path, updated)
 
         event_type = {
@@ -356,9 +346,7 @@ class FakeEngine:
         attempt = self._node_attempts.get(node_id, 0) + 1
         self._node_attempts[node_id] = attempt
         nr = make_node_run(node_id)
-        nr_with_state = nr.model_copy(
-            update={"state": NodeRunState.SKIPPED, "attempts": attempt}
-        )
+        nr_with_state = nr.model_copy(update={"state": NodeRunState.SKIPPED, "attempts": attempt})
         _write_json_atomic(
             v1_paths.node_state_path(self.job_slug, node_id, root=self.root),
             nr_with_state,
@@ -384,9 +372,7 @@ class FakeEngine:
         """Append a single line to the per-attempt stdout.log under
         nodes/<id>/runs/<n>/."""
         attempt = self._node_attempts.get(node_id, 1)
-        attempt_dir = v1_paths.node_attempt_dir(
-            self.job_slug, node_id, attempt, root=self.root
-        )
+        attempt_dir = v1_paths.node_attempt_dir(self.job_slug, node_id, attempt, root=self.root)
         attempt_dir.mkdir(parents=True, exist_ok=True)
         stdout = attempt_dir / "stdout.log"
         with stdout.open("a", encoding="utf-8") as f:
@@ -471,9 +457,7 @@ class FakeEngine:
         (read off the envelope when not provided)."""
         pending_path = self._pending_dir() / f"{node_id}.json"
         if pending_path.exists():
-            raise AssertionError(
-                f"HIL pending marker still present at {pending_path}"
-            )
+            raise AssertionError(f"HIL pending marker still present at {pending_path}")
 
         var_name = output_var_name or node_id
         env_path = _resolve_envelope_path(
@@ -484,9 +468,7 @@ class FakeEngine:
             root=self.root,
         )
         if not env_path.exists():
-            raise AssertionError(
-                f"variable envelope missing for answered HIL gate: {env_path}"
-            )
+            raise AssertionError(f"variable envelope missing for answered HIL gate: {env_path}")
 
         envelope_data = json.loads(env_path.read_text())
         resolved_type = type_name or envelope_data.get("type")
