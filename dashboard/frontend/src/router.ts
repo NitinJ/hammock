@@ -6,6 +6,9 @@ const Home = () => import("@/views/Home.vue");
 const JobsList = () => import("@/views/JobsList.vue");
 const JobSubmit = () => import("@/views/JobSubmit.vue");
 const JobOverview = () => import("@/views/JobOverview.vue");
+const Projects = () => import("@/views/Projects.vue");
+const ProjectAdd = () => import("@/views/ProjectAdd.vue");
+const ProjectDetail = () => import("@/views/ProjectDetail.vue");
 const HilQueue = () => import("@/views/HilQueue.vue");
 const Settings = () => import("@/views/Settings.vue");
 
@@ -18,6 +21,19 @@ export const ROUTES = [
     component: JobOverview,
     name: "job-overview",
     meta: { title: "Job" },
+  },
+  { path: "/projects", component: Projects, name: "projects", meta: { title: "Projects" } },
+  {
+    path: "/projects/new",
+    component: ProjectAdd,
+    name: "project-add",
+    meta: { title: "Add Project" },
+  },
+  {
+    path: "/projects/:slug",
+    component: ProjectDetail,
+    name: "project-detail",
+    meta: { title: "Project" },
   },
   { path: "/hil", component: HilQueue, name: "hil-queue", meta: { title: "HIL" } },
   { path: "/settings", component: Settings, name: "settings", meta: { title: "Settings" } },

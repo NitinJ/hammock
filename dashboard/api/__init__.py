@@ -4,6 +4,7 @@ v1 surface:
   - GET  /api/health
   - GET  /api/projects                                   (projection)
   - GET  /api/projects/{slug}                            (projection)
+  - GET  /api/workflows                                  (bundled YAMLs)
   - GET  /api/jobs                                       (jobs.py)
   - GET  /api/jobs/{slug}                                (jobs.py)
   - GET  /api/jobs/{slug}/nodes/{node_id}                (jobs.py)
@@ -26,15 +27,20 @@ them.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+import logging
+from pathlib import Path
+
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from dashboard.api.hil import router as hil_router
 from dashboard.api.jobs import router as jobs_router
+from dashboard.api.projects import router as projects_router
 from dashboard.api.settings import router as settings_router
 from dashboard.api.sse import router as sse_router
-from dashboard.state import projections
-from dashboard.state.projections import ProjectDetail, ProjectListItem
+from engine.v1.loader import WorkflowLoadError, load_workflow
+
+log = logging.getLogger(__name__)
 
 
 class HealthResponse(BaseModel):
@@ -43,6 +49,17 @@ class HealthResponse(BaseModel):
     ok: bool
     runner_mode: str
     claude_binary: str | None
+
+
+class WorkflowListItem(BaseModel):
+    """One entry in ``GET /api/workflows``.
+
+    ``job_type`` is the filename stem (drop ``.yaml``); the dashboard
+    submits ``POST /api/jobs`` with this string and the compiler
+    resolves it back to ``hammock/templates/workflows/<job_type>.yaml``."""
+
+    job_type: str
+    workflow_name: str
 
 
 router = APIRouter()
@@ -59,23 +76,31 @@ async def health(request: Request) -> HealthResponse:
     )
 
 
-@router.get("/api/projects", response_model=list[ProjectListItem])
-async def list_projects(request: Request) -> list[ProjectListItem]:
-    """Enumerate registered projects on disk under ``<root>/projects/``."""
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    return projections.project_list(settings.root)
+_BUNDLED_WORKFLOWS_DIR = Path(__file__).parent.parent.parent / "hammock" / "templates" / "workflows"
 
 
-@router.get("/api/projects/{slug}", response_model=ProjectDetail)
-async def get_project(request: Request, slug: str) -> ProjectDetail:
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    detail = projections.project_detail(settings.root, slug)
-    if detail is None:
-        raise HTTPException(status_code=404, detail=f"project {slug!r} not found")
-    return detail
+@router.get("/api/workflows", response_model=list[WorkflowListItem])
+async def list_workflows() -> list[WorkflowListItem]:
+    """List bundled workflow YAMLs available for ``POST /api/jobs``.
+
+    Each ``job_type`` is the filename stem; the loader's ``workflow:``
+    field provides ``workflow_name``. Malformed YAMLs are logged and
+    omitted so one bad file doesn't blank the dropdown."""
+    if not _BUNDLED_WORKFLOWS_DIR.is_dir():
+        return []
+    out: list[WorkflowListItem] = []
+    for path in sorted(_BUNDLED_WORKFLOWS_DIR.glob("*.yaml")):
+        try:
+            wf = load_workflow(path)
+        except WorkflowLoadError as exc:
+            log.warning("skipping unloadable workflow %s: %s", path, exc)
+            continue
+        out.append(WorkflowListItem(job_type=path.stem, workflow_name=wf.workflow))
+    return out
 
 
 router.include_router(jobs_router)
 router.include_router(hil_router)
+router.include_router(projects_router)
 router.include_router(settings_router)
 router.include_router(sse_router)

@@ -1,0 +1,257 @@
+workflow: t6-fix-bug-full
+
+# T6: Full fix-bug workflow per design-patch §6.2. Tests:
+#   - until-of-until reviewer chains (design-spec, impl-spec, impl-plan)
+#   - count loop driven by typed-variable field reference
+#     ($impl-plan-loop.impl_plan[last].count)
+#   - per-iteration outer + shared inner substrate (T5 capability stack)
+#   - optional output (tests_pr?) with conditional runs_if downstream
+#   - summary referencing pr_list aggregate
+#
+# KISS reductions (vs design §6.2):
+#   - All review loops capped at max_iterations: 1 (stitcher always
+#     approves; no rework cycle).
+#   - impl_plan.count is asked to be 1 in the request, so implement-loop
+#     runs once. Saves real-claude tokens; the count-from-typed-field
+#     code path is still exercised.
+
+variables:
+  request:                       { type: job-request }
+  bug_report:                    { type: bug-report }
+
+  # design-spec block
+  design_spec:                   { type: design-spec }
+  design_spec_review_agent:      { type: review-verdict }
+  design_spec_review_human:      { type: review-verdict }
+
+  # impl-spec block
+  impl_spec:                     { type: impl-spec }
+  impl_spec_review_agent:        { type: review-verdict }
+  impl_spec_review_human:        { type: review-verdict }
+
+  # impl-plan block
+  impl_plan:                     { type: impl-plan }
+  impl_plan_review_agent:        { type: review-verdict }
+  impl_plan_review_human:        { type: review-verdict }
+
+  # implement loop
+  pr:                            { type: pr }
+  pr_review:                      { type: pr-review-verdict }
+  pr_list:                       { type: "list[pr]" }
+  pr_review_list:                 { type: "list[pr-review-verdict]" }
+
+  # tests-and-fix
+  tests_pr:                      { type: pr }
+  tests_pr_review:                { type: pr-review-verdict }
+
+  # final
+  summary:                       { type: summary }
+
+nodes:
+  - id: write-bug-report
+    kind: artifact
+    actor: agent
+    inputs:
+      request: $request
+    outputs:
+      bug_report: $bug_report
+
+  # ----- design-spec block (until-of-until) -----
+  - id: design-spec-loop
+    kind: loop
+    after: [write-bug-report]
+    until: $design-spec-loop.design_spec_review_human[i]
+    max_iterations: 1
+    body:
+      - id: design-spec-agent-loop
+        kind: loop
+        until: $design-spec-agent-loop.design_spec_review_agent[i]
+        max_iterations: 1
+        body:
+          - id: write-design-spec
+            kind: artifact
+            actor: agent
+            inputs:
+              bug_report: $bug_report
+            outputs:
+              design_spec: $design_spec
+          - id: review-design-spec-agent
+            kind: artifact
+            actor: agent
+            inputs:
+              design_spec: $design-spec-agent-loop.design_spec[i]
+            outputs:
+              verdict: $design_spec_review_agent
+        outputs:
+          design_spec: $design-spec-agent-loop.design_spec[last]
+      - id: review-design-spec-human
+        kind: artifact
+        actor: human
+        inputs:
+          design_spec: $design-spec-loop.design_spec[i]
+        outputs:
+          verdict: $design_spec_review_human
+        presentation:
+          title: "Review the design spec"
+    outputs:
+      design_spec: $design-spec-loop.design_spec[last]
+
+  # ----- impl-spec block (mirrors design-spec) -----
+  - id: impl-spec-loop
+    kind: loop
+    after: [design-spec-loop]
+    until: $impl-spec-loop.impl_spec_review_human[i]
+    max_iterations: 1
+    body:
+      - id: impl-spec-agent-loop
+        kind: loop
+        until: $impl-spec-agent-loop.impl_spec_review_agent[i]
+        max_iterations: 1
+        body:
+          - id: write-impl-spec
+            kind: artifact
+            actor: agent
+            inputs:
+              bug_report: $bug_report
+              design_spec: $design_spec
+            outputs:
+              impl_spec: $impl_spec
+          - id: review-impl-spec-agent
+            kind: artifact
+            actor: agent
+            inputs:
+              impl_spec: $impl-spec-agent-loop.impl_spec[i]
+            outputs:
+              verdict: $impl_spec_review_agent
+        outputs:
+          impl_spec: $impl-spec-agent-loop.impl_spec[last]
+      - id: review-impl-spec-human
+        kind: artifact
+        actor: human
+        inputs:
+          impl_spec: $impl-spec-loop.impl_spec[i]
+        outputs:
+          verdict: $impl_spec_review_human
+        presentation:
+          title: "Review the impl spec"
+    outputs:
+      impl_spec: $impl-spec-loop.impl_spec[last]
+
+  # ----- impl-plan block (mirrors design-spec) -----
+  - id: impl-plan-loop
+    kind: loop
+    after: [impl-spec-loop]
+    until: $impl-plan-loop.impl_plan_review_human[i]
+    max_iterations: 1
+    body:
+      - id: impl-plan-agent-loop
+        kind: loop
+        until: $impl-plan-agent-loop.impl_plan_review_agent[i]
+        max_iterations: 1
+        body:
+          - id: write-impl-plan
+            kind: artifact
+            actor: agent
+            inputs:
+              impl_spec: $impl_spec
+            outputs:
+              impl_plan: $impl_plan
+          - id: review-impl-plan-agent
+            kind: artifact
+            actor: agent
+            inputs:
+              impl_plan: $impl-plan-agent-loop.impl_plan[i]
+            outputs:
+              verdict: $impl_plan_review_agent
+        outputs:
+          impl_plan: $impl-plan-agent-loop.impl_plan[last]
+      - id: review-impl-plan-human
+        kind: artifact
+        actor: human
+        inputs:
+          impl_plan: $impl-plan-loop.impl_plan[i]
+        outputs:
+          verdict: $impl_plan_review_human
+        presentation:
+          title: "Review the impl plan"
+    outputs:
+      impl_plan: $impl-plan-loop.impl_plan[last]
+
+  # ----- Implement (count loop driven by impl_plan.count, with inner until) -----
+  - id: implement-loop
+    kind: loop
+    after: [impl-plan-loop]
+    count: $impl-plan-loop.impl_plan[last].count
+    substrate: per-iteration
+    body:
+      - id: pr-merged-loop
+        kind: loop
+        until: $pr-merged-loop.pr_review[i].verdict == 'merged'
+        max_iterations: 2
+        substrate: shared
+        body:
+          - id: implement
+            kind: code
+            actor: agent
+            inputs:
+              impl_plan: $impl_plan
+              design_spec: $design_spec
+            outputs:
+              pr: $pr
+          - id: pr-review-hil
+            kind: artifact
+            actor: human
+            inputs:
+              pr: $pr-merged-loop.pr[i]
+            outputs:
+              pr_review: $pr_review
+            presentation:
+              title: "Merge the PR on GitHub, then submit pr_url"
+        outputs:
+          pr: $pr-merged-loop.pr[last]
+          pr_review: $pr-merged-loop.pr_review[last]
+    outputs:
+      pr_list: $implement-loop.pr[*]
+      pr_review_list: $implement-loop.pr_review[*]
+
+  # ----- Tests + fix (single agent node; optional pr if anything to fix) -----
+  - id: tests-and-fix
+    kind: code
+    actor: agent
+    after: [implement-loop]
+    inputs:
+      bug_report: $bug_report
+    outputs:
+      tests_pr?: $tests_pr
+
+  # ----- Conditional HIL: only if tests-and-fix produced a PR -----
+  - id: tests-pr-review-hil
+    kind: artifact
+    actor: human
+    after: [tests-and-fix]
+    runs_if: $tests_pr
+    inputs:
+      pr: $tests_pr
+    outputs:
+      # Optional because the node itself is gated by runs_if; if
+      # tests-and-fix didn't produce tests_pr, this node is SKIPPED and
+      # tests_pr_review isn't produced. Outcome assertions tolerate
+      # absent optional outputs.
+      pr_review?: $tests_pr_review
+    presentation:
+      title: "Merge the tests-and-fix PR"
+
+  # ----- Summary -----
+  - id: write-summary
+    kind: artifact
+    actor: agent
+    after: [tests-and-fix, tests-pr-review-hil]
+    inputs:
+      bug_report: $bug_report
+      design_spec: $design_spec
+      impl_spec: $impl_spec
+      impl_plan: $impl_plan
+      pr_list: $pr_list
+      tests_pr?: $tests_pr
+    outputs:
+      summary: $summary

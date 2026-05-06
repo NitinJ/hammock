@@ -5,10 +5,16 @@ stage branch) and the per-code-node worktree. Pulls the job branch
 from origin before each fork so subsequent stage branches see prior
 merges.
 
-Two entry points:
+Three entry points:
 
-- :func:`set_up_job_repo` — at job submit, clone the test repo into
-  ``<job_dir>/repo`` and create + push the job branch.
+- :func:`copy_local_repo` — at job submit, copy the operator's
+  registered project directory (``project.repo_path``) into
+  ``<job_dir>/repo`` (full ``cp -R``: tracked + untracked + ``.env`` +
+  ``.git``), check out ``default_branch``, create the job branch off
+  it, push to origin. Replaces the older clone-from-URL flow.
+- :func:`set_up_job_repo` — DEPRECATED clone-from-URL flow; kept on
+  the module while call sites migrate. Will be deleted when no
+  callers remain.
 - :func:`allocate_code_substrate` — per code-kind node, create the
   stage branch + worktree and return the runtime substrate the
   dispatcher passes to the agent.
@@ -56,6 +62,81 @@ class CodeSubstrate:
 
 class SubstrateError(Exception):
     """Raised when substrate setup fails."""
+
+
+def copy_local_repo(
+    *,
+    job_slug: str,
+    root: Path,
+    repo_path: Path,
+    repo_slug: str,
+    default_branch: str,
+    runner: git_ops.CmdRunner | None = None,
+) -> JobRepo:
+    """Copy the operator's registered local checkout into ``<job_dir>/repo``
+    and prepare the job branch.
+
+    Per ``docs/projects-management.md``:
+
+    1. ``cp -R <repo_path>/. <job_dir>/repo/`` — full copy: tracked,
+       untracked, ``.env``, ``.git``. The operator's working tree is
+       read-only to Hammock; we never write back.
+    2. ``git checkout <default_branch>`` inside the copy — the operator's
+       current HEAD does NOT travel; the job branches off the project's
+       default branch regardless of where the operator was working.
+    3. Create ``hammock/jobs/<slug>`` off ``default_branch`` and push
+       to origin (preserved by the copy of ``.git/config``).
+
+    Idempotent: a second call with the same ``job_slug`` is a no-op
+    when ``<job_dir>/repo`` already exists with the right job branch.
+    """
+    import shutil
+
+    if not repo_path.exists():
+        raise SubstrateError(f"repo_path {repo_path} does not exist; cannot copy")
+    if not (repo_path / ".git").exists():
+        raise SubstrateError(f"repo_path {repo_path} is not a git repo (no .git/ found)")
+
+    repo_dir = paths.repo_clone_dir(job_slug, root=root)
+    job_branch = paths.job_branch_name(job_slug)
+
+    # Idempotent: skip the copy when <job_dir>/repo already exists.
+    if not repo_dir.exists():
+        repo_dir.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copytree(repo_path, repo_dir, symlinks=True)
+        except OSError as exc:
+            raise SubstrateError(f"could not copy {repo_path} → {repo_dir}: {exc}") from exc
+
+        # Check out the project's default branch so the job branch forks
+        # off it regardless of the operator's current HEAD. If the local
+        # copy doesn't have the branch (e.g. operator was working on a
+        # feature branch and never fetched main), git surfaces a clear
+        # error and we propagate.
+        active_runner = runner or git_ops._default_runner  # type: ignore[attr-defined]
+        checkout = active_runner(["git", "checkout", default_branch], cwd=repo_dir, check=False)
+        if checkout.returncode != 0:
+            raise SubstrateError(
+                f"could not check out {default_branch!r} in {repo_dir}: {checkout.stderr.strip()}"
+            )
+
+    # Job branch creation + push (idempotent — both checks return early
+    # when the branch is already present locally / on the remote).
+    if not git_ops.branch_exists_local(repo_dir, job_branch, runner=runner):
+        try:
+            git_ops.create_branch(repo_dir, job_branch, default_branch, runner=runner)
+        except git_ops.GitError as exc:
+            raise SubstrateError(f"could not create job branch {job_branch!r}: {exc}") from exc
+
+    if not git_ops.branch_exists_remote(repo_dir, job_branch, runner=runner):
+        try:
+            git_ops.push_branch(repo_dir, job_branch, runner=runner)
+        except git_ops.GitError as exc:
+            raise SubstrateError(
+                f"could not push job branch {job_branch!r} to origin: {exc}"
+            ) from exc
+
+    return JobRepo(repo_dir=repo_dir, repo_slug=repo_slug, job_branch=job_branch)
 
 
 def set_up_job_repo(
