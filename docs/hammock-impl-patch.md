@@ -80,12 +80,10 @@ One PR per stage. No exceptions. The flow is identical for every stage from Stag
    - `uv run pytest tests/ -q` (excluding `tests/e2e/` and `tests/e2e_v1/` unless the stage explicitly touches engine/external boundaries) — full unit + integration suite
    This rule exists because CI lint failures on a freshly opened PR are pure self-inflicted noise — they burn review cycles and Greptile time. The CI workflow lives in `.github/workflows/`; mirror its commands locally.
 4. **Push + open PR** — push the branch and open a PR via `gh pr create` against `main`. PR title: `Stage N — <stage name>`. PR body: stage goal, summary of changes, test status, with a checklist confirming the Step 3 local-CI checks all ran green.
-5. **Wait 60s for Greptile** — Greptile is auto-subscribed; it posts review comments inline. After pushing, wait 60s, then fetch comments via `gh api repos/.../pulls/<N>/comments` and `gh pr view <N> --json reviews`.
-6. **Resolve Greptile feedback** — for each comment, either (a) apply the fix in code and push, or (b) reply on the comment explaining why the suggestion does not apply. Push the resolution commits. No silent dismissals. Re-run the full Step 3 local-CI suite before each push.
-7. **Wait for human merge** — poll merge status every 60s via `gh pr view <N> --json state,mergedAt`. No further changes, no further pings to the user. Just wait.
-8. **On merge** — checkout `main`, pull, delete the local stage branch, advance to the next stage. Do not ask whether to proceed; the merge is the green light.
+5. **Wait for human merge** — poll merge status every 60s via `gh pr view <N> --json state,mergedAt`. No further changes, no further pings to the user. Just wait.
+6. **On merge** — checkout `main`, pull, delete the local stage branch, advance to the next stage. Do not ask whether to proceed; the merge is the green light.
 
-If the merge does not happen, polling continues. If a stage gets blocked (Greptile finds a real bug that's hard to fix, or the user pushes back on the merge with comments), surface the blocker and wait — but only after the standard 60s loops have run.
+If the merge does not happen, polling continues. If reviewer comments arrive (human or otherwise), apply or push back on each, re-run the Step 3 local-CI suite before pushing fixes, and resume polling.
 
 ---
 
