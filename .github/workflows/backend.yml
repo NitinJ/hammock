@@ -65,4 +65,8 @@ jobs:
         run: uv run pyright shared/ dashboard/
 
       - name: Test (pytest)
-        run: uv run pytest tests/ -q
+        # Per impl-patch §Landing Step 3: backend job runs the unit +
+        # integration suite only. The real-Claude / real-GitHub e2e
+        # suites (tests/e2e/, tests/e2e_v1/) have their own workflow
+        # gated on engine paths.
+        run: uv run pytest tests/ -q --ignore=tests/e2e --ignore=tests/e2e_v1
