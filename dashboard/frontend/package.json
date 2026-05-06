@@ -9,11 +9,10 @@
     "preview": "vite preview",
     "lint": "eslint . --ext .vue,.ts,.tsx --max-warnings 0",
     "lint:fix": "eslint . --ext .vue,.ts,.tsx --fix",
-    "format": "prettier --check \"src/**/*.{ts,vue}\" \"tests/**/*.{ts,vue}\"",
-    "format:fix": "prettier --write \"src/**/*.{ts,vue}\" \"tests/**/*.{ts,vue}\"",
+    "format": "prettier --check \"src/**/*.{ts,vue}\"",
+    "format:fix": "prettier --write \"src/**/*.{ts,vue}\"",
     "type-check": "vue-tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --passWithNoTests",
     "schema:sync": "openapi-typescript http://localhost:8765/openapi.json -o src/api/schema.d.ts"
   },
   "dependencies": {

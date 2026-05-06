@@ -1,118 +1,94 @@
 <template>
-  <div class="p-6 max-w-2xl mx-auto space-y-8">
-    <h1 class="text-2xl font-bold text-text-primary">New Job</h1>
+  <section class="mx-auto max-w-2xl space-y-6">
+    <h1 class="text-xl font-semibold text-text-primary">New Job</h1>
 
-    <div v-if="projectsError" class="text-sm text-red-400 font-mono">{{ projectsError }}</div>
-
-    <form class="space-y-6" @submit.prevent="handleSubmit">
-      <!-- Project selector -->
+    <form class="space-y-4" @submit.prevent="handleSubmit">
       <div class="space-y-1">
-        <label class="block text-sm font-medium text-text-primary" for="project-select">
+        <label class="block text-xs uppercase text-text-secondary" for="project-select">
           Project
         </label>
         <select
           id="project-select"
           v-model="form.project_slug"
-          class="w-full rounded bg-surface-secondary border border-border px-3 py-2 text-text-primary focus:outline-none focus:ring-1 focus:ring-blue-500"
+          class="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary focus:border-blue-500 focus:outline-none"
         >
-          <option value="" disabled>Select a project…</option>
-          <option v-for="p in projects" :key="p.slug" :value="p.slug">
-            {{ p.name }}
+          <option value="" disabled>Select…</option>
+          <option v-for="p in projects.data.value ?? []" :key="p.slug" :value="p.slug">
+            {{ p.name }} ({{ p.slug }})
           </option>
         </select>
+        <p v-if="projects.isError.value" class="text-xs text-red-400">
+          Could not load projects: {{ projects.error.value?.message }}
+        </p>
       </div>
 
-      <!-- Job type -->
       <div class="space-y-1">
-        <span class="block text-sm font-medium text-text-primary">Job type</span>
-        <JobTypeRadio v-model="form.job_type" />
-      </div>
-
-      <!-- Title -->
-      <div class="space-y-1">
-        <label class="block text-sm font-medium text-text-primary" for="title-input">
-          Title
-        </label>
+        <label class="block text-xs uppercase text-text-secondary" for="job-type"> Job type </label>
         <input
-          id="title-input"
+          id="job-type"
+          v-model="form.job_type"
+          type="text"
+          class="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary focus:border-blue-500 focus:outline-none"
+          placeholder="e.g. fix-bug"
+        />
+      </div>
+
+      <div class="space-y-1">
+        <label class="block text-xs uppercase text-text-secondary" for="title">Title</label>
+        <input
+          id="title"
           v-model="form.title"
           type="text"
-          placeholder="e.g. Fix login crash"
-          class="w-full rounded bg-surface-secondary border border-border px-3 py-2 text-text-primary focus:outline-none focus:ring-1 focus:ring-blue-500"
+          class="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary focus:border-blue-500 focus:outline-none"
+          placeholder="Short job title"
         />
-        <div class="text-xs text-text-secondary mt-1">
-          Slug preview: <SlugPreview :title="form.title" />
-        </div>
       </div>
 
-      <!-- Request -->
       <div class="space-y-1">
-        <label class="block text-sm font-medium text-text-primary" for="request-textarea">
-          Request
-        </label>
+        <label class="block text-xs uppercase text-text-secondary" for="request">Request</label>
         <textarea
-          id="request-textarea"
+          id="request"
           v-model="form.request_text"
           rows="6"
+          class="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary focus:border-blue-500 focus:outline-none"
           placeholder="Describe what you want Hammock to do…"
-          class="w-full rounded bg-surface-secondary border border-border px-3 py-2 text-text-primary focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y"
         />
       </div>
 
-      <!-- Dry-run toggle -->
-      <div class="flex items-center gap-3">
-        <input
-          id="dry-run"
-          v-model="form.dry_run"
-          type="checkbox"
-          class="accent-blue-500"
-        />
-        <label class="text-sm text-text-primary" for="dry-run">
-          Dry run (preview plan without launching)
+      <div class="flex items-center gap-2">
+        <input id="dry-run" v-model="form.dry_run" type="checkbox" class="accent-blue-500" />
+        <label for="dry-run" class="text-sm text-text-primary">
+          Dry run (validate workflow without spawning the driver)
         </label>
       </div>
 
-      <!-- Submit -->
       <button
         type="submit"
-        :disabled="submitting"
-        class="rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-4 py-2 text-white font-medium"
+        :disabled="!canSubmit || submitting"
+        class="rounded-md border border-blue-500 bg-blue-500/20 px-3 py-1.5 text-sm text-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {{ submitting ? "Submitting…" : form.dry_run ? "Preview plan" : "Launch job" }}
+        {{ submitting ? "Submitting…" : form.dry_run ? "Validate" : "Submit" }}
       </button>
     </form>
 
-    <!-- Compile errors -->
-    <div v-if="compileErrors.length" class="space-y-2">
-      <h2 class="text-base font-semibold text-red-400">Compile errors</h2>
-      <ul class="space-y-1">
-        <li
-          v-for="(err, i) in compileErrors"
-          :key="i"
-          class="text-sm text-red-300 font-mono"
-        >
-          <span class="font-semibold">{{ err.kind }}</span>
-          <span v-if="err.stage_id"> ({{ err.stage_id }})</span>:
-          {{ err.message }}
-        </li>
-      </ul>
-    </div>
-
-    <!-- Dry-run preview -->
-    <div v-if="dryRunStages">
-      <DryRunPreview :stages="dryRunStages" />
-    </div>
-  </div>
+    <ul
+      v-if="errors.length > 0"
+      class="space-y-1 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm"
+    >
+      <li v-for="(err, i) in errors" :key="i" class="text-red-300">
+        <span class="font-semibold">{{ err.kind }}</span>
+        <span v-if="err.stage_id"> ({{ err.stage_id }})</span>: {{ err.message }}
+      </li>
+    </ul>
+  </section>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
-import JobTypeRadio from "@/components/jobs/JobTypeRadio.vue";
-import SlugPreview from "@/components/jobs/SlugPreview.vue";
-import DryRunPreview from "@/components/jobs/DryRunPreview.vue";
 import { api } from "@/api/client";
-import type { ProjectListItem } from "@/api/schema.d";
+import { useProjects, useSubmitJob } from "@/api/queries";
+import type { JobSubmitResponse } from "@/api/schema.d";
 
 interface CompileFailure {
   kind: string;
@@ -120,81 +96,53 @@ interface CompileFailure {
   message: string;
 }
 
-interface JobSubmitResponse {
-  job_slug: string;
-  dry_run: boolean;
-  stages: Array<{ id?: string; description?: string; [key: string]: unknown }> | null;
-}
-
 const router = useRouter();
+const projects = useProjects();
+const submit = useSubmitJob();
 
-const projects = ref<ProjectListItem[]>([]);
-const projectsError = ref<string | null>(null);
-const form = ref({
+const form = reactive({
   project_slug: "",
   job_type: "fix-bug",
   title: "",
   request_text: "",
   dry_run: false,
 });
+
 const submitting = ref(false);
-const compileErrors = ref<CompileFailure[]>([]);
-const dryRunStages = ref<JobSubmitResponse["stages"] | null>(null);
+const errors = ref<CompileFailure[]>([]);
 
-onMounted(async () => {
-  try {
-    projects.value = await api.get<ProjectListItem[]>("/projects");
-    if (projects.value.length && !form.value.project_slug) {
-      form.value.project_slug = projects.value[0]!.slug;
-    }
-  } catch {
-    projectsError.value = "Could not load projects. Check that the dashboard is running.";
-  }
-});
+const canSubmit = computed(
+  () =>
+    form.project_slug.length > 0 &&
+    form.job_type.length > 0 &&
+    form.title.length > 0 &&
+    form.request_text.length > 0,
+);
 
-async function handleSubmit() {
-  compileErrors.value = [];
-  dryRunStages.value = null;
+async function handleSubmit(): Promise<void> {
+  if (!canSubmit.value || submitting.value) return;
   submitting.value = true;
-
+  errors.value = [];
   try {
-    const res = await fetch("/api/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form.value),
-    });
-
-    const body = await res.json();
-
-    if (!res.ok) {
-      const detail = body?.detail;
-      if (Array.isArray(detail) && detail.length > 0 && "kind" in detail[0]) {
-        // Structured compile failures: [{kind, stage_id, message}]
-        compileErrors.value = detail as CompileFailure[];
-      } else if (Array.isArray(detail) && detail.length > 0) {
-        // FastAPI schema validation errors: [{loc, msg, type}]
-        compileErrors.value = detail.map((d) => ({
-          kind: "validation_error",
-          stage_id: null,
-          message: d.msg ?? String(d),
-        }));
-      } else {
-        compileErrors.value = [
-          { kind: "error", stage_id: null, message: String(detail ?? res.statusText) },
-        ];
-      }
-      return;
-    }
-
-    const result = body as JobSubmitResponse;
-
-    if (result.dry_run && result.stages) {
-      dryRunStages.value = result.stages;
+    const result: JobSubmitResponse = await api.post("/jobs", { ...form });
+    if (!form.dry_run) {
+      await router.push({ name: "job-overview", params: { jobSlug: result.job_slug } });
     } else {
-      await router.push(`/jobs/${result.job_slug}`);
+      errors.value = [
+        {
+          kind: "ok",
+          stage_id: null,
+          message: `Dry run validated. Slug would be: ${result.job_slug}`,
+        },
+      ];
     }
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    // Best-effort: try to parse FastAPI's structured `detail` from the message.
+    errors.value = [{ kind: "submit_failed", stage_id: null, message: msg }];
   } finally {
     submitting.value = false;
   }
+  void submit;
 }
 </script>

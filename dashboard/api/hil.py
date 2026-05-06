@@ -1,25 +1,28 @@
 """HIL endpoints — v1 thin handler.
 
 Per impl-patch §Stage 3 / §9.8: ``dashboard/api/hil.py`` is a thin
-FastAPI wrapper over ``engine.v1.hil.submit_hil_answer``. The
-submission API does the typed-payload validation, envelope persistence,
-pending-marker removal, and SSE event emission via the engine's
-atomic step. The dashboard just translates HTTP into engine calls and
-errors back into HTTP status codes.
+FastAPI wrapper over the engine's HIL submission paths. Both explicit
+HIL gates (workflow-declared ``actor: human`` nodes) and implicit asks
+(``ask_human`` MCP calls) surface here.
 
 URL shape (v1):
 
-  GET  /api/hil                                  → all pending across jobs
+  GET  /api/hil                                  → all pending across jobs (explicit + implicit)
   GET  /api/hil/{job_slug}                       → pending for one job
-  GET  /api/hil/{job_slug}/{node_id}             → one pending detail
-  POST /api/hil/{job_slug}/{node_id}/answer      → submit answer
+  GET  /api/hil/{job_slug}/{node_id}             → one explicit-pending detail
+  POST /api/hil/{job_slug}/{node_id}/answer      → submit explicit answer ({var_name, value})
+  GET  /api/hil/{job_slug}/asks/{call_id}        → one implicit-ask detail
+  POST /api/hil/{job_slug}/asks/{call_id}/answer → submit implicit answer ({answer: str})
 
-POST body shape: ``{"var_name": str, "value": object}``. The engine's
-type-specific ``produce`` validates the value.
+Explicit submission validates against the variable type's Value schema
+via the engine's ``submit_hil_answer``. Implicit submission rewrites
+the ask marker JSON in-place to add an ``answer`` field; the per-job
+MCP server polls the marker and unblocks the agent on the change.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Annotated, Any
@@ -31,6 +34,7 @@ from dashboard.state import projections
 from dashboard.state.projections import HilQueueItem
 from engine.v1.hil import HilSubmissionError, submit_hil_answer
 from engine.v1.loader import WorkflowLoadError, load_workflow
+from shared.atomic import atomic_write_text
 from shared.v1 import paths as v1_paths
 from shared.v1.job import JobConfig
 
@@ -62,6 +66,20 @@ class HilAnswerResponse(BaseModel):
     var_name: str
 
 
+class AskAnswerRequest(BaseModel):
+    """Body of POST /api/hil/{job_slug}/asks/{call_id}/answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(min_length=1)
+    """Free-form prose returned to the agent's ``ask_human`` call."""
+
+
+class AskAnswerResponse(BaseModel):
+    job_slug: str
+    call_id: str
+
+
 @router.get("", response_model=list[HilQueueItem])
 async def list_hil(
     request: Request,
@@ -77,6 +95,19 @@ async def list_hil_for_job(request: Request, job_slug: str) -> list[HilQueueItem
     return projections.hil_queue(settings.root, job_slug=job_slug)
 
 
+@router.get("/{job_slug}/asks/{call_id}", response_model=HilQueueItem)
+async def get_ask(request: Request, job_slug: str, call_id: str) -> HilQueueItem:
+    """Detail for one implicit ``ask_human`` marker."""
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    item = projections.hil_queue_ask(settings.root, job_slug, call_id)
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no pending ask for {job_slug!r}/{call_id!r}",
+        )
+    return item
+
+
 @router.get("/{job_slug}/{node_id}", response_model=HilQueueItem)
 async def get_hil(request: Request, job_slug: str, node_id: str) -> HilQueueItem:
     settings = request.app.state.settings  # type: ignore[attr-defined]
@@ -87,6 +118,40 @@ async def get_hil(request: Request, job_slug: str, node_id: str) -> HilQueueItem
             detail=f"no pending HIL for {job_slug!r}/{node_id!r}",
         )
     return item
+
+
+@router.post(
+    "/{job_slug}/asks/{call_id}/answer",
+    response_model=AskAnswerResponse,
+)
+async def submit_ask_answer(
+    request: Request,
+    job_slug: str,
+    call_id: str,
+    body: AskAnswerRequest,
+) -> AskAnswerResponse:
+    """Answer a pending implicit ask. Rewrites the marker to add the
+    ``answer`` field; the per-job MCP server polls and returns the
+    string to its agent caller."""
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    root: Path = settings.root
+    marker = v1_paths.job_dir(job_slug, root=root) / "asks" / f"{call_id}.json"
+    if not marker.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"no pending ask for {job_slug!r}/{call_id!r}",
+        )
+    try:
+        data = json.loads(marker.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=f"ask marker malformed: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=500, detail="ask marker has wrong shape")
+    if "answer" in data:
+        raise HTTPException(status_code=409, detail="ask already answered")
+    data["answer"] = body.answer
+    atomic_write_text(marker, json.dumps(data, indent=2))
+    return AskAnswerResponse(job_slug=job_slug, call_id=call_id)
 
 
 @router.post("/{job_slug}/{node_id}/answer", response_model=HilAnswerResponse)

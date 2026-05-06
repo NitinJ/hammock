@@ -1,7 +1,5 @@
-import { ref, onUnmounted } from "vue";
-import type { ReplaySseEvent, SseEvent } from "@/api/schema.d";
-
-export type SseScope = "global" | `job/${string}` | `stage/${string}/${string}`;
+import { onUnmounted, ref } from "vue";
+import type { ReplaySseEvent, SseEvent, SseScope } from "@/api/schema.d";
 
 export interface UseEventStreamOptions {
   onEvent?: (event: SseEvent) => void;
@@ -17,8 +15,9 @@ export interface UseEventStreamReturn {
 }
 
 /**
- * Subscribes to a scoped SSE endpoint with Last-Event-ID replay on reconnect.
- * Wraps native EventSource; reconnection is built-in to the browser spec.
+ * Subscribe to a v1 SSE scope (`global`, `job/<slug>`, or
+ * `node/<slug>/<node_id>`). EventSource handles reconnection per spec;
+ * this wrapper exposes `connected` / `lastSeq` / `error` for the caller.
  */
 export function useEventStream(
   scope: SseScope,
@@ -31,25 +30,20 @@ export function useEventStream(
   let source: EventSource | null = null;
 
   function open(): void {
-    const url = `/sse/${scope}`;
-    source = new EventSource(url);
-
+    source = new EventSource(`/sse/${scope}`);
     source.onopen = () => {
       connected.value = true;
       error.value = null;
       options.onConnect?.();
     };
-
     source.onerror = () => {
       connected.value = false;
       error.value = "SSE connection error — browser will retry";
       options.onDisconnect?.();
     };
-
     source.onmessage = (raw) => {
       try {
         const event = JSON.parse(raw.data as string) as SseEvent;
-        // Replay events carry seq; live CacheChange events do not.
         if ("seq" in event) {
           lastSeq.value = (event as ReplaySseEvent).seq;
         }

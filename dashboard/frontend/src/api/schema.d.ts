@@ -1,284 +1,187 @@
 /**
- * API types for the Hammock dashboard.
- * Hand-authored to match FastAPI's /openapi.json (run `pnpm schema:sync` to regenerate).
- * Updated in Stage 12 to fix divergences from backend projections.py.
+ * Frontend types mirroring the v1 backend response models in
+ * `dashboard/state/projections.py`. Hand-authored so the editor has
+ * autocomplete; run `pnpm schema:sync` against a running dashboard to
+ * regenerate from `/openapi.json`.
  */
 
-// ── State enums ────────────────────────────────────────────────────────────
+// ── Enums ────────────────────────────────────────────────────────────────
 
 export type JobState =
-  | "SUBMITTED"
-  | "STAGES_RUNNING"
-  | "BLOCKED_ON_HUMAN"
-  | "COMPLETED"
-  | "ABANDONED"
-  | "FAILED";
+  | "submitted"
+  | "running"
+  | "blocked_on_human"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
-export type StageState =
-  | "PENDING"
-  | "READY"
-  | "RUNNING"
-  | "PARTIALLY_BLOCKED"
-  | "BLOCKED_ON_HUMAN"
-  | "ATTENTION_NEEDED"
-  | "WRAPPING_UP"
-  | "SUCCEEDED"
-  | "FAILED"
-  | "CANCELLED";
+export type NodeRunState = "pending" | "running" | "succeeded" | "failed" | "skipped";
 
-export type TaskState = "RUNNING" | "BLOCKED_ON_HUMAN" | "STUCK" | "DONE" | "FAILED" | "CANCELLED";
+export type NodeKind = "artifact" | "code";
 
-export type HilState = "AWAITING" | "ANSWERED" | "CANCELLED";
+export type NodeActor = "agent" | "human" | "engine";
 
-export type HilKind = "ask" | "review" | "manual-step";
+export type HilKind = "explicit" | "implicit";
 
-export type DoctorStatus = "pass" | "warn" | "fail" | "unknown";
+// ── Job projections ──────────────────────────────────────────────────────
 
-// ── Core / persisted models ────────────────────────────────────────────────
-
-export interface ProjectConfig {
-  slug: string;
-  name: string;
-  repo_path: string;
-  remote_url: string | null;
-  default_branch: string;
-  created_at: string;
-  last_health_check_at: string | null;
-  last_health_check_status: "pass" | "warn" | "fail" | null;
-}
-
-/** v0 alias — ProjectConfig and Project are the same shape. */
-export type Project = ProjectConfig;
-
-export interface JobConfig {
-  job_id: string;
+export interface JobListItem {
   job_slug: string;
-  project_slug: string;
-  job_type: "build-feature" | "fix-bug" | string;
-  created_at: string;
-  created_by: string;
+  workflow_name: string;
   state: JobState;
+  submitted_at: string;
+  updated_at: string;
+  repo_slug: string | null;
 }
 
-export interface StageRun {
-  stage_id: string;
-  job_slug: string;
-  state: StageState;
+/** Top-level rows have iter=[] and parent_loop_id=null. Rows inside
+ *  loops have iter=[i] (one int per nesting level) and parent_loop_id
+ *  set to the innermost enclosing loop. Loop nodes themselves are not
+ *  emitted. */
+export interface NodeListEntry {
+  node_id: string;
+  kind: NodeKind | null;
+  actor: NodeActor | null;
+  state: NodeRunState;
+  attempts: number;
+  last_error: string | null;
   started_at: string | null;
-  completed_at: string | null;
-  cost_usd: number;
-  restart_count: number;
+  finished_at: string | null;
+  iter: number[];
+  parent_loop_id: string | null;
 }
 
-// ── HIL models (full, for Stage 13 form renderer) ─────────────────────────
-
-export interface HilItem {
-  item_id: string;
+export interface JobDetail {
   job_slug: string;
-  stage_id: string;
+  workflow_name: string;
+  workflow_path: string;
+  state: JobState;
+  submitted_at: string;
+  updated_at: string;
+  repo_slug: string | null;
+  nodes: NodeListEntry[];
+}
+
+export interface NodeDetail {
+  node_id: string;
+  state: NodeRunState;
+  attempts: number;
+  last_error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  outputs: Record<string, EnvelopePayload>;
+}
+
+export interface EnvelopePayload {
+  type: string;
+  version: string;
+  repo: string | null;
+  producer_node: string;
+  produced_at: string;
+  value: unknown;
+}
+
+// ── HIL ──────────────────────────────────────────────────────────────────
+
+export interface HilQueueItem {
   kind: HilKind;
-  state: HilState;
-  created_at: string;
-  answered_at: string | null;
-  question: AskQuestion | ReviewQuestion | ManualStepQuestion;
-  answer: AskAnswer | ReviewAnswer | ManualStepAnswer | null;
+  job_slug: string;
+  workflow_name: string;
+  node_id: string;
+  iter: number[];
+  created_at: string | null;
+  // explicit-only
+  output_var_names: string[];
+  output_types: Record<string, string>;
+  presentation: Record<string, unknown>;
+  /** Per-output-var form schema: list of `[field_name, widget_type]`. */
+  form_schemas: Record<string, [string, string][]>;
+  // implicit-only
+  call_id: string | null;
+  question: string | null;
 }
 
-export interface AskQuestion {
-  kind: "ask";
-  prompt: string;
-  context: string | null;
+export interface HilAnswerRequest {
+  var_name: string;
+  value: Record<string, unknown>;
 }
 
-export interface ReviewQuestion {
-  kind: "review";
-  prompt: string;
-  artifact_path: string | null;
-  context: string | null;
-}
-
-export interface ManualStepQuestion {
-  kind: "manual-step";
-  instructions: string;
-  context: string | null;
-}
-
-export interface AskAnswer {
-  kind: "ask";
+export interface AskAnswerRequest {
   answer: string;
 }
 
-export interface ReviewAnswer {
-  kind: "review";
-  approved: boolean;
-  comments: string | null;
+// ── Submit ───────────────────────────────────────────────────────────────
+
+export interface JobSubmitRequest {
+  project_slug: string;
+  job_type: string;
+  title: string;
+  request_text: string;
+  dry_run: boolean;
 }
 
-export interface ManualStepAnswer {
-  kind: "manual-step";
-  completed: boolean;
-  notes: string | null;
+export interface JobSubmitResponse {
+  job_slug: string;
+  dry_run: boolean;
+  stages?: unknown[];
 }
 
-export interface TaskRecord {
-  task_id: string;
-  stage_id: string;
-  state: TaskState;
-  created_at: string;
-  started_at?: string | null;
-  ended_at?: string | null;
-  subagent_id?: string | null;
-  cost_accrued?: number;
-  restart_count?: number;
-}
-
-// ── Projection types (matching dashboard/state/projections.py) ─────────────
+// ── Projects ─────────────────────────────────────────────────────────────
 
 export interface ProjectListItem {
   slug: string;
   name: string;
   repo_path: string;
-  default_branch: string;
-  total_jobs: number;
-  open_hil_count: number;
+  open_jobs: number;
   last_job_at: string | null;
-  doctor_status: DoctorStatus;
 }
 
 export interface ProjectDetail {
-  project: ProjectConfig;
-  total_jobs: number;
-  open_hil_count: number;
-  jobs_by_state: Record<string, number>;
+  slug: string;
+  name: string;
+  repo_path: string;
+  remote_url: string;
+  default_branch: string;
 }
 
-export interface JobListItem {
-  job_id: string;
-  job_slug: string;
-  project_slug: string;
-  job_type: string;
-  state: JobState;
-  created_at: string;
-  total_cost_usd: number;
-  current_stage_id: string | null;
+// ── Settings ─────────────────────────────────────────────────────────────
+
+export interface SettingsResponse {
+  runner_mode: string;
+  claude_binary: string | null;
+  root: string;
 }
 
-export interface StageListEntry {
-  stage_id: string;
-  state: StageState;
-  attempt: number;
-  started_at: string | null;
-  ended_at: string | null;
-  cost_accrued: number;
-}
-
-export interface JobDetail {
-  job: JobConfig;
-  stages: StageListEntry[];
-  total_cost_usd: number;
-}
-
-export interface StageDetail {
-  job_slug: string;
-  stage: StageRun;
-  tasks: TaskRecord[];
-}
-
-export interface StageRun {
-  stage_id: string;
-  attempt: number;
-  state: StageState;
-  started_at: string | null;
-  ended_at: string | null;
-  cost_accrued: number;
-  restart_count: number;
-}
-
-export interface ActiveStageStripItem {
-  project_slug: string;
-  job_slug: string;
-  stage_id: string;
-  state: StageState;
-  cost_accrued: number;
-  started_at: string | null;
-}
-
-export interface HilQueueItem {
-  item_id: string;
-  kind: "ask" | "review" | "manual-step";
-  status: "awaiting" | "answered" | "cancelled";
-  stage_id: string;
-  job_slug: string;
-  project_slug: string | null;
-  created_at: string;
-  age_seconds: number;
-}
-
-export interface CostRollup {
-  scope: "project" | "job" | "stage";
-  id: string;
-  total_usd: number;
-  total_tokens: number;
-  by_stage: Record<string, number>;
-  by_agent: Record<string, number>;
-}
-
-export interface SystemHealth {
-  cache_size: Record<string, number>;
-  watcher_alive: boolean;
-  mcp_server_count: number;
-  drivers_alive: number;
-}
-
-export interface ObservatoryMetrics {
-  [key: string]: unknown;
-}
-
-// ── API responses ──────────────────────────────────────────────────────────
+// ── Health ───────────────────────────────────────────────────────────────
 
 export interface HealthResponse {
   ok: boolean;
-  cache_size: number;
 }
 
-// ── SSE events ─────────────────────────────────────────────────────────────
+// ── SSE ──────────────────────────────────────────────────────────────────
 //
-// Stage 12.5 (A4): live and replay messages are distinct shapes.
-//
-// Replay events (from events.jsonl) are *unnamed* SSE messages fired via
-// ``EventSource.onmessage``.  They carry ``seq`` for Last-Event-ID tracking.
-//
-// Live events (CacheChange notifications from the watcher) are also *unnamed*
-// (no ``event:`` line) — the A4 fix dropped the ``event: {kind}_changed`` line
-// so the browser fires ``onmessage`` for them too.  They carry ``change_kind``
-// instead of ``seq``.
-//
-// Narrow the union before accessing kind-specific fields.
+// Replay events (from events.jsonl) carry ``seq`` and standard event
+// fields. Live events (PathChange notifications) carry ``change_kind``.
+// Discriminate via ``"seq" in event``.
 
-/** Replay event — emitted by the server from on-disk events.jsonl. */
+export type SseScope = "global" | `job/${string}` | `node/${string}/${string}`;
+
 export interface ReplaySseEvent {
   seq: number;
   timestamp: string;
   event_type: string;
-  source: "job_driver" | "agent0" | "subagent" | "dashboard" | "engine" | "human" | "hook";
+  source: string;
   job_id: string;
   stage_id: string | null;
-  task_id: string | null;
-  subagent_id: string | null;
-  parent_event_seq: number | null;
   payload: Record<string, unknown>;
 }
 
-/** Live event — emitted by the server when a state file changes (CacheChange). */
 export interface LiveSseEvent {
   scope: string;
   change_kind: "added" | "modified" | "deleted";
-  file_kind: "project" | "job" | "stage" | "hil" | string;
+  file_kind: string;
   job_slug?: string;
-  stage_id?: string;
-  project_slug?: string;
-  hil_id?: string;
+  node_id?: string;
 }
 
-/** Discriminated union over both SSE event shapes. Narrow on ``"seq" in event``. */
 export type SseEvent = ReplaySseEvent | LiveSseEvent;

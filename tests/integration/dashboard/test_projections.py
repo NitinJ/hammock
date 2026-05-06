@@ -78,12 +78,112 @@ async def test_node_detail_skipped_carries_reason(
 async def test_loop_iterations_unroll_in_overview(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
-    """Loop iteration unrolling shape is defined with the Stage 6 frontend."""
-    pytest.skip("Stage 6 — iteration unrolling shape defined with frontend")
+    """Spot-check that JobDetail.nodes carries iter[]+parent_loop_id for
+    body rows. Detailed coverage lives in test_loop_unroll.py."""
+    workflow = {
+        "workflow": "T-unroll",
+        "variables": {
+            "bug_report": {"type": "bug-report"},
+            "bugs": {"type": "list[bug-report]"},
+        },
+        "nodes": [
+            {
+                "id": "loop1",
+                "kind": "loop",
+                "count": 2,
+                "body": [
+                    {
+                        "id": "body-node",
+                        "kind": "artifact",
+                        "actor": "agent",
+                        "outputs": {"bug_report": "$bug_report"},
+                    }
+                ],
+                "outputs": {"bugs": "$loop1.bug_report[*]"},
+            }
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+    from shared.v1.types.bug_report import BugReportValue
+
+    fake_engine.complete_node(
+        "body-node",
+        BugReportValue(summary="b0"),
+        iter=(0,),
+        loop_id="loop1",
+        output_var_name="bug_report",
+    )
+    fake_engine.complete_node(
+        "body-node",
+        BugReportValue(summary="b1"),
+        iter=(1,),
+        loop_id="loop1",
+        output_var_name="bug_report",
+    )
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    rows = resp.json()["nodes"]
+    body_rows = [r for r in rows if r["node_id"] == "body-node"]
+    assert [r["iter"] for r in body_rows] == [[0], [1]]
+    assert all(r["parent_loop_id"] == "loop1" for r in body_rows)
 
 
 @pytest.mark.asyncio
 async def test_nested_loop_iterations_unroll(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
-    pytest.skip("Stage 6 — iteration unrolling shape defined with frontend")
+    """Nested loop bodies emit rows with iter=[outer, inner]."""
+    workflow = {
+        "workflow": "T-nested",
+        "variables": {
+            "bug_report": {"type": "bug-report"},
+            "bugs": {"type": "list[bug-report]"},
+        },
+        "nodes": [
+            {
+                "id": "outer",
+                "kind": "loop",
+                "count": 2,
+                "body": [
+                    {
+                        "id": "inner",
+                        "kind": "loop",
+                        "count": 2,
+                        "body": [
+                            {
+                                "id": "leaf",
+                                "kind": "artifact",
+                                "actor": "agent",
+                                "outputs": {"bug_report": "$bug_report"},
+                            }
+                        ],
+                        "outputs": {"bugs": "$inner.bug_report[*]"},
+                    }
+                ],
+                "outputs": {"all": "$outer.bugs[last]"},
+            }
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+    from shared.v1.types.bug_report import BugReportValue
+
+    for i in range(2):
+        fake_engine.complete_node(
+            "leaf",
+            BugReportValue(summary=f"i{i}"),
+            iter=(i,),
+            loop_id="inner",
+            output_var_name="bug_report",
+        )
+    var_dir = fake_engine.root / "jobs" / fake_engine.job_slug / "variables"
+    for outer_i in range(2):
+        (var_dir / f"loop_outer_bugs_{outer_i}.json").write_text(
+            '{"type":"list[bug-report]","version":"1","repo":null,'
+            '"producer_node":"<loop:inner>","produced_at":"2026-05-06T00:00:00",'
+            '"value":[]}'
+        )
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    rows = resp.json()["nodes"]
+    leaf_rows = [r for r in rows if r["node_id"] == "leaf"]
+    assert [r["iter"] for r in leaf_rows] == [[0, 0], [0, 1], [1, 0], [1, 1]]
