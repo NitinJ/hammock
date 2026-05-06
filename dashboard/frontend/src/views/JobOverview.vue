@@ -61,9 +61,7 @@
 
       <!-- Right pane: node detail or HIL form -->
       <main class="col-span-8 overflow-auto rounded-md border border-border bg-surface-raised p-4">
-        <div v-if="!selectedNodeId" class="text-text-secondary">
-          Select a node on the left to see its detail.
-        </div>
+        <JobStreamPane v-if="!selectedNodeId" :job-slug="jobSlug" />
 
         <!-- HIL form for explicit pending nodes -->
         <div v-else-if="explicitHilForSelected" class="space-y-4">
@@ -152,6 +150,8 @@ import { useAnswerExplicitHil, useHilQueue, useJob, useNodeDetail } from "@/api/
 import type { HilQueueItem, NodeListEntry } from "@/api/schema.d";
 import StateBadge from "@/components/shared/StateBadge.vue";
 import FormRenderer from "@/components/hil/FormRenderer.vue";
+import JobStreamPane from "@/components/jobs/JobStreamPane.vue";
+import { buildRenderedRows } from "@/components/jobs/renderRows.ts";
 
 const route = useRoute();
 const router = useRouter();
@@ -173,45 +173,7 @@ const iterParam = computed<number[]>(() => {
 
 const nodeDetail = useNodeDetail(jobSlug, selectedNodeId);
 
-interface NodeRow {
-  kind: "node";
-  key: string;
-  entry: NodeListEntry;
-}
-interface HeaderRow {
-  kind: "header";
-  key: string;
-  label: string;
-  depth: number;
-}
-type RenderRow = NodeRow | HeaderRow;
-
-const renderedRows = computed<RenderRow[]>(() => {
-  const detail = job.data.value;
-  if (!detail) return [];
-  const out: RenderRow[] = [];
-  let prevIter: number[] = [];
-  for (const entry of detail.nodes) {
-    for (let depth = 0; depth < entry.iter.length; depth++) {
-      const same = depth < prevIter.length && prevIter[depth] === entry.iter[depth];
-      if (!same) {
-        out.push({
-          kind: "header",
-          key: `hdr-${entry.iter.slice(0, depth + 1).join(",")}-${entry.node_id}`,
-          label: entry.iter.slice(0, depth + 1).join(", "),
-          depth,
-        });
-      }
-    }
-    out.push({
-      kind: "node",
-      key: `${entry.node_id}-${entry.iter.join(",")}`,
-      entry,
-    });
-    prevIter = entry.iter;
-  }
-  return out;
-});
+const renderedRows = computed(() => buildRenderedRows(job.data.value?.nodes ?? []));
 
 function isSelected(entry: NodeListEntry): boolean {
   if (entry.node_id !== selectedNodeId.value) return false;

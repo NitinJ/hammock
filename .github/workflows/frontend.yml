@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "dashboard/frontend/**"
+      - "dashboard/**"
       - ".github/workflows/frontend.yml"
   pull_request:
     branches: [main]
     paths:
-      - "dashboard/frontend/**"
+      - "dashboard/**"
       - ".github/workflows/frontend.yml"
 
 concurrency:
@@ -44,11 +44,9 @@ jobs:
 
       - name: Lint (ESLint)
         run: pnpm lint
-        continue-on-error: true  # ESLint not configured yet — Stage 12 wires flat config
 
       - name: Format check (Prettier)
         run: pnpm format
-        continue-on-error: true  # Prettier not configured yet
 
       - name: Type check (vue-tsc)
         run: pnpm type-check
@@ -58,3 +56,56 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  e2e:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: dashboard/frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: dashboard/frontend/pnpm-lock.yaml
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Python deps
+        working-directory: .
+        run: uv sync --frozen
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: dashboard/frontend/playwright-report/
+          retention-days: 7

@@ -24,6 +24,7 @@ PathKind = Literal[
     "variable",  # jobs/<slug>/variables/<var>.json (top-level envelope)
     "loop_variable",  # jobs/<slug>/variables/loop_<lid>_<var>_<i>.json
     "pending",  # jobs/<slug>/pending/<node_id>.json (HIL marker)
+    "ask",  # jobs/<slug>/asks/<call_id>.json (implicit HIL marker)
     "events_jsonl",  # jobs/<slug>/events.jsonl
     "unknown",
 ]
@@ -40,6 +41,7 @@ class ClassifiedPath:
     var_name: str | None = None
     loop_id: str | None = None
     iteration: int | None = None
+    call_id: str | None = None
 
 
 class ChangeKind(StrEnum):
@@ -114,6 +116,16 @@ def classify_path(path: Path, root: Path) -> ClassifiedPath:
             "pending",
             job_slug=parts[1],
             node_id=parts[3][: -len(".json")],
+        )
+
+    # jobs/<slug>/asks/<call_id>.json (implicit HIL marker; the per-job
+    # MCP server creates these; the dashboard mutates them in place to
+    # answer; the server reads the answer back to its agent caller).
+    if len(parts) == 4 and parts[0] == "jobs" and parts[2] == "asks" and parts[3].endswith(".json"):
+        return ClassifiedPath(
+            "ask",
+            job_slug=parts[1],
+            call_id=parts[3][: -len(".json")],
         )
 
     # jobs/<slug>/events.jsonl
