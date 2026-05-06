@@ -1,59 +1,25 @@
 import { createRouter, createWebHistory } from "vue-router";
 
-// Lazy-loaded per top-level route (locked per design doc § URL topology)
+// Lazy-loaded per top-level route. v1 surface — node-centric job page,
+// jobs list, HIL inbox, settings.
 const Home = () => import("@/views/Home.vue");
-const ProjectList = () => import("@/views/ProjectList.vue");
-const ProjectDetail = () => import("@/views/ProjectDetail.vue");
+const JobsList = () => import("@/views/JobsList.vue");
 const JobSubmit = () => import("@/views/JobSubmit.vue");
 const JobOverview = () => import("@/views/JobOverview.vue");
-const StageLive = () => import("@/views/StageLive.vue");
-const ArtifactViewer = () => import("@/views/ArtifactViewer.vue");
 const HilQueue = () => import("@/views/HilQueue.vue");
-const HilItem = () => import("@/views/HilItem.vue");
-const CostDashboard = () => import("@/views/CostDashboard.vue");
 const Settings = () => import("@/views/Settings.vue");
 
 export const ROUTES = [
-  { path: "/", component: Home, name: "home", meta: { title: "Dashboard Home" } },
-  { path: "/projects", component: ProjectList, name: "project-list", meta: { title: "Projects" } },
-  {
-    path: "/projects/:slug",
-    component: ProjectDetail,
-    name: "project-detail",
-    meta: { title: "Project Detail" },
-  },
+  { path: "/", component: Home, name: "home", meta: { title: "Hammock" } },
+  { path: "/jobs", component: JobsList, name: "jobs-list", meta: { title: "Jobs" } },
   { path: "/jobs/new", component: JobSubmit, name: "job-submit", meta: { title: "New Job" } },
   {
     path: "/jobs/:jobSlug",
     component: JobOverview,
     name: "job-overview",
-    meta: { title: "Job Overview" },
+    meta: { title: "Job" },
   },
-  {
-    path: "/jobs/:jobSlug/stages/:stageId",
-    component: StageLive,
-    name: "stage-live",
-    meta: { title: "Stage Live View" },
-  },
-  {
-    path: "/jobs/:jobSlug/artifacts/:path(.*)*",
-    component: ArtifactViewer,
-    name: "artifact-viewer",
-    meta: { title: "Artifact Viewer" },
-  },
-  { path: "/hil", component: HilQueue, name: "hil-queue", meta: { title: "HIL Queue" } },
-  {
-    path: "/hil/:itemId",
-    component: HilItem,
-    name: "hil-item",
-    meta: { title: "HIL Item" },
-  },
-  {
-    path: "/costs",
-    component: CostDashboard,
-    name: "cost-dashboard",
-    meta: { title: "Cost Dashboard" },
-  },
+  { path: "/hil", component: HilQueue, name: "hil-queue", meta: { title: "HIL" } },
   { path: "/settings", component: Settings, name: "settings", meta: { title: "Settings" } },
 ] as const;
 

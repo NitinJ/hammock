@@ -1,5 +1,7 @@
 <template>
-  <header class="flex h-12 items-center justify-between border-b border-border bg-surface-raised px-6">
+  <header
+    class="flex h-12 items-center justify-between border-b border-border bg-surface-raised px-6"
+  >
     <!-- Breadcrumb / page title -->
     <div class="text-sm font-medium text-text-primary">
       {{ currentTitle }}

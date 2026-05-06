@@ -18,7 +18,7 @@ from dashboard.code.branches import create_job_branch
 from dashboard.compiler.compile import compile_job
 from dashboard.driver.lifecycle import spawn_driver
 from dashboard.state import projections
-from dashboard.state.projections import JobDetail, JobListItem
+from dashboard.state.projections import JobDetail, JobListItem, NodeDetail
 from shared import paths
 from shared.models import ProjectConfig
 from shared.v1.job import JobState
@@ -71,6 +71,23 @@ async def get_job(request: Request, job_slug: str) -> JobDetail:
     detail = projections.job_detail(settings.root, job_slug)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"job {job_slug!r} not found")
+    return detail
+
+
+@router.get("/{job_slug}/nodes/{node_id}", response_model=NodeDetail)
+async def get_node(request: Request, job_slug: str, node_id: str) -> NodeDetail:
+    """Per-node drilldown: state + envelopes produced by this node id.
+
+    Note: for loop body nodes, ``state.json`` reflects the latest
+    iteration only; the per-iteration state is reconstructed from
+    envelope existence in the parent loop's iteration row of
+    ``GET /api/jobs/{slug}``."""
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    detail = projections.node_detail(settings.root, job_slug, node_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=404, detail=f"no node {node_id!r} on disk for job {job_slug!r}"
+        )
     return detail
 
 

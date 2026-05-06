@@ -17,6 +17,16 @@ module.exports = {
   plugins: ["@typescript-eslint", "vue", "@tanstack/query"],
   rules: {
     "vue/multi-word-component-names": "off",
+    // Style rules — prettier owns whitespace + line breaks. Disable Vue's
+    // pre-formatter rules so it doesn't fight prettier's output.
+    "vue/singleline-html-element-content-newline": "off",
+    "vue/multiline-html-element-content-newline": "off",
+    "vue/max-attributes-per-line": "off",
+    "vue/html-closing-bracket-newline": "off",
+    "vue/html-self-closing": "off",
+    "vue/attributes-order": "off",
+    "vue/first-attribute-linebreak": "off",
+    "vue/html-indent": "off",
     "@typescript-eslint/no-explicit-any": "warn",
     "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
   },

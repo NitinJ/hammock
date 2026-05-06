@@ -132,6 +132,11 @@ class HilQueueItem(BaseModel):
     output_var_names: list[str] = Field(default_factory=list)
     output_types: dict[str, str] = Field(default_factory=dict)
     presentation: dict[str, Any] = Field(default_factory=dict)
+    form_schemas: dict[str, list[tuple[str, str]]] = Field(default_factory=dict)
+    """Per-output-var rendered form schema: list of ``(field_name,
+    widget_type)`` pairs from the variable type's ``form_schema()``.
+    Frontend's ``FormRenderer`` walks the schema and dispatches each
+    field through its widget map (``select:opt1,opt2`` → Select, etc.)."""
 
     # Implicit-only (ask_human MCP call).
     call_id: str | None = None
@@ -607,6 +612,7 @@ def _read_pending_marker(
         return None
     created_at = _parse_iso_or_none(data.get("created_at"))
     iter_list = _iter_from_pending(data)
+    output_types = dict(data.get("output_types") or {})
     return HilQueueItem(
         kind="explicit",
         job_slug=job_slug,
@@ -615,9 +621,36 @@ def _read_pending_marker(
         iter=iter_list,
         created_at=created_at,
         output_var_names=list(data.get("output_var_names") or []),
-        output_types=dict(data.get("output_types") or {}),
+        output_types=output_types,
         presentation=dict(data.get("presentation") or {}),
+        form_schemas=_build_form_schemas(output_types),
     )
+
+
+def _build_form_schemas(
+    output_types: dict[str, str],
+) -> dict[str, list[tuple[str, str]]]:
+    """For each (var_name, type_name), look up the type and serialise
+    its ``form_schema()`` to ``[(field, widget_type), ...]``. Skip types
+    whose ``form_schema`` returns ``None`` (not human-producible)."""
+    from shared.v1.types.registry import UnknownVariableType, get_type
+
+    out: dict[str, list[tuple[str, str]]] = {}
+    for var_name, type_name in output_types.items():
+        try:
+            t = get_type(type_name)
+        except UnknownVariableType:
+            continue
+        try:
+            decl_obj = t.Decl()
+            schema = t.form_schema(decl_obj)
+        except Exception:
+            continue
+        if schema is None:
+            continue
+        fields = list(getattr(schema, "fields", []) or [])
+        out[var_name] = [(str(f), str(w)) for f, w in fields]
+    return out
 
 
 def _read_ask_marker(job_slug: str, workflow_name: str, path: Path) -> HilQueueItem | None:
