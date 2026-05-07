@@ -20,10 +20,14 @@ class SummaryDecl(BaseModel):
 
 
 class SummaryValue(BaseModel):
+    """Final job summary — Stage 2 carries a ``document`` markdown field."""
+
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1)
     pr_urls: list[str] = Field(default_factory=list)
+    document: str = Field(..., min_length=1)
+    """Full summary in markdown — primary view in the dashboard."""
 
 
 _PROMPT_HINT = """\
@@ -31,6 +35,9 @@ Strict JSON. Allowed fields ONLY:
 
 - `text`: 2-6 sentence narrative (required, non-empty).
 - `pr_urls`: list of strings — every PR URL the workflow produced.
+- `document`: full summary as markdown (required, non-empty). Place the
+  narrative content here — the dashboard renders this as the primary
+  view.
 
 Schema uses extra='forbid'.\
 """
@@ -76,6 +83,10 @@ class SummaryType:
             lines.append("\n**PRs:**")
             for u in value.pr_urls:
                 lines.append(f"  - {u}")
+        lines.append("")
+        lines.append("#### Document")
+        lines.append("")
+        lines.append(value.document)
         return "\n".join(lines)
 
     def form_schema(self, decl: SummaryDecl) -> FormSchema | None:

@@ -89,7 +89,7 @@ def test_resolves_required_input_to_value_model(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="bug_report",
         type_name="bug-report",
-        value={"summary": "x"},
+        value={"summary": "x", "document": "## Bug\n\nx"},
     )
     wf = Workflow(
         workflow="t",
@@ -218,7 +218,7 @@ def test_resolves_multiple_inputs(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="bug_report",
         type_name="bug-report",
-        value={"summary": "the bug"},
+        value={"summary": "the bug", "document": "## Bug\n\nthe bug"},
     )
     wf = Workflow(
         workflow="t",

@@ -137,14 +137,14 @@ def test_all_outputs_produced_passes(tmp_path: Path) -> None:
         job_slug="j",
         var_name="bug_report",
         type_name="bug-report",
-        value={"summary": "x"},
+        value={"summary": "x", "document": "## Bug\n\n."},
     )
     _seed_envelope(
         root=tmp_path,
         job_slug="j",
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "t", "overview": "o"},
+        value={"title": "t", "overview": "o", "document": "## D\n\n."},
     )
     assert_all_declared_outputs_produced(tmp_path, "j", _t1_workflow())
 
@@ -155,7 +155,7 @@ def test_all_outputs_produced_fails_when_one_missing(tmp_path: Path) -> None:
         job_slug="j",
         var_name="bug_report",
         type_name="bug-report",
-        value={"summary": "x"},
+        value={"summary": "x", "document": "## Bug\n\n."},
     )
     # design_spec missing
     with pytest.raises(AssertionError, match=r"design_spec.*missing"):
@@ -192,7 +192,7 @@ def test_envelopes_well_formed_passes(tmp_path: Path) -> None:
         job_slug="j",
         var_name="bug_report",
         type_name="bug-report",
-        value={"summary": "x"},
+        value={"summary": "x", "document": "## Bug\n\n."},
     )
     assert_envelopes_well_formed(tmp_path, "j", _t1_workflow())
 
@@ -212,7 +212,7 @@ def test_envelopes_well_formed_fails_on_type_mismatch(tmp_path: Path) -> None:
         job_slug="j",
         var_name="bug_report",
         type_name="design-spec",  # WRONG
-        value={"title": "t", "overview": "o"},
+        value={"title": "t", "overview": "o", "document": "## D\n\n."},
     )
     with pytest.raises(AssertionError, match="declares type"):
         assert_envelopes_well_formed(tmp_path, "j", _t1_workflow())

@@ -197,7 +197,7 @@ nodes:
     spec_env = make_envelope(
         type_name="design-spec",
         producer_node="write-spec",
-        value_payload={"title": "Design", "overview": "the spec"},
+        value_payload={"title": "Design", "overview": "the spec", "document": "## D\n\nthe spec"},
     )
     atomic_write_text(
         paths.variable_envelope_path("j", "spec", root=tmp_path),

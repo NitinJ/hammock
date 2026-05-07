@@ -57,7 +57,9 @@ async def test_node_detail_succeeded_with_envelope(
 
     fake_engine.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine.enter_node("write-bug-report")
-    fake_engine.complete_node("write-bug-report", BugReportValue(summary="login button broken"))
+    fake_engine.complete_node(
+        "write-bug-report", BugReportValue(summary="login button broken", document="## Bug\n\n.")
+    )
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     nodes = {n["node_id"]: n for n in resp.json()["nodes"]}
     assert nodes["write-bug-report"]["state"] == "succeeded"
@@ -108,14 +110,14 @@ async def test_loop_iterations_unroll_in_overview(
 
     fake_engine.complete_node(
         "body-node",
-        BugReportValue(summary="b0"),
+        BugReportValue(summary="b0", document="## Bug\n\n."),
         iter=(0,),
         loop_id="loop1",
         output_var_name="bug_report",
     )
     fake_engine.complete_node(
         "body-node",
-        BugReportValue(summary="b1"),
+        BugReportValue(summary="b1", document="## Bug\n\n."),
         iter=(1,),
         loop_id="loop1",
         output_var_name="bug_report",
@@ -170,7 +172,7 @@ async def test_nested_loop_iterations_unroll(
     for i in range(2):
         fake_engine.complete_node(
             "leaf",
-            BugReportValue(summary=f"i{i}"),
+            BugReportValue(summary=f"i{i}", document="## Bug\n\n."),
             iter=(i,),
             loop_id="inner",
             output_var_name="bug_report",

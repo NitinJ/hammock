@@ -87,8 +87,14 @@ def _make_writer_fake(
 
 def _agent_payloads_for_t2() -> dict[str, dict[str, dict]]:
     return {
-        "write-bug-report": {"bug_report": {"summary": "the bug"}},
-        "write-design-spec": {"design_spec": {"title": "Fix it", "overview": "Plan."}},
+        "write-bug-report": {"bug_report": {"summary": "the bug", "document": "## Bug\n\n."}},
+        "write-design-spec": {
+            "design_spec": {
+                "title": "Fix it",
+                "overview": "Plan.",
+                "document": "## D\n\n.",
+            }
+        },
         "review-design-spec-agent": {
             "design_spec_review_agent": {
                 "verdict": "approved",

@@ -38,6 +38,8 @@ class ImplPlanStage(BaseModel):
 
 
 class ImplPlanValue(BaseModel):
+    """Implementation plan — Stage 2 carries a ``document`` markdown field."""
+
     model_config = ConfigDict(extra="forbid")
 
     count: int = Field(..., ge=0)
@@ -49,6 +51,9 @@ class ImplPlanValue(BaseModel):
     """Per-stage description; ``len(stages) == count`` is the convention
     but not enforced — the count is what drives iteration."""
 
+    document: str = Field(..., min_length=1)
+    """Full impl plan in markdown — primary view in the dashboard."""
+
 
 _PROMPT_HINT = """\
 Strict JSON. Allowed fields ONLY:
@@ -56,6 +61,9 @@ Strict JSON. Allowed fields ONLY:
 - `count`: non-negative int — how many implement iterations are needed.
 - `stages`: list of `{name: string, description: string}` objects.
   Convention: `len(stages) == count`.
+- `document`: full impl plan as markdown (required, non-empty). Place
+  the narrative content here — the dashboard renders this as the
+  primary view and downstream agents consume it directly.
 
 Schema uses extra='forbid'.\
 """
@@ -101,6 +109,10 @@ class ImplPlanType:
             lines.append("\n**Stages:**")
             for k, s in enumerate(value.stages):
                 lines.append(f"  {k}. **{s.name}** — {s.description}")
+        lines.append("")
+        lines.append("#### Document")
+        lines.append("")
+        lines.append(value.document)
         return "\n".join(lines)
 
     def form_schema(self, decl: ImplPlanDecl) -> FormSchema | None:

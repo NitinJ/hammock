@@ -58,6 +58,7 @@ def test_impl_spec_produce_roundtrip(tmp_path: Path) -> None:
         "components": ["mod_a.py", "mod_b.py"],
         "interfaces": ["fn(x: int) -> int"],
         "edge_cases": ["empty input"],
+        "document": "## Impl spec\n\nRefactor X across mod_a, mod_b.",
     }
     p = tmp_path / "impl_spec.json"
     p.write_text(json.dumps(payload))
@@ -87,6 +88,7 @@ def test_impl_plan_value_carries_count_and_stages() -> None:
             ImplPlanStage(name="stage-0", description="d0"),
             ImplPlanStage(name="stage-1", description="d1"),
         ],
+        document="## Plan\n\nTwo stages.",
     )
     assert val.count == 2
     assert len(val.stages) == 2
@@ -99,7 +101,7 @@ def test_impl_plan_count_field_walkable_by_predicate(tmp_path: Path) -> None:
     introspection (not via raw dict access)."""
     from engine.v1.predicate import _walk_field_path
 
-    val = ImplPlanValue(count=3, stages=[])
+    val = ImplPlanValue(count=3, stages=[], document="## Plan\n\n.")
     walked = _walk_field_path(val, ["count"], "$test.field")
     assert walked == 3
 
@@ -112,7 +114,9 @@ def test_impl_plan_produce_rejects_negative_count(tmp_path: Path) -> None:
 
 
 def test_impl_plan_produce_zero_count_ok(tmp_path: Path) -> None:
-    (tmp_path / "impl_plan.json").write_text(json.dumps({"count": 0, "stages": []}))
+    (tmp_path / "impl_plan.json").write_text(
+        json.dumps({"count": 0, "stages": [], "document": "## Plan\n\n."})
+    )
     t = ImplPlanType()
     val = t.produce(t.Decl(), FakeNodeCtx(var_name="impl_plan", job_dir=tmp_path))
     assert val.count == 0
@@ -127,6 +131,7 @@ def test_summary_produce_roundtrip(tmp_path: Path) -> None:
     payload = {
         "text": "Done. Fixed bug, added tests.",
         "pr_urls": ["https://github.com/o/r/pull/1"],
+        "document": "## Summary\n\nDone.",
     }
     (tmp_path / "summary.json").write_text(json.dumps(payload))
     t = SummaryType()
@@ -136,7 +141,7 @@ def test_summary_produce_roundtrip(tmp_path: Path) -> None:
 
 
 def test_summary_renders_pr_urls(tmp_path: Path) -> None:
-    val = SummaryValue(text="ok", pr_urls=["u1", "u2"])
+    val = SummaryValue(text="ok", pr_urls=["u1", "u2"], document="## Summary\n\nok.")
     t = SummaryType()
     rendered = t.render_for_consumer(
         t.Decl(),

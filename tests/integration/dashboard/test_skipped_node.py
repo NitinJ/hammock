@@ -71,7 +71,7 @@ async def test_skipped_node_does_not_block_downstream(
     fake_engine.enter_node("downstream")
     from shared.v1.types.bug_report import BugReportValue
 
-    fake_engine.complete_node("downstream", BugReportValue(summary="ok"))
+    fake_engine.complete_node("downstream", BugReportValue(summary="ok", document="## Bug\n\n."))
 
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     rows = {n["node_id"]: n for n in resp.json()["nodes"]}

@@ -25,6 +25,8 @@ class ImplSpecDecl(BaseModel):
 
 
 class ImplSpecValue(BaseModel):
+    """Implementation spec — Stage 2 carries a ``document`` markdown field."""
+
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(..., min_length=1)
@@ -32,6 +34,8 @@ class ImplSpecValue(BaseModel):
     components: list[str] = Field(default_factory=list)
     interfaces: list[str] = Field(default_factory=list)
     edge_cases: list[str] = Field(default_factory=list)
+    document: str = Field(..., min_length=1)
+    """Full impl spec in markdown — primary view in the dashboard."""
 
 
 _PROMPT_HINT = """\
@@ -42,6 +46,9 @@ Strict JSON. Allowed fields ONLY:
 - `components`: list of strings (files / modules / classes touched).
 - `interfaces`: list of strings (function signatures or API shapes).
 - `edge_cases`: list of strings.
+- `document`: full impl spec as markdown (required, non-empty). Place
+  the narrative content here — the dashboard renders this as the
+  primary view and downstream agents consume it directly.
 
 Schema uses extra='forbid'.\
 """
@@ -97,6 +104,10 @@ class ImplSpecType:
             lines.append("\n**Edge cases:**")
             for e in value.edge_cases:
                 lines.append(f"  - {e}")
+        lines.append("")
+        lines.append("#### Document")
+        lines.append("")
+        lines.append(value.document)
         return "\n".join(lines)
 
     def form_schema(self, decl: ImplSpecDecl) -> FormSchema | None:

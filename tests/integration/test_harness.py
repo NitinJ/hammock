@@ -138,7 +138,7 @@ def test_complete_node_writes_envelope_and_state(
     fake_engine_offline.start_job(workflow={"workflow": "T1"}, request="x")
     fake_engine_offline.enter_node("write-bug-report")
 
-    value = BugReportValue(summary="The login button does not respond.")
+    value = BugReportValue(summary="The login button does not respond.", document="## Bug\n\n.")
     fake_engine_offline.complete_node("write-bug-report", value)
 
     # State updated
@@ -171,7 +171,7 @@ def test_complete_node_with_iter_writes_loop_indexed_envelope(
     fake_engine_offline.enter_node("body-node", iter=(0,), loop_id="impl-loop")
     fake_engine_offline.complete_node(
         "body-node",
-        BugReportValue(summary="loop iteration 0"),
+        BugReportValue(summary="loop iteration 0", document="## Bug\n\n."),
         iter=(0,),
         loop_id="impl-loop",
     )
