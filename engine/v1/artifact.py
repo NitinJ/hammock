@@ -71,16 +71,27 @@ class DispatchResult:
 
 
 # Type alias for the claude invocation; injectable for unit tests.
-ClaudeRunner = Callable[[str, Path], subprocess.CompletedProcess[str]]
+# Third arg is the working directory: the project repo clone when the
+# job has a repo (Stage 3 — every agent node runs rooted in the repo so
+# CLAUDE.md and project files are visible). ``None`` for artifact-only
+# workflows that have no repo (T1 fixtures only — production paths
+# always have one).
+ClaudeRunner = Callable[[str, Path, Path | None], subprocess.CompletedProcess[str]]
 
 
-def _default_claude_runner(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+def _default_claude_runner(
+    prompt: str, attempt_dir: Path, cwd: Path | None
+) -> subprocess.CompletedProcess[str]:
     """Default invocation of `claude -p`.
 
     We pass the prompt as a CLI argument (not stdin) and run with
     --permission-mode bypassPermissions so the agent can write files
     without prompting. Output streams are redirected to attempt_dir/
     stdout.log and stderr.log.
+
+    When ``cwd`` is supplied, the subprocess runs there — this is the
+    project repo clone for any job whose workflow has a repo, giving
+    the agent free access to ``CLAUDE.md`` and project files.
     """
     stdout_path = attempt_dir / "stdout.log"
     stderr_path = attempt_dir / "stderr.log"
@@ -93,6 +104,7 @@ def _default_claude_runner(prompt: str, attempt_dir: Path) -> subprocess.Complet
                 "--permission-mode",
                 "bypassPermissions",
             ],
+            cwd=str(cwd) if cwd is not None else None,
             stdout=out,
             stderr=err,
             check=False,
@@ -108,6 +120,7 @@ def dispatch_artifact_agent(
     attempt: int = 1,
     claude_runner: ClaudeRunner | None = None,
     workflow_dir: Path | None = None,
+    repo_dir: Path | None = None,
     loop_id: str | None = None,
     iteration: int | None = None,
 ) -> DispatchResult:
@@ -115,7 +128,13 @@ def dispatch_artifact_agent(
 
     When the node runs inside a loop, pass ``loop_id`` and ``iteration``
     so per-output produce + prompt rendering use the loop-indexed
-    envelope paths."""
+    envelope paths.
+
+    ``repo_dir`` is the project's repo clone at ``<job_dir>/repo``. When
+    set, the spawned claude process runs with cwd there — Stage 3's
+    working-directory rule, giving the agent free access to
+    ``CLAUDE.md`` and project files. Artifact-only workflows (no
+    code-kind nodes anywhere) have no repo and pass ``None``."""
     runner = claude_runner or _default_claude_runner
 
     job_dir = paths.job_dir(job_slug, root=root)
@@ -144,9 +163,11 @@ def dispatch_artifact_agent(
     )
     atomic_write_text(attempt_dir / "prompt.md", prompt)
 
-    # 3. Spawn agent.
-    log.info("dispatching %s/%s (attempt %d)", job_slug, node.id, attempt)
-    completed = runner(prompt, attempt_dir)
+    # 3. Spawn agent — rooted in the project repo when one exists, so
+    # CLAUDE.md + repo files are visible to Read/grep without an extra
+    # configuration step.
+    log.info("dispatching %s/%s (attempt %d) cwd=%s", job_slug, node.id, attempt, repo_dir)
+    completed = runner(prompt, attempt_dir, repo_dir)
     if completed.returncode != 0:
         return DispatchResult(
             succeeded=False,

@@ -70,7 +70,9 @@ def _make_writer_fake(
     """Build a fake claude_runner that picks payloads based on the node id
     embedded in the prompt header (`# Node: <id>`)."""
 
-    def fake(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def fake(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         # Find the node id from the first line of the prompt.
         first_line = prompt.splitlines()[0]
         prefix = "# Node: "
@@ -315,7 +317,9 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
     # First call: only the bug-report node "succeeds" (we control the fake).
     counter = {"calls": 0}
 
-    def fake_first(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def fake_first(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         counter["calls"] += 1
         first_line = prompt.splitlines()[0]
         node_id = first_line.removeprefix("# Node: ").strip()
@@ -354,7 +358,9 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
 
     counter["calls"] = 0
 
-    def fake_second(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def fake_second(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         counter["calls"] += 1
         first_line = prompt.splitlines()[0]
         node_id = first_line.removeprefix("# Node: ").strip()

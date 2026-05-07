@@ -411,6 +411,7 @@ def run_job(
             attempt=attempt,
             claude_runner=claude_runner,
             workflow_dir=workflow_dir,
+            repo_dir=job_repo.repo_dir if job_repo is not None else None,
         )
         if not result.succeeded:
             log.warning("node %s failed: %s — marking job FAILED", node.id, result.error)
