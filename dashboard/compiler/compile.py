@@ -84,8 +84,16 @@ def compile_job(
         workflow_path: explicit override for the workflow YAML path. When
                        set, ``job_type`` is ignored for resolution.
     """
-    # 1. Resolve workflow path.
-    wf_path = workflow_path or _resolve_bundled_workflow(job_type)
+    # 1. Resolve workflow path. Stage 5 — prefer the project-local
+    # workflow under <repo_path>/.hammock/workflows/<job_type>/ over
+    # the bundled one. Falls back to bundled when no project copy
+    # exists (or when the operator hasn't picked a project — e.g.
+    # dry_run probes from tests).
+    wf_path = (
+        workflow_path
+        or _resolve_project_local_workflow(project_slug, job_type, root)
+        or _resolve_bundled_workflow(job_type)
+    )
     if wf_path is None:
         return [
             CompileFailure(
@@ -258,6 +266,31 @@ def _resolve_bundled_workflow(job_type: str) -> Path | None:
         / "workflow.yaml"
     )
     return bundled if bundled.is_file() else None
+
+
+def _resolve_project_local_workflow(
+    project_slug: str | None, job_type: str, root: Path
+) -> Path | None:
+    """Stage 5 — locate the project-local workflow under
+    ``<project.repo_path>/.hammock/workflows/<job_type>/workflow.yaml``.
+
+    Returns ``None`` when no project_slug is given, the project record
+    is missing, or the path doesn't exist. Project-local resolution
+    takes precedence over bundled when the project has a copy of the
+    same job_type.
+    """
+    if not project_slug:
+        return None
+    pj = root / "projects" / project_slug / "project.json"
+    if not pj.is_file():
+        return None
+    try:
+        data = __import__("json").loads(pj.read_text())
+    except (OSError, ValueError):
+        return None
+    repo_path = Path(data.get("repo_path", ""))
+    candidate = repo_path / ".hammock" / "workflows" / job_type / "workflow.yaml"
+    return candidate if candidate.is_file() else None
 
 
 __all__ = [

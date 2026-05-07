@@ -30,6 +30,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from dashboard.api.project_workflows import (
+    ProjectWorkflowItem,
+    list_workflows_for_project,
+)
 from dashboard.state import projections
 from dashboard.state.projections import ProjectDetail, ProjectListItem
 from shared.atomic import atomic_write_text
@@ -301,6 +305,23 @@ async def get_project(request: Request, slug: str) -> ProjectDetail:
     if detail is None:
         raise HTTPException(status_code=404, detail=f"project {slug!r} not found")
     return detail
+
+
+@router.get("/{slug}/workflows", response_model=list[ProjectWorkflowItem])
+async def list_project_workflows(request: Request, slug: str) -> list[ProjectWorkflowItem]:
+    """Stage 5 — return bundled + project-local workflows for *slug*.
+
+    The submit dropdown uses this. Each entry carries a ``valid`` flag
+    plus an ``error`` reason when the workflow fails verification
+    (missing prompt files, malformed yaml, schema_version mismatch);
+    the dashboard hides invalid entries from the dropdown but lists
+    them so the operator can fix them in their editor.
+    """
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    items = list_workflows_for_project(settings.root, slug)
+    if items is None:
+        raise HTTPException(status_code=404, detail=f"project {slug!r} not found")
+    return items
 
 
 # ---------------------------------------------------------------------------

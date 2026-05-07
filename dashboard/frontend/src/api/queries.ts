@@ -34,6 +34,7 @@ import type {
   NodeDetail,
   ProjectDetail,
   ProjectListItem,
+  ProjectWorkflowItem,
   RegisterProjectRequest,
   RegisterProjectResponse,
   SettingsResponse,
@@ -57,6 +58,15 @@ export function useWorkflows() {
   return useQuery({
     queryKey: QUERY_KEYS.workflows,
     queryFn: () => api.get<WorkflowListItem[]>("/workflows"),
+  });
+}
+
+/** Stage 5 — per-project workflow listing (bundled + project-local). */
+export function useProjectWorkflows(slug: MaybeRefOrGetter<string>) {
+  return useQuery({
+    queryKey: computed(() => ["projects", toValue(slug), "workflows"] as const),
+    queryFn: () => api.get<ProjectWorkflowItem[]>(`/projects/${toValue(slug)}/workflows`),
+    enabled: computed(() => Boolean(toValue(slug))),
   });
 }
 
