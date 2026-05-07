@@ -452,15 +452,21 @@ def _dispatch_human_node(
     poll_interval_seconds: float,
     timeout_seconds: float | None,
 ) -> bool:
-    """Write a pending marker, transition to BLOCKED_ON_HUMAN, wait for
+    """Transition to BLOCKED_ON_HUMAN, write a pending marker, wait for
     the submission API to land the typed value(s) on disk, return True
     on success or False on timeout.
+
+    Order matters: state is persisted **before** the marker is written,
+    so any observer that detects the marker is guaranteed to read
+    ``BLOCKED_ON_HUMAN`` from the JobConfig on disk. The reverse order
+    introduced a TOCTOU race that surfaced as flaky test failures on
+    slow runners (CI Python 3.13).
 
     Submission verification is the API's job (`engine.v1.hil.submit_hil_answer`
     runs the type's `produce` synchronously). By the time the marker is
     gone, the typed envelopes are already on disk and validated."""
-    write_pending_marker(job_slug=job_slug, node=node, workflow=workflow, root=root)
     _persist_state(cfg, JobState.BLOCKED_ON_HUMAN, root=root)
+    write_pending_marker(job_slug=job_slug, node=node, workflow=workflow, root=root)
     log.info("node %s blocked on human; pending marker written, waiting...", node.id)
     return wait_for_node_outputs(
         node=node,
