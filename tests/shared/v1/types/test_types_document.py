@@ -12,11 +12,14 @@ Types that opt in here:
 - impl-spec
 - impl-plan
 - summary
+- review-verdict (added in dogfood-fixes-2: reviewers must write a
+  markdown narrative explaining their reasoning)
 
 Types intentionally **not** changed (still tested elsewhere — should
 continue to validate without ``document``):
 
-- review-verdict, pr-review-verdict (short-form, has ``summary`` already)
+- pr-review-verdict (engine-populated summary; verdict is the only
+  human-supplied field)
 - pr (no narrative)
 - job-request (raw user input)
 - list[T] (wrapper)
@@ -74,6 +77,7 @@ _BASE_PAYLOADS: dict[str, dict] = {
     "impl-spec": {"title": "t", "overview": "ov"},
     "impl-plan": {"count": 1, "stages": []},
     "summary": {"text": "x"},
+    "review-verdict": {"verdict": "approved", "summary": "ok"},
 }
 
 _NARRATIVE_TYPES = sorted(_BASE_PAYLOADS.keys())
@@ -163,10 +167,13 @@ def test_pr_type_does_not_require_document(tmp_path: Path) -> None:
     )
 
 
-def test_review_verdict_does_not_require_document(tmp_path: Path) -> None:
-    """`review-verdict` keeps its short-form ``summary`` field; document
-    is not added here in v1."""
-    from shared.v1.types.review_verdict import ReviewVerdictValue
+def test_pr_review_verdict_does_not_require_document(tmp_path: Path) -> None:
+    """`pr-review-verdict` is engine-populated (summary comes from gh);
+    no markdown narrative needed since the verdict-only submission has
+    no agent reasoning to capture."""
+    from shared.v1.types.pr_review_verdict import PRReviewVerdictValue
 
-    val = ReviewVerdictValue(verdict="approved", summary="ok")
-    assert getattr(val, "document", None) is None
+    assert "document" not in PRReviewVerdictValue.model_fields, (
+        "pr-review-verdict unexpectedly carries a `document` field; the "
+        "human submission is just the verdict + engine-populated summary"
+    )

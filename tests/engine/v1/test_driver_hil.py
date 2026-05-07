@@ -102,6 +102,7 @@ def _agent_payloads_for_t2() -> dict[str, dict[str, dict]]:
             "design_spec_review_agent": {
                 "verdict": "approved",
                 "summary": "agent approves",
+                "document": "## Review\n\nagent approves",
             }
         },
     }
@@ -157,6 +158,7 @@ def test_driver_waits_for_hil_then_completes(tmp_path: Path) -> None:
         value_payload={
             "verdict": "approved",
             "summary": "looks good",
+            "document": "## Review\n\nlooks good",
         },
         root=tmp_path,
         workflow=workflow,
@@ -205,6 +207,7 @@ def test_driver_persists_human_node_run_succeeded(tmp_path: Path) -> None:
         value_payload={
             "verdict": "approved",
             "summary": "ok",
+            "document": "## Review\n\nok",
         },
         root=tmp_path,
         workflow=workflow,
@@ -297,6 +300,7 @@ def test_driver_transitions_through_blocked_on_human(tmp_path: Path) -> None:
         value_payload={
             "verdict": "approved",
             "summary": "ok",
+            "document": "## Review\n\nok",
         },
         root=tmp_path,
         workflow=workflow,
@@ -352,6 +356,7 @@ def test_human_envelope_persisted_after_submission(tmp_path: Path) -> None:
         value_payload={
             "verdict": "approved",
             "summary": "human approves",
+            "document": "## Review\n\nhuman approves",
         },
         root=tmp_path,
         workflow=workflow,

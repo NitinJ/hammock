@@ -79,6 +79,7 @@ def write_pending_marker(
     root: Path,
     loop_id: str | None = None,
     iteration: int | None = None,
+    iter_path: tuple[int, ...] | list[int] | None = None,
 ) -> None:
     """Engine writes one of these when it reaches a human-actor node and
     needs to wait for the human to submit. The dashboard reads from
@@ -86,7 +87,11 @@ def write_pending_marker(
 
     Inside a loop body, ``loop_id`` and ``iteration`` are stored on the
     marker so the submission API knows which indexed envelope path to
-    write to."""
+    write to. For nested loops, ``iter_path`` carries the full chain of
+    iteration indices (outer..innermost) so the dashboard's HIL queue
+    item can match the row's iter path; ``iteration`` itself is the
+    innermost (and what the submission API uses for envelope routing).
+    """
     pending = pending_dir(job_slug, root=root)
     pending.mkdir(parents=True, exist_ok=True)
     output_types = {}
@@ -107,6 +112,8 @@ def write_pending_marker(
         payload["loop_id"] = loop_id
     if iteration is not None:
         payload["iteration"] = iteration
+    if iter_path is not None:
+        payload["iter_path"] = list(iter_path)
     atomic_write_text(
         pending_marker_path(job_slug, node.id, root=root),
         json.dumps(payload, indent=2),

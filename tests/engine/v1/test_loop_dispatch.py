@@ -148,6 +148,7 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
                 {
                     "verdict": "approved",
                     "summary": f"iter-{iter_idx}",
+                    "document": f"## Review iter-{iter_idx}\n\nlgtm",
                 }
             )
         )
@@ -207,7 +208,15 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
             job_slug, "vlist", "verdict", iter_idx, root=tmp_path
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({"verdict": "approved", "summary": f"iter-{iter_idx}"}))
+        target.write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": f"iter-{iter_idx}",
+                    "document": f"## Review iter-{iter_idx}\n\nlgtm",
+                }
+            )
+        )
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     result = dispatch_loop(
@@ -364,6 +373,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
                 {
                     "verdict": "approved",
                     "summary": f"i{idx}",
+                    "document": f"## Review i{idx}\n\nlgtm",
                 }
             )
         )
@@ -413,6 +423,7 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
                 {
                     "verdict": "approved",
                     "summary": f"i-{idx}",
+                    "document": f"## Review i-{idx}\n\nlgtm",
                 }
             )
         )
@@ -510,6 +521,7 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
                 {
                     "verdict": "approved",
                     "summary": f"call-{invocation_count['n']}",
+                    "document": f"## Review call-{invocation_count['n']}\n\nlgtm",
                 }
             )
         )
@@ -656,3 +668,104 @@ def test_per_iteration_substrate_uses_unique_node_id_per_iter(
     # Per-iteration substrate must allocate with distinct node ids
     # encoding the iteration index.
     assert allocated_node_ids == ["impl-0", "impl-1"], allocated_node_ids
+
+
+# ---------------------------------------------------------------------------
+# until-predicate dogfood-fixes-2: needs-revision then approved
+# ---------------------------------------------------------------------------
+
+
+def test_until_loop_reenters_on_needs_revision_then_exits_on_approved(
+    tmp_path: Path,
+) -> None:
+    """An until-loop with `verdict == 'approved'` must:
+    - run the body once, see 'needs-revision', re-enter for iteration 1
+    - run the body again, see 'approved', exit
+
+    The dogfood bug: bare-ref `until: $loop.var[i]` was always truthy on
+    a present envelope, so iteration 1 ran and then exited regardless of
+    what the verdict said. We catch that footgun at workflow load now;
+    this test guards the runtime path of the canonical fix
+    (`...verdict == 'approved'`) — needs-revision keeps looping, approved
+    exits.
+
+    KISS: smallest possible workflow. One until-loop, one body node
+    producing a review-verdict per iteration. No outer loop, no agent
+    claude — just dispatch_loop with a fake runner that scripts the
+    verdict per iteration.
+    """
+    job_slug = "j"
+    paths.ensure_job_layout(job_slug, root=tmp_path)
+
+    workflow = Workflow(
+        schema_version=1,
+        workflow="t-until-revision-cycle",
+        variables={"verdict": VariableSpec(type="review-verdict")},
+        nodes=[
+            LoopNode(
+                id="lp",
+                kind="loop",
+                until="$lp.verdict[i].verdict == 'approved'",
+                max_iterations=3,
+                substrate="shared",
+                body=[
+                    ArtifactNode(
+                        id="reviewer",
+                        kind="artifact",
+                        actor="agent",
+                        inputs={},
+                        outputs={"verdict": "$verdict"},
+                    )
+                ],
+                outputs={"final": "$lp.verdict[last]"},
+            )
+        ],
+    )
+
+    # Iter 0: needs-revision (loop should re-enter).
+    # Iter 1: approved (loop should exit).
+    iter_verdicts = ["needs-revision", "approved"]
+    invocation_count = {"n": 0}
+
+    def fake_runner(prompt: str, attempt_dir: Path, cwd=None):
+        i = invocation_count["n"]
+        invocation_count["n"] += 1
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "stderr.log").write_text("")
+        v = iter_verdicts[i] if i < len(iter_verdicts) else "approved"
+        target = paths.loop_variable_envelope_path(job_slug, "lp", "verdict", i, root=tmp_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(
+                {
+                    "verdict": v,
+                    "summary": f"iter-{i}: {v}",
+                    "document": f"## Review iter-{i}\n\n{v}",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    result = dispatch_loop(
+        node=workflow.nodes[0],
+        workflow=workflow,
+        job_slug=job_slug,
+        root=tmp_path,
+        job_repo=None,
+        artifact_claude_runner=fake_runner,
+    )
+
+    assert result.succeeded, result.error
+    # Two iterations: needs-revision → re-enter → approved → exit.
+    assert result.iterations_run == 2
+    assert invocation_count["n"] == 2
+    # Both indexed envelopes on disk.
+    for i in range(2):
+        p = paths.loop_variable_envelope_path(job_slug, "lp", "verdict", i, root=tmp_path)
+        assert p.is_file(), f"iter {i} envelope missing"
+    # Final projection picks iter 1's approved value.
+    final_path = paths.variable_envelope_path(job_slug, "final", root=tmp_path)
+    assert final_path.is_file()
+    final_env = Envelope.model_validate_json(final_path.read_text())
+    assert final_env.value["verdict"] == "approved"

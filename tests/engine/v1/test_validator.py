@@ -279,6 +279,95 @@ def test_assert_valid_raises_on_findings() -> None:
         assert_valid(wf)
 
 
+# ---------------------------------------------------------------------------
+# Loop until-predicate type check (dogfood-fixes-2)
+# ---------------------------------------------------------------------------
+#
+# Bare-ref `until:` predicates against non-bool variables are a known
+# footgun: any non-None envelope value is truthy, so the loop exits
+# after iteration 1 regardless of what the human chose. The validator
+# catches this at workflow-load time and asks the author to use an
+# explicit comparison (`.field == 'literal'`) instead.
+
+
+def _loop_workflow(*, until: str, var_type: str) -> Workflow:
+    """Minimal until-loop workflow whose body produces one variable of
+    the given type. ``until`` is the predicate under test."""
+    from shared.v1.workflow import LoopNode
+
+    return _make_workflow(
+        variables={
+            "v": VariableSpec(type=var_type),
+        },
+        nodes=[
+            LoopNode(
+                id="lp",
+                kind="loop",
+                until=until,
+                max_iterations=1,
+                substrate="shared",
+                body=[
+                    ArtifactNode(
+                        id="produce",
+                        kind="artifact",
+                        actor="agent",
+                        inputs={},
+                        outputs={"v": "$v"},
+                    )
+                ],
+                outputs={"out": "$lp.v[last]"},
+            )
+        ],
+    )
+
+
+def test_until_bare_ref_on_non_bool_variable_rejected() -> None:
+    """`until: $lp.v[i]` where `v` is review-verdict (envelope object,
+    always truthy when present) is the dogfood footgun. Reject with a
+    clear message naming the loop, the field, and the suggested fix."""
+    wf = _loop_workflow(until="$lp.v[i]", var_type="review-verdict")
+    findings = validate(wf)
+    matching = [f for f in findings if f.node_id == "lp" and "until" in f.message.lower()]
+    assert matching, f"expected a finding for loop 'lp' until-predicate; got {findings}"
+    msg = matching[0].message
+    assert "review-verdict" in msg or "non-bool" in msg.lower(), msg
+    # Helpful suggestion in the message — point at the verdict-eq form.
+    assert "==" in msg, f"finding should suggest the explicit comparison form: {msg}"
+
+
+def test_until_explicit_comparison_passes() -> None:
+    """`until: $lp.v[i].verdict == 'approved'` is the canonical fix.
+    The validator must accept it."""
+    wf = _loop_workflow(
+        until="$lp.v[i].verdict == 'approved'",
+        var_type="review-verdict",
+    )
+    findings = validate(wf)
+    until_findings = [f for f in findings if "until" in f.message.lower()]
+    assert until_findings == [], until_findings
+
+
+def test_until_bare_ref_on_field_path_rejected() -> None:
+    """`until: $lp.v[i].verdict` without an operator: the field is a
+    Literal of strings, also always truthy. Reject."""
+    wf = _loop_workflow(until="$lp.v[i].verdict", var_type="review-verdict")
+    findings = validate(wf)
+    until_findings = [f for f in findings if "until" in f.message.lower()]
+    assert until_findings, "bare field-path ref on non-bool should be rejected"
+
+
+def test_until_pr_review_verdict_field_eq_passes() -> None:
+    """`until: $lp.v[i].verdict == 'merged'` where v is pr-review-verdict
+    is the existing-correct pattern (pr-merged-loop). Must pass."""
+    wf = _loop_workflow(
+        until="$lp.v[i].verdict == 'merged'",
+        var_type="pr-review-verdict",
+    )
+    findings = validate(wf)
+    until_findings = [f for f in findings if "until" in f.message.lower()]
+    assert until_findings == [], until_findings
+
+
 def test_assert_valid_passes_on_clean_workflow() -> None:
     wf = _make_workflow(
         variables={"bug_report": VariableSpec(type="bug-report")},
