@@ -32,6 +32,8 @@ import type {
   JobSubmitRequest,
   JobSubmitResponse,
   NodeDetail,
+  CopyWorkflowRequest,
+  CopyWorkflowResponse,
   ProjectDetail,
   ProjectListItem,
   ProjectWorkflowItem,
@@ -113,6 +115,18 @@ export function useReverifyProject() {
     onSuccess: (_data, slug) => {
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["projects", slug] });
+    },
+  });
+}
+
+/** Stage 6 — fork a bundled workflow into the project's repo. */
+export function useCopyWorkflow(projectSlug: MaybeRefOrGetter<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CopyWorkflowRequest) =>
+      api.post<CopyWorkflowResponse>(`/projects/${toValue(projectSlug)}/workflows/copy`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects", toValue(projectSlug), "workflows"] });
     },
   });
 }

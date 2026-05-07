@@ -33,6 +33,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from dashboard.api.project_workflows import (
     ProjectWorkflowItem,
     list_workflows_for_project,
+    project_repo_path,
+    resolve_bundled_source,
+    verify_workflow_folder,
 )
 from dashboard.state import projections
 from dashboard.state.projections import ProjectDetail, ProjectListItem
@@ -307,6 +310,34 @@ async def get_project(request: Request, slug: str) -> ProjectDetail:
     return detail
 
 
+class CopyWorkflowRequest(BaseModel):
+    """Body of ``POST /api/projects/{slug}/workflows/copy``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(min_length=1)
+    """Bundled workflow's ``job_type`` (folder name) to copy from."""
+
+    dest_name: str | None = None
+    """Destination folder name under ``<repo>/.hammock/workflows/``.
+    Defaults to ``<source>-<project_slug>`` to avoid collision with
+    bundled. Operator can pass an explicit name or rename the folder
+    later by hand."""
+
+
+class CopyWorkflowResponse(BaseModel):
+    """Response body of the copy endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    destination: str
+    """Absolute path to the new workflow folder."""
+
+    workflow: ProjectWorkflowItem
+    """The freshly-listed workflow so the UI can refresh without a
+    separate round-trip."""
+
+
 @router.get("/{slug}/workflows", response_model=list[ProjectWorkflowItem])
 async def list_project_workflows(request: Request, slug: str) -> list[ProjectWorkflowItem]:
     """Stage 5 — return bundled + project-local workflows for *slug*.
@@ -390,6 +421,68 @@ async def reverify_project(request: Request, slug: str) -> RegisterProjectRespon
     raw = verify_repo_path(repo_path)
     detail = write_project_json(root, slug, name, repo_path, raw)
     return RegisterProjectResponse(project=detail, verify=_verify_to_response(raw))
+
+
+@router.post(
+    "/{slug}/workflows/copy",
+    response_model=CopyWorkflowResponse,
+    status_code=201,
+)
+async def copy_workflow(
+    request: Request, slug: str, body: CopyWorkflowRequest
+) -> CopyWorkflowResponse:
+    """Stage 6 — fork a bundled workflow into the project's repo.
+
+    Recursive copy from ``hammock/templates/workflows/<source>/`` to
+    ``<repo_path>/.hammock/workflows/<dest_name>/`` (default
+    ``<source>-<slug>``). Returns 404 when the project or source
+    doesn't exist; 409 when the destination already exists (we never
+    silently overwrite — operator must delete first or pick a
+    different ``dest_name``).
+
+    The new folder is left for the operator's git workflow to add and
+    commit. Hammock does not run ``git add`` or ``git commit``.
+    """
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    root: Path = settings.root
+
+    repo_path = project_repo_path(root, slug)
+    if repo_path is None:
+        raise HTTPException(status_code=404, detail=f"project {slug!r} not found")
+
+    source_folder = resolve_bundled_source(body.source)
+    if source_folder is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"bundled workflow {body.source!r} not found under hammock/templates/workflows/"
+            ),
+        )
+
+    dest_name = body.dest_name or f"{body.source}-{slug}"
+    dest_folder = repo_path / ".hammock" / "workflows" / dest_name
+    if dest_folder.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"destination {dest_folder} already exists. Delete it first or "
+                "pass an explicit `dest_name` to avoid collision."
+            ),
+        )
+
+    dest_folder.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_folder, dest_folder)
+
+    # Build the response item from the just-copied folder.
+    wf, error = verify_workflow_folder(dest_folder)
+    item = ProjectWorkflowItem(
+        job_type=dest_name,
+        workflow_name=wf.workflow if wf is not None else None,
+        source="custom",
+        valid=error is None,
+        error=error,
+    )
+    return CopyWorkflowResponse(destination=str(dest_folder), workflow=item)
 
 
 __all__ = [
