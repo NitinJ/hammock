@@ -190,6 +190,17 @@ export interface ProjectWorkflowItem {
   error: string | null;
 }
 
+/** Body of POST /api/projects/{slug}/workflows/copy — Stage 6. */
+export interface CopyWorkflowRequest {
+  source: string;
+  dest_name?: string;
+}
+
+export interface CopyWorkflowResponse {
+  destination: string;
+  workflow: ProjectWorkflowItem;
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {

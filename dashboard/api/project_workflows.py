@@ -77,7 +77,7 @@ def _agent_actor_node_ids(workflow: Workflow) -> list[str]:
     return out
 
 
-def _verify_workflow_folder(folder: Path) -> tuple[Workflow | None, str | None]:
+def verify_workflow_folder(folder: Path) -> tuple[Workflow | None, str | None]:
     """Validate a single workflow folder.
 
     Returns ``(workflow, None)`` on success, ``(None, error_reason)`` or
@@ -112,7 +112,7 @@ def _list_bundled() -> list[ProjectWorkflowItem]:
     if not _BUNDLED_DIR.is_dir():
         return items
     for folder in sorted(p for p in _BUNDLED_DIR.iterdir() if p.is_dir()):
-        wf, error = _verify_workflow_folder(folder)
+        wf, error = verify_workflow_folder(folder)
         items.append(
             ProjectWorkflowItem(
                 job_type=folder.name,
@@ -132,7 +132,7 @@ def _list_project_local(repo_path: Path) -> list[ProjectWorkflowItem]:
     if not workflows_dir.is_dir():
         return items
     for folder in sorted(p for p in workflows_dir.iterdir() if p.is_dir()):
-        wf, error = _verify_workflow_folder(folder)
+        wf, error = verify_workflow_folder(folder)
         items.append(
             ProjectWorkflowItem(
                 job_type=folder.name,
@@ -180,3 +180,26 @@ def resolve_project_local_workflow(repo_path: Path, job_type: str) -> Path | Non
     over bundled."""
     candidate = repo_path / ".hammock" / "workflows" / job_type / "workflow.yaml"
     return candidate if candidate.is_file() else None
+
+
+def resolve_bundled_source(name: str) -> Path | None:
+    """Return the bundled workflow folder for ``name``, or ``None`` if
+    no such bundled workflow exists. Used by the copy endpoint."""
+    candidate = _BUNDLED_DIR / name
+    return candidate if (candidate / "workflow.yaml").is_file() else None
+
+
+def project_repo_path(root: Path, project_slug: str) -> Path | None:
+    """Return the registered project's ``repo_path`` from project.json,
+    or ``None`` if the project does not exist or its record is malformed."""
+    pj = root / "projects" / project_slug / "project.json"
+    if not pj.is_file():
+        return None
+    try:
+        data = json.loads(pj.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    rp = data.get("repo_path")
+    if not isinstance(rp, str):
+        return None
+    return Path(rp)
