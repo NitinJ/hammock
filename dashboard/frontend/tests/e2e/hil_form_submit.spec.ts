@@ -11,7 +11,8 @@ test.beforeEach(() => {
     slug: SLUG,
     workflowName: "t-hil",
     state: "blocked_on_human",
-    workflowYaml: `workflow: t-hil
+    workflowYaml: `schema_version: 1
+workflow: t-hil
 variables:
   spec:   { type: design-spec }
   review: { type: review-verdict }

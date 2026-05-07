@@ -16,7 +16,7 @@ from tests.integration.fake_engine import FakeEngine
 async def test_job_overview_after_start(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
-    fake_engine.start_job(workflow={"workflow": "T1"}, request="hi")
+    fake_engine.start_job(workflow={"schema_version": 1, "workflow": "T1"}, request="hi")
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     assert resp.status_code == 200
     data = resp.json()
@@ -30,7 +30,7 @@ async def test_job_overview_after_start(
 async def test_job_list_returns_started_jobs(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
-    fake_engine.start_job(workflow={"workflow": "T1"}, request="x")
+    fake_engine.start_job(workflow={"schema_version": 1, "workflow": "T1"}, request="x")
     resp = await dashboard.client.get("/api/jobs")
     assert resp.status_code == 200
     slugs = [j["job_slug"] for j in resp.json()]
@@ -39,7 +39,7 @@ async def test_job_list_returns_started_jobs(
 
 @pytest.mark.asyncio
 async def test_node_detail_running(dashboard: DashboardHandle, fake_engine: FakeEngine) -> None:
-    fake_engine.start_job(workflow={"workflow": "T1"}, request="x")
+    fake_engine.start_job(workflow={"schema_version": 1, "workflow": "T1"}, request="x")
     fake_engine.enter_node("write-bug-report")
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     assert resp.status_code == 200
@@ -55,7 +55,7 @@ async def test_node_detail_succeeded_with_envelope(
 ) -> None:
     from shared.v1.types.bug_report import BugReportValue
 
-    fake_engine.start_job(workflow={"workflow": "T1"}, request="x")
+    fake_engine.start_job(workflow={"schema_version": 1, "workflow": "T1"}, request="x")
     fake_engine.enter_node("write-bug-report")
     fake_engine.complete_node(
         "write-bug-report", BugReportValue(summary="login button broken", document="## Bug\n\n.")
@@ -69,7 +69,7 @@ async def test_node_detail_succeeded_with_envelope(
 async def test_node_detail_skipped_carries_reason(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
-    fake_engine.start_job(workflow={"workflow": "T1"}, request="x")
+    fake_engine.start_job(workflow={"schema_version": 1, "workflow": "T1"}, request="x")
     fake_engine.skip_node("optional-node", "runs_if false")
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     nodes = {n["node_id"]: n for n in resp.json()["nodes"]}
@@ -83,6 +83,7 @@ async def test_loop_iterations_unroll_in_overview(
     """Spot-check that JobDetail.nodes carries iter[]+parent_loop_id for
     body rows. Detailed coverage lives in test_loop_unroll.py."""
     workflow = {
+        "schema_version": 1,
         "workflow": "T-unroll",
         "variables": {
             "bug_report": {"type": "bug-report"},
@@ -136,6 +137,7 @@ async def test_nested_loop_iterations_unroll(
 ) -> None:
     """Nested loop bodies emit rows with iter=[outer, inner]."""
     workflow = {
+        "schema_version": 1,
         "workflow": "T-nested",
         "variables": {
             "bug_report": {"type": "bug-report"},

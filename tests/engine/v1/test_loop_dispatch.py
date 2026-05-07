@@ -85,6 +85,7 @@ def _count_loop_workflow_simple() -> Workflow:
     """A count-of-2 loop with a single artifact-agent body node that
     produces a review-verdict per iteration."""
     return Workflow(
+        schema_version=1,
         workflow="t5-count-simple",
         variables={
             "design_spec": VariableSpec(type="design-spec"),
@@ -313,6 +314,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
     ).write_text(plan_env.model_dump_json())
 
     workflow = Workflow(
+        schema_version=1,
         workflow="t6-count-from-ref",
         variables={
             "impl_plan": VariableSpec(type="impl-plan"),
@@ -438,6 +440,7 @@ def _nested_workflow() -> Workflow:
     (single artifact-agent producing a verdict). Mirrors T5's shape
     minus the code/PR substrate (which would require a real git repo)."""
     return Workflow(
+        schema_version=1,
         workflow="t5-nested",
         variables={
             "design_spec": VariableSpec(type="design-spec"),
@@ -554,6 +557,7 @@ def test_per_iteration_substrate_uses_unique_node_id_per_iter(
     paths.ensure_job_layout(job_slug, root=tmp_path)
 
     workflow = Workflow(
+        schema_version=1,
         workflow="t5-per-iter",
         variables={
             "design_spec": VariableSpec(type="design-spec"),

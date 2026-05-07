@@ -24,6 +24,7 @@ def _t2_yaml(tmp_path: Path) -> Path:
     p = tmp_path / "t2.yaml"
     p.write_text(
         """
+schema_version: 1
 workflow: t2
 variables:
   request: { type: job-request }

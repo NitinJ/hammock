@@ -1,3 +1,4 @@
+schema_version: 1
 workflow: t1-basic-artifact
 
 # T1: simplest possible workflow. Three artifact + agent nodes in a

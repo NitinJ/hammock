@@ -48,7 +48,7 @@ export function seedJob(opts: SeededJobOptions): void {
 
   const wfYaml =
     opts.workflowYaml ??
-    `workflow: ${opts.workflowName ?? "t-test"}\nvariables: {}\nnodes: []\n`;
+    `schema_version: 1\nworkflow: ${opts.workflowName ?? "t-test"}\nvariables: {}\nnodes: []\n`;
   const wfPath = join(dir, "workflow.yaml");
   writeFileSync(wfPath, wfYaml);
 

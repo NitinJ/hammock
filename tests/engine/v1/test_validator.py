@@ -14,6 +14,7 @@ from shared.v1.workflow import ArtifactNode, VariableSpec, Workflow
 
 def _make_workflow(**kwargs: object) -> Workflow:
     defaults: dict[str, object] = {
+        "schema_version": 1,
         "workflow": "t",
         "variables": {},
         "nodes": [],

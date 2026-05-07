@@ -159,6 +159,7 @@ def test_workflow_accepts_mixed_kinds() -> None:
     union resolves each entry to the right model."""
     wf = Workflow.model_validate(
         {
+            "schema_version": 1,
             "workflow": "mix",
             "variables": {
                 "spec": {"type": "design-spec"},
@@ -194,6 +195,7 @@ def test_workflow_accepts_mixed_kinds() -> None:
 
 def test_workflow_minimal() -> None:
     wf = Workflow(
+        schema_version=1,
         workflow="t1",
         variables={"x": VariableSpec(type="bug-report")},
         nodes=[
@@ -213,6 +215,7 @@ def test_workflow_minimal() -> None:
 
 def test_workflow_variables_is_keyed_dict() -> None:
     wf = Workflow(
+        schema_version=1,
         workflow="t1",
         variables={
             "bug_report": VariableSpec(type="bug-report"),
@@ -227,7 +230,7 @@ def test_workflow_variables_is_keyed_dict() -> None:
 def test_workflow_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError):
         Workflow(  # type: ignore[call-arg]
-            workflow="t1", variables={}, nodes=[], unknown_field="x"
+            schema_version=1, workflow="t1", variables={}, nodes=[], unknown_field="x"
         )
 
 
@@ -235,6 +238,7 @@ def test_workflow_round_trip_through_dict() -> None:
     """Pydantic round-trip — load from dict, dump, re-load. Useful sanity
     check that YAML→dict→model→dict→model is stable."""
     payload = {
+        "schema_version": 1,
         "workflow": "t1-basic",
         "variables": {
             "request": {"type": "job-request"},

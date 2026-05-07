@@ -70,6 +70,7 @@ def _make_failing_fake() -> Callable[[str, Path], subprocess.CompletedProcess[st
 
 def _t1_workflow() -> Workflow:
     return Workflow(
+        schema_version=1,
         workflow="t",
         variables={
             "request": VariableSpec(type="job-request"),
@@ -211,6 +212,7 @@ def test_optional_output_skipped_when_not_produced(tmp_path: Path) -> None:
     job_slug = "j1"
     _seed_request(root=tmp_path, job_slug=job_slug)
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={
             "request": VariableSpec(type="job-request"),

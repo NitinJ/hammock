@@ -1,3 +1,4 @@
+schema_version: 1
 workflow: t2-with-hil-gate
 
 # T2: T1 + a single human-actor review gate. Tests HIL submission API,

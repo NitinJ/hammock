@@ -148,6 +148,14 @@ class Workflow(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal[1]
+    """Schema version, mandatory from Stage 4. The engine refuses to
+    load a yaml whose schema_version is missing or higher than the
+    currently-supported version (1). Adding this field from day one
+    means future schema evolutions can fail loud — the alternative
+    (no version field) would silently misinterpret post-evolution
+    yamls written against an old hammock."""
+
     workflow: str
     """Workflow name (used for logging / display)."""
 

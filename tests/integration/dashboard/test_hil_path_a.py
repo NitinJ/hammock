@@ -22,6 +22,7 @@ from tests.integration.conftest import DashboardHandle
 from tests.integration.fake_engine import FakeEngine
 
 _TINY_WORKFLOW_YAML = """\
+schema_version: 1
 workflow: t-hil-path-a
 
 variables:
@@ -187,6 +188,7 @@ async def test_loop_indexed_hil_round_trip(
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
     workflow_path.write_text(
         """\
+schema_version: 1
 workflow: t-loop-hil
 
 variables:

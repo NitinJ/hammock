@@ -9,7 +9,8 @@ test.beforeEach(() => {
     slug: SLUG,
     workflowName: "t-test",
     state: "running",
-    workflowYaml: `workflow: t-test
+    workflowYaml: `schema_version: 1
+workflow: t-test
 variables:
   request: { type: job-request }
 nodes:

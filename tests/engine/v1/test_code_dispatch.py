@@ -26,6 +26,7 @@ def _seed_var(*, root: Path, job_slug: str, var_name: str, type_name: str, value
 
 def _t3_workflow() -> Workflow:
     return Workflow(
+        schema_version=1,
         workflow="t3",
         variables={
             "request": VariableSpec(type="job-request"),
