@@ -576,13 +576,30 @@ def node_detail(root: Path, job_slug: str, node_id: str) -> NodeDetail | None:
     outputs: dict[str, dict[str, Any]] = {}
     var_dir = v1_paths.variables_dir(job_slug, root=root)
     if var_dir.is_dir():
+        # Match envelopes by **path shape**, not just producer_node. Loop
+        # output projections preserve the original producer_node when
+        # they re-write an envelope at a higher loop scope (so the
+        # provenance chain stays intact); naively matching on
+        # producer_node alone surfaces those projections under the
+        # original node's detail page, producing N copies of the same
+        # output for an N-deep nested-loop body. Filter to the node's
+        # direct output paths only:
+        #   - top-level node: ``<var>.json``
+        #   - loop body node: ``loop_<innermost_loop_id>_<var>_<i>.json``
+        cfg = _read_job_config(root, job_slug)
+        workflow = _try_load_workflow(cfg.workflow_path) if cfg is not None else None
+        location = _locate_node_in_workflow(workflow, node_id)
+
         for env_path in sorted(var_dir.glob("*.json")):
             try:
                 env = Envelope.model_validate_json(env_path.read_text())
             except Exception:
                 continue
-            if env.producer_node == node_id:
-                outputs[env_path.stem] = json.loads(env.model_dump_json())
+            if env.producer_node != node_id:
+                continue
+            if location is not None and not _envelope_belongs_to_node(env_path.name, location):
+                continue
+            outputs[env_path.stem] = json.loads(env.model_dump_json())
 
     return NodeDetail(
         node_id=nr.node_id,
@@ -593,6 +610,71 @@ def node_detail(root: Path, job_slug: str, node_id: str) -> NodeDetail | None:
         finished_at=nr.finished_at,
         outputs=outputs,
     )
+
+
+def _locate_node_in_workflow(
+    workflow: Workflow | None, node_id: str
+) -> tuple[str | None, set[str]] | None:
+    """Find *node_id* in the workflow's DAG (recursing into loop bodies).
+
+    Returns ``(parent_loop_id_or_None, declared_output_var_names)`` or
+    ``None`` when the node isn't found (typical when the workflow file
+    is gone — caller falls back to including all matched envelopes for
+    debug visibility)."""
+    if workflow is None:
+        return None
+
+    def visit(nodes: list[Node], parent_loop_id: str | None) -> tuple[str | None, set[str]] | None:
+        for n in nodes:
+            if isinstance(n, LoopNode):
+                hit = visit(n.body, n.id)
+                if hit is not None:
+                    return hit
+                continue
+            if n.id == node_id:
+                var_names = {
+                    ref.lstrip("$").split(".", 1)[0].rstrip("?")
+                    for ref in (n.outputs or {}).values()
+                }
+                var_names.discard("")
+                return parent_loop_id, var_names
+        return None
+
+    return visit(workflow.nodes, None)
+
+
+def _envelope_belongs_to_node(filename: str, location: tuple[str | None, set[str]]) -> bool:
+    """True iff *filename* is the direct output path for the node at
+    *location* — i.e., not a loop-projected re-write at a higher scope."""
+    parent_loop_id, var_names = location
+    if not filename.endswith(".json"):
+        return False
+    stem = filename[: -len(".json")]
+
+    if parent_loop_id is None:
+        # Top-level node: direct path is ``<var>.json``.
+        return stem in var_names
+
+    # Loop body node: direct path is
+    # ``loop_<parent_loop_id>_<var>_<iter>.json``. The var name itself
+    # may contain underscores, and so may the loop id, so split off the
+    # ``loop_`` prefix and the trailing ``_<digits>`` and match the
+    # remainder against ``<parent_loop_id>_<var>``.
+    if not stem.startswith("loop_"):
+        return False
+    rest = stem[len("loop_") :]
+    last_us = rest.rfind("_")
+    if last_us < 0:
+        return False
+    iter_part = rest[last_us + 1 :]
+    if not iter_part.isdigit():
+        return False
+    head = rest[:last_us]
+    expected_prefix = f"{parent_loop_id}_"
+    if not head.startswith(expected_prefix):
+        return False
+    var = head[len(expected_prefix) :]
+    return var in var_names
 
 
 # ---------------------------------------------------------------------------
