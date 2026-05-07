@@ -178,6 +178,18 @@ export interface WorkflowListItem {
   workflow_name: string;
 }
 
+/** GET /api/projects/{slug}/workflows — Stage 5. Union of bundled +
+ *  project-local workflows, with origin labelling and per-entry
+ *  validation status. The dashboard hides invalid entries from the
+ *  submit dropdown but lists them so the operator can fix them. */
+export interface ProjectWorkflowItem {
+  job_type: string;
+  workflow_name: string | null;
+  source: "bundled" | "custom";
+  valid: boolean;
+  error: string | null;
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────
 
 export interface SettingsResponse {

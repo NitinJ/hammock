@@ -30,19 +30,35 @@
           class="w-full rounded-md border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary focus:border-blue-500 focus:outline-none"
         >
           <option value="" disabled>Select…</option>
-          <option v-for="w in workflows.data.value ?? []" :key="w.job_type" :value="w.job_type">
-            {{ w.workflow_name }} ({{ w.job_type }})
+          <option
+            v-for="w in selectableWorkflows"
+            :key="`${w.source}/${w.job_type}`"
+            :value="w.job_type"
+          >
+            {{ w.label }}
           </option>
         </select>
         <p
-          v-if="!workflows.isPending.value && (workflows.data.value ?? []).length === 0"
+          v-if="!workflowsLoading && selectableWorkflows.length === 0"
           class="text-xs text-amber-400"
         >
-          No bundled workflows on disk. Add YAMLs under
-          <code class="rounded bg-surface-highlight px-1">hammock/templates/workflows/</code>.
+          No workflows available. Add bundled YAMLs under
+          <code class="rounded bg-surface-highlight px-1">hammock/templates/workflows/</code>
+          or per-project ones under
+          <code class="rounded bg-surface-highlight px-1">.hammock/workflows/</code>
+          in the selected project's repo.
         </p>
-        <p v-if="workflows.isError.value" class="text-xs text-red-400">
-          Could not load workflows: {{ workflows.error.value?.message }}
+        <ul
+          v-if="invalidWorkflows.length > 0"
+          class="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300"
+        >
+          <li v-for="w in invalidWorkflows" :key="`bad/${w.job_type}`">
+            <span class="font-mono">{{ w.job_type }}</span>
+            ({{ w.source }}) — {{ w.error }}
+          </li>
+        </ul>
+        <p v-if="workflowsErrorMessage" class="text-xs text-red-400">
+          Could not load workflows: {{ workflowsErrorMessage }}
         </p>
       </div>
 
@@ -110,8 +126,8 @@
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ApiError, api } from "@/api/client";
-import { useProjects, useSubmitJob, useWorkflows } from "@/api/queries";
-import type { JobSubmitResponse } from "@/api/schema.d";
+import { useProjectWorkflows, useProjects, useSubmitJob, useWorkflows } from "@/api/queries";
+import type { JobSubmitResponse, ProjectWorkflowItem } from "@/api/schema.d";
 
 interface CompileFailure {
   kind: string;
@@ -121,7 +137,6 @@ interface CompileFailure {
 
 const router = useRouter();
 const projects = useProjects();
-const workflows = useWorkflows();
 const submit = useSubmitJob();
 
 const form = reactive({
@@ -130,6 +145,64 @@ const form = reactive({
   title: "",
   request_text: "",
   dry_run: false,
+});
+
+// Workflow source — when a project is selected, list bundled +
+// project-local for that project (Stage 5). Otherwise fall back to
+// the global bundled list.
+const projectSlug = computed(() => form.project_slug);
+const projectWorkflows = useProjectWorkflows(projectSlug);
+const bundledWorkflows = useWorkflows();
+
+interface SelectableWorkflow {
+  job_type: string;
+  source: "bundled" | "custom";
+  label: string;
+  error?: string | null;
+  valid: boolean;
+}
+
+const projectScoped = computed<ProjectWorkflowItem[] | null>(() => {
+  if (!form.project_slug) return null;
+  return projectWorkflows.data.value ?? null;
+});
+
+const selectableWorkflows = computed<SelectableWorkflow[]>(() => {
+  const scoped = projectScoped.value;
+  if (scoped) {
+    return scoped
+      .filter((w) => w.valid)
+      .map((w) => ({
+        job_type: w.job_type,
+        source: w.source,
+        label: `${w.workflow_name ?? "(no name)"} (${w.job_type}) — ${w.source === "custom" ? "custom" : "bundled"}`,
+        valid: true,
+      }));
+  }
+  return (bundledWorkflows.data.value ?? []).map((w) => ({
+    job_type: w.job_type,
+    source: "bundled" as const,
+    label: `${w.workflow_name} (${w.job_type})`,
+    valid: true,
+  }));
+});
+
+const invalidWorkflows = computed(() => (projectScoped.value ?? []).filter((w) => !w.valid));
+
+const workflowsLoading = computed(() =>
+  projectScoped.value === null
+    ? bundledWorkflows.isPending.value
+    : projectWorkflows.isPending.value,
+);
+
+const workflowsErrorMessage = computed<string | null>(() => {
+  if (form.project_slug && projectWorkflows.isError.value) {
+    return projectWorkflows.error.value?.message ?? "unknown error";
+  }
+  if (!form.project_slug && bundledWorkflows.isError.value) {
+    return bundledWorkflows.error.value?.message ?? "unknown error";
+  }
+  return null;
 });
 
 const submitting = ref(false);
