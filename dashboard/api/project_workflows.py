@@ -64,12 +64,13 @@ def _agent_actor_node_ids(workflow: Workflow) -> list[str]:
     ``prompts/<id>.md`` file."""
     out: list[str] = []
 
-    def visit(nodes: list) -> None:
+    def visit(nodes: list[ArtifactNode | CodeNode | LoopNode]) -> None:
         for n in nodes:
             if isinstance(n, LoopNode):
                 visit(n.body)
                 continue
-            if isinstance(n, ArtifactNode | CodeNode) and n.actor == "agent":
+            # n is ArtifactNode | CodeNode here (LoopNode handled above).
+            if n.actor == "agent":
                 out.append(n.id)
 
     visit(workflow.nodes)
