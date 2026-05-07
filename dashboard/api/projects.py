@@ -32,10 +32,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dashboard.api.project_workflows import (
     ProjectWorkflowItem,
-    verify_workflow_folder,
     list_workflows_for_project,
     project_repo_path,
     resolve_bundled_source,
+    verify_workflow_folder,
 )
 from dashboard.state import projections
 from dashboard.state.projections import ProjectDetail, ProjectListItem
