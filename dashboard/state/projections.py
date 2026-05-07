@@ -835,8 +835,14 @@ def _read_ask_marker(job_slug: str, workflow_name: str, path: Path) -> HilQueueI
 
 
 def _iter_from_pending(data: dict[str, Any]) -> list[int]:
-    """Pending markers carry ``loop_id`` + ``iteration`` (int). Convert to
-    ``iter`` list for parity with implicit shape."""
+    """Pending markers carry ``loop_id`` + ``iteration`` (innermost int)
+    and, for nested loops, ``iter_path`` (full chain outer..innermost).
+    Prefer ``iter_path`` so the projection's ``iter`` matches the row's
+    iter (left-pane row keying); fall back to single-element form for
+    older single-level markers."""
+    full = data.get("iter_path")
+    if isinstance(full, list) and all(isinstance(x, int) for x in full):
+        return list(full)
     raw = data.get("iteration")
     if isinstance(raw, int):
         return [raw]

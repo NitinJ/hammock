@@ -38,12 +38,24 @@ class ReviewVerdictValue(BaseModel):
     summary: str = Field(..., min_length=1)
     """1-3 sentence human-readable summary of the verdict."""
 
+    document: str = Field(..., min_length=1)
+    """Markdown narrative explaining the review reasoning: what was
+    reviewed, what was noted, and why this verdict was reached. The
+    dashboard renders this as the primary reviewer-facing view; the
+    next iteration's writer agent consumes it directly so concerns
+    have a place to live beyond the 1-3 sentence summary."""
+
 
 _PROMPT_HINT = """\
 Strict JSON. Allowed fields ONLY:
 
 - `verdict`: one of 'approved' | 'needs-revision' | 'rejected'.
 - `summary`: 1-3 sentence string (required, non-empty).
+- `document`: full review as markdown (required, non-empty). Write the
+  narrative explaining your reasoning here: what you reviewed, what
+  you noted (concerns, strengths, missing context), and why you
+  reached this verdict. The next iteration's writer agent reads this
+  directly to address your feedback.
 
 Schema uses extra='forbid'. Do NOT add fields like 'reviewer',
 'strengths', 'minor_suggestions', 'approval_conditions', 'unresolved_concerns',
@@ -86,7 +98,11 @@ class ReviewVerdictType:
             f"### Input `{ctx.var_name}` (review-verdict)\n"
             f"\n"
             f"**Verdict:** {value.verdict}\n"
-            f"**Summary:** {value.summary}"
+            f"**Summary:** {value.summary}\n"
+            f"\n"
+            f"#### Document\n"
+            f"\n"
+            f"{value.document}"
         )
 
     def form_schema(self, decl: ReviewVerdictDecl) -> FormSchema | None:
@@ -94,5 +110,6 @@ class ReviewVerdictType:
             fields=[
                 ("verdict", "select:approved,needs-revision,rejected"),
                 ("summary", "textarea"),
+                ("document", "textarea"),
             ]
         )

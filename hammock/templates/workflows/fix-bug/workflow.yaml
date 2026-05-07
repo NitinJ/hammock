@@ -63,13 +63,13 @@ nodes:
     name: "Design spec — review cycle"
     kind: loop
     after: [write-bug-report]
-    until: $design-spec-loop.design_spec_review_human[i]
+    until: $design-spec-loop.design_spec_review_human[i].verdict == 'approved'
     max_iterations: 1
     body:
       - id: design-spec-agent-loop
         name: "Design spec — agent draft + review"
         kind: loop
-        until: $design-spec-agent-loop.design_spec_review_agent[i]
+        until: $design-spec-agent-loop.design_spec_review_agent[i].verdict == 'approved'
         max_iterations: 1
         body:
           - id: write-design-spec
@@ -108,13 +108,13 @@ nodes:
     name: "Impl spec — review cycle"
     kind: loop
     after: [design-spec-loop]
-    until: $impl-spec-loop.impl_spec_review_human[i]
+    until: $impl-spec-loop.impl_spec_review_human[i].verdict == 'approved'
     max_iterations: 1
     body:
       - id: impl-spec-agent-loop
         name: "Impl spec — agent draft + review"
         kind: loop
-        until: $impl-spec-agent-loop.impl_spec_review_agent[i]
+        until: $impl-spec-agent-loop.impl_spec_review_agent[i].verdict == 'approved'
         max_iterations: 1
         body:
           - id: write-impl-spec
@@ -154,13 +154,13 @@ nodes:
     name: "Impl plan — review cycle"
     kind: loop
     after: [impl-spec-loop]
-    until: $impl-plan-loop.impl_plan_review_human[i]
+    until: $impl-plan-loop.impl_plan_review_human[i].verdict == 'approved'
     max_iterations: 1
     body:
       - id: impl-plan-agent-loop
         name: "Impl plan — agent draft + review"
         kind: loop
-        until: $impl-plan-agent-loop.impl_plan_review_agent[i]
+        until: $impl-plan-agent-loop.impl_plan_review_agent[i].verdict == 'approved'
         max_iterations: 1
         body:
           - id: write-impl-plan

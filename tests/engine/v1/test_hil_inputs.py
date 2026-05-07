@@ -218,7 +218,11 @@ nodes:
         job_slug="j",
         node_id="review-spec-human",
         var_name="review",
-        value_payload={"verdict": "approved", "summary": "lgtm"},
+        value_payload={
+            "verdict": "approved",
+            "summary": "lgtm",
+            "document": "## Review\n\nlgtm",
+        },
         root=tmp_path,
         workflow=wf,
     )

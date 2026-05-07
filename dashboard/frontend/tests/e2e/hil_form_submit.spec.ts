@@ -63,7 +63,10 @@ test("HIL queue renders an explicit gate and submits to the right marker path", 
   await expect(page.getByText("Review the spec")).toBeVisible();
 
   await page.getByRole("button", { name: "approved" }).click();
-  await page.getByPlaceholder("Type here…").fill("looks great, ship it");
+  // review-verdict has two textareas: summary, then document.
+  const textareas = page.getByPlaceholder("Type here…");
+  await textareas.nth(0).fill("looks great, ship it");
+  await textareas.nth(1).fill("## Review\n\nlooks great, ship it");
 
   const submission = page.waitForResponse(
     (r) =>

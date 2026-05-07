@@ -37,3 +37,16 @@ test("two-pane page lists nodes and navigates to detail on click", async ({
   await page.getByText("write-bug-report").first().click();
   await expect(page).toHaveURL(/node=write-bug-report/);
 });
+
+test("succeeded node with no outputs renders the empty-output panel", async ({
+  page,
+}) => {
+  // The seeded node above is succeeded but has no output envelopes —
+  // the right pane should show the dogfood-fixes-2 panel: "Node
+  // completed — no output produced." rather than the in-progress
+  // "no outputs produced yet" placeholder.
+  await page.goto(`/jobs/${SLUG}?node=write-bug-report`);
+  const panel = page.getByTestId("empty-output-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("Node completed — no output produced.");
+});

@@ -92,6 +92,7 @@ def dispatch_loop(
     hil_timeout_seconds: float | None = None,
     parent_loop_context: ParentLoopContext | None = None,
     workflow_dir: Path | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> LoopDispatchResult:
     """Iterate ``node.body`` per the loop's count/until config."""
     # Resolve the loop kind: count vs until.
@@ -219,6 +220,7 @@ def dispatch_loop(
                 hil_poll_interval_seconds=hil_poll_interval_seconds,
                 hil_timeout_seconds=hil_timeout_seconds,
                 workflow_dir=workflow_dir,
+                iter_path=iter_path,
             )
             if not ok.succeeded:
                 return LoopDispatchResult(
@@ -301,7 +303,10 @@ def _dispatch_body_node(
     hil_poll_interval_seconds: float,
     hil_timeout_seconds: float | None,
     workflow_dir: Path | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> _BodyDispatchOk:
+    # Body's full iter chain = enclosing loops' iter_path + this loop's iter.
+    body_iter_path: tuple[int, ...] = (*iter_path, iteration)
     if isinstance(body_node, LoopNode):
         # Nested loop: recurse with parent context = this loop's iter.
         # Body-node state.json doesn't apply here — the inner loop's own
@@ -318,6 +323,7 @@ def _dispatch_body_node(
             hil_timeout_seconds=hil_timeout_seconds,
             parent_loop_context=ParentLoopContext(loop_id=loop_node.id, iteration=iteration),
             workflow_dir=workflow_dir,
+            iter_path=body_iter_path,
         )
         return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
 
@@ -380,6 +386,7 @@ def _dispatch_body_node(
             root=root,
             loop_id=loop_node.id,
             iteration=iteration,
+            iter_path=body_iter_path,
         )
         ok = wait_for_node_outputs(
             node=body_node,

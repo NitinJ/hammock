@@ -209,7 +209,11 @@ def test_design_spec_render_for_consumer_lists_changes() -> None:
 
 def test_review_verdict_produce_happy_path(tmp_path: Path) -> None:
     t = ReviewVerdictType()
-    payload = {"verdict": "approved", "summary": "looks good"}
+    payload = {
+        "verdict": "approved",
+        "summary": "looks good",
+        "document": "## Review\n\nlooks good",
+    }
     (tmp_path / "verdict.json").write_text(json.dumps(payload))
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     value = t.produce(t.Decl(), ctx)
@@ -219,7 +223,11 @@ def test_review_verdict_produce_happy_path(tmp_path: Path) -> None:
 
 def test_review_verdict_produce_needs_revision(tmp_path: Path) -> None:
     t = ReviewVerdictType()
-    payload = {"verdict": "needs-revision", "summary": "rework section 3"}
+    payload = {
+        "verdict": "needs-revision",
+        "summary": "rework section 3",
+        "document": "## Review\n\nrework section 3",
+    }
     (tmp_path / "verdict.json").write_text(json.dumps(payload))
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     value = t.produce(t.Decl(), ctx)
@@ -230,7 +238,7 @@ def test_review_verdict_produce_needs_revision(tmp_path: Path) -> None:
 def test_review_verdict_produce_invalid_verdict_rejected(tmp_path: Path) -> None:
     t = ReviewVerdictType()
     (tmp_path / "verdict.json").write_text(
-        json.dumps({"verdict": "kinda-approved", "summary": "x"})
+        json.dumps({"verdict": "kinda-approved", "summary": "x", "document": "## R\n\n."})
     )
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     with pytest.raises(VariableTypeError, match="schema invalid"):
@@ -246,6 +254,7 @@ def test_review_verdict_rejects_obsolete_fields(tmp_path: Path) -> None:
             {
                 "verdict": "approved",
                 "summary": "x",
+                "document": "## R\n\n.",
                 "unresolved_concerns": [],
             }
         )
@@ -259,7 +268,9 @@ def test_review_verdict_rejects_merged_verdict(tmp_path: Path) -> None:
     """Stage 2: 'merged' moved to pr-review-verdict; review-verdict no
     longer accepts it."""
     t = ReviewVerdictType()
-    (tmp_path / "verdict.json").write_text(json.dumps({"verdict": "merged", "summary": "x"}))
+    (tmp_path / "verdict.json").write_text(
+        json.dumps({"verdict": "merged", "summary": "x", "document": "## R\n\n."})
+    )
     ctx = FakeNodeCtx(var_name="verdict", job_dir=tmp_path)
     with pytest.raises(VariableTypeError, match="schema invalid"):
         t.produce(t.Decl(), ctx)
@@ -267,7 +278,9 @@ def test_review_verdict_rejects_merged_verdict(tmp_path: Path) -> None:
 
 def test_review_verdict_render_for_consumer_minimal() -> None:
     t = ReviewVerdictType()
-    value = ReviewVerdictValue(verdict="needs-revision", summary="please fix")
+    value = ReviewVerdictValue(
+        verdict="needs-revision", summary="please fix", document="## R\n\nplease fix"
+    )
     ctx = FakePromptCtx(var_name="verdict", job_dir=Path("/tmp"))
     rendered = t.render_for_consumer(t.Decl(), value, ctx)
     assert "needs-revision" in rendered
@@ -281,4 +294,4 @@ def test_review_verdict_form_schema_defined() -> None:
     schema = t.form_schema(t.Decl())
     assert schema is not None
     field_names = [name for name, _ in schema.fields]
-    assert field_names == ["verdict", "summary"]
+    assert field_names == ["verdict", "summary", "document"]

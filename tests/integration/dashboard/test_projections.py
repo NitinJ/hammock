@@ -280,6 +280,84 @@ async def test_node_detail_excludes_outer_loop_projection(
 
 
 @pytest.mark.asyncio
+async def test_nested_hil_pending_carries_full_iter_path(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """A pending HIL marker for a node nested 2 deep (loop-of-loop)
+    must surface in the HIL queue with the FULL iter path so the
+    dashboard's row-vs-queue match works.
+
+    Dogfood-fixes-2 footgun: pre-fix, the marker carried only the
+    innermost ``iteration`` (single int), so the projection emitted
+    ``iter=[i]``. The left-pane row for the same body emits the full
+    ``iter=[outer, inner]``, and JobOverview matched by exact iter
+    equality — so the inline form never rendered.
+    """
+    import json as _json
+
+    workflow = {
+        "schema_version": 1,
+        "workflow": "T-nested-hil",
+        "variables": {
+            "verdict": {"type": "review-verdict"},
+        },
+        "nodes": [
+            {
+                "id": "outer",
+                "kind": "loop",
+                "count": 1,
+                "body": [
+                    {
+                        "id": "inner",
+                        "kind": "loop",
+                        "count": 1,
+                        "body": [
+                            {
+                                "id": "review-human",
+                                "kind": "artifact",
+                                "actor": "human",
+                                "outputs": {"verdict": "$verdict"},
+                                "presentation": {"title": "Review"},
+                            }
+                        ],
+                        "outputs": {"v": "$inner.verdict[last]"},
+                    }
+                ],
+                "outputs": {"final": "$outer.v[last]"},
+            }
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+
+    # Hand-write a pending marker carrying iter_path=[0,0] (engine
+    # behaviour after the loop_dispatch threading change).
+    pending_dir = fake_engine.root / "jobs" / fake_engine.job_slug / "pending"
+    pending_dir.mkdir(parents=True, exist_ok=True)
+    (pending_dir / "review-human.json").write_text(
+        _json.dumps(
+            {
+                "node_id": "review-human",
+                "output_var_names": ["verdict"],
+                "presentation": {"title": "Review"},
+                "output_types": {"verdict": "review-verdict"},
+                "loop_id": "inner",
+                "iteration": 0,
+                "iter_path": [0, 0],
+                "created_at": "2026-05-07T00:00:00Z",
+            }
+        )
+    )
+
+    resp = await dashboard.client.get(f"/api/hil/{fake_engine.job_slug}")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 1
+    assert items[0]["node_id"] == "review-human"
+    # The crux: full path, not just innermost.
+    assert items[0]["iter"] == [0, 0]
+
+
+@pytest.mark.asyncio
 async def test_node_name_surfaces_in_overview(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
