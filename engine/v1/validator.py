@@ -63,6 +63,7 @@ def validate(workflow: Workflow) -> list[ValidationFinding]:
     findings.extend(_check_input_references(workflow))
     findings.extend(_check_output_references(workflow))
     findings.extend(_check_single_producer_per_variable(workflow))
+    findings.extend(_check_loop_until_predicate_types(workflow))
     return findings
 
 
@@ -252,6 +253,107 @@ def _check_output_references(workflow: Workflow) -> list[ValidationFinding]:
                     )
                 )
     return findings
+
+
+def _check_loop_until_predicate_types(workflow: Workflow) -> list[ValidationFinding]:
+    """Reject bare-ref ``until:`` predicates whose target is not bool.
+
+    The footgun: ``until: $loop.var[i]`` evaluates the value's
+    truthiness. Envelope objects are *always* truthy when present, so
+    the loop exits after iteration 1 regardless of what was produced.
+    The author meant to compare against a literal — e.g.
+    ``until: $loop.var[i].verdict == 'approved'``. We catch this at
+    workflow-load so authors learn before submitting a job.
+
+    Limited to ``until`` predicates: ``runs_if: $tests_pr`` (envelope
+    presence/absence) is a legitimate truthiness check.
+    """
+    from engine.v1.predicate import PredicateError, parse_predicate
+    from shared.v1.types.registry import UnknownVariableType, get_type
+    from shared.v1.workflow import LoopNode
+
+    findings: list[ValidationFinding] = []
+
+    def visit(nodes) -> None:
+        for n in nodes:
+            if isinstance(n, LoopNode):
+                if n.until is not None:
+                    f = _check_one_until(n, workflow, parse_predicate, get_type, UnknownVariableType)
+                    if f is not None:
+                        findings.append(f)
+                visit(n.body)
+
+    def _check_one_until(
+        loop_node, workflow, parse_predicate, get_type, UnknownVariableType
+    ) -> ValidationFinding | None:
+        try:
+            parsed = parse_predicate(loop_node.until)
+        except PredicateError as exc:
+            return ValidationFinding(
+                node_id=loop_node.id,
+                message=f"`until:` predicate {loop_node.until!r} could not be parsed: {exc}",
+            )
+        if parsed.op is not None:
+            # `... == 'literal'` / `... != 'literal'` — comparison
+            # always yields bool. No further check needed.
+            return None
+        ref = parsed.ref
+        if ref.var_name not in workflow.variables:
+            # Reference to an undeclared variable will be caught by
+            # other checks; don't double-report here.
+            return None
+        type_name = workflow.variables[ref.var_name].type
+        try:
+            type_obj = get_type(type_name)
+        except UnknownVariableType:
+            return None
+        # Walk the field path on the type's `Value` model to resolve
+        # the eventual Python type. If the resolved type is `bool`,
+        # the bare-ref form is fine. Otherwise it's the footgun.
+        value_model = getattr(type_obj, "Value", None)
+        resolved = _resolve_field_type(value_model, ref.field_path)
+        if resolved is bool:
+            return None
+        suggestion = (
+            f"  e.g. `until: {loop_node.until}.<field> == 'literal'` "
+            f"(see pr-merged-loop in fix-bug for the correct pattern)"
+        )
+        path_repr = (
+            f"$" + (f"{ref.loop_id}." if ref.loop_id else "") + ref.var_name
+            + (f"[{ref.index_form}]" if ref.index_form else "")
+            + ("." + ".".join(ref.field_path) if ref.field_path else "")
+        )
+        return ValidationFinding(
+            node_id=loop_node.id,
+            message=(
+                f"`until:` bare-reference predicate {path_repr!r} resolves to "
+                f"non-bool type ({type_name!r}). Envelope values are always "
+                f"truthy when present, so the loop will exit after iteration 1 "
+                f"regardless of what the body produced. Use an explicit "
+                f"comparison instead:\n{suggestion}"
+            ),
+        )
+
+    visit(workflow.nodes)
+    return findings
+
+
+def _resolve_field_type(value_model: object, field_path: list[str]) -> object | None:
+    """Walk ``field_path`` on a Pydantic ``Value`` model and return the
+    Python type at the end. Returns ``None`` when the walk can't resolve
+    (unknown field, dynamic type, etc.) — caller treats unresolved as
+    "not bool" so the predicate must use an explicit comparison."""
+    from pydantic import BaseModel
+
+    cursor: object | None = value_model
+    for field in field_path:
+        if not isinstance(cursor, type) or not issubclass(cursor, BaseModel):
+            return None
+        if field not in cursor.model_fields:
+            return None
+        annotation = cursor.model_fields[field].annotation
+        cursor = annotation
+    return cursor
 
 
 def _check_single_producer_per_variable(
