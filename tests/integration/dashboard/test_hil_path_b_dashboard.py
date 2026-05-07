@@ -25,7 +25,7 @@ def _seed_job(fake_engine: FakeEngine) -> None:
     """Lay down a minimal v1 job so /api/hil knows the workflow_name."""
     workflow_path = v1_paths.job_dir(fake_engine.job_slug, root=fake_engine.root) / "workflow.yaml"
     workflow_path.parent.mkdir(parents=True, exist_ok=True)
-    workflow_path.write_text("workflow: t-implicit-hil\nnodes: []\n")
+    workflow_path.write_text("schema_version: 1\nworkflow: t-implicit-hil\nnodes: []\n")
     v1_paths.ensure_job_layout(fake_engine.job_slug, root=fake_engine.root)
     cfg = make_job_config(
         job_slug=fake_engine.job_slug,

@@ -18,7 +18,9 @@ from shared.v1.workflow import Workflow
 
 
 def _empty_workflow() -> Workflow:
-    return Workflow.model_validate({"workflow": "t", "variables": {}, "nodes": []})
+    return Workflow.model_validate(
+        {"schema_version": 1, "workflow": "t", "variables": {}, "nodes": []}
+    )
 
 
 # ---------------------------------------------------------------------------

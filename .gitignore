@@ -14,6 +14,8 @@ lib/
 lib64/
 # Frontend src/lib/ is real source, not a venv artefact.
 !dashboard/frontend/src/lib/
+# Playwright run artefacts.
+dashboard/frontend/test-results/
 parts/
 sdist/
 var/

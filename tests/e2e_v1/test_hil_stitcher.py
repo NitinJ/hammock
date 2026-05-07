@@ -14,6 +14,7 @@ from tests.e2e_v1.hil_stitcher import HilStitcher, approve_review_verdict
 
 def _human_review_workflow() -> Workflow:
     return Workflow(
+        schema_version=1,
         workflow="t",
         variables={"verdict": VariableSpec(type="review-verdict")},
         nodes=[

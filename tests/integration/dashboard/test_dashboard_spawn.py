@@ -29,6 +29,7 @@ from shared.v1 import paths as v1_paths
 from tests.integration.conftest import DashboardHandle
 
 _T1_WORKFLOW = """\
+schema_version: 1
 workflow: t1-basic-artifact
 
 variables:

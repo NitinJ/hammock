@@ -23,6 +23,7 @@ class _Bug(BaseModel):
 
 def _outer_count_workflow(count: int) -> dict[str, Any]:
     return {
+        "schema_version": 1,
         "workflow": "t-loop-unroll",
         "variables": {
             "request": {"type": "job-request"},
@@ -50,6 +51,7 @@ def _outer_count_workflow(count: int) -> dict[str, Any]:
 
 def _nested_workflow() -> dict[str, Any]:
     return {
+        "schema_version": 1,
         "workflow": "t-nested-unroll",
         "variables": {
             "request": {"type": "job-request"},
@@ -248,6 +250,7 @@ async def test_sibling_loops_have_distinct_loop_paths(
     but their loop_path differs so the renderer can break the section
     header per loop."""
     workflow = {
+        "schema_version": 1,
         "workflow": "T-siblings",
         "variables": {
             "bug_report": {"type": "bug-report"},

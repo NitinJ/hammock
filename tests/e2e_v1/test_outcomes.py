@@ -27,6 +27,7 @@ from tests.e2e_v1.outcomes import (
 
 def _t1_workflow() -> Workflow:
     return Workflow(
+        schema_version=1,
         workflow="t1",
         variables={
             "request": VariableSpec(type="job-request"),
@@ -165,6 +166,7 @@ def test_all_outputs_produced_fails_when_one_missing(tmp_path: Path) -> None:
 def test_all_outputs_produced_ignores_optional_missing(tmp_path: Path) -> None:
     """Optional outputs (`?`) absent is OK."""
     wf = Workflow(
+        schema_version=1,
         workflow="w",
         variables={"x": VariableSpec(type="bug-report")},
         nodes=[

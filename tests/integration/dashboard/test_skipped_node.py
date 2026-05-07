@@ -20,6 +20,7 @@ async def test_skipped_node_renders_with_state(
     """A skipped node has state=skipped in the JobDetail node list."""
     fake_engine.start_job(
         workflow={
+            "schema_version": 1,
             "workflow": "T",
             "nodes": [
                 {
@@ -49,6 +50,7 @@ async def test_skipped_node_does_not_block_downstream(
     didn't wedge the projection."""
     fake_engine.start_job(
         workflow={
+            "schema_version": 1,
             "workflow": "T",
             "nodes": [
                 {

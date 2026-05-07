@@ -29,6 +29,7 @@ def _build_workflow_with_pr_and_review_node() -> Workflow:
     """Tiny workflow: one ArtifactNode + one human-actor node consuming
     the upstream pr variable."""
     yaml_text = """
+schema_version: 1
 workflow: t-pr-review-test
 
 variables:
@@ -165,6 +166,7 @@ def test_review_verdict_node_works_without_input_resolution(tmp_path: Path) -> N
     populates with whatever the node declared, but the type ignores it."""
     paths.ensure_job_layout("j", root=tmp_path)
     yaml_text = """
+schema_version: 1
 workflow: t-spec-review-test
 
 variables:

@@ -24,6 +24,7 @@ def _human_review_workflow() -> Workflow:
     """Minimal workflow with a single human-actor node producing a
     review-verdict."""
     return Workflow(
+        schema_version=1,
         workflow="t",
         variables={
             "design_spec": VariableSpec(type="design-spec"),
@@ -133,6 +134,7 @@ def test_submit_to_agent_node_raises(tmp_path: Path) -> None:
     """HIL submission only applies to human-actor nodes."""
     paths.ensure_job_layout("j", root=tmp_path)
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"verdict": VariableSpec(type="review-verdict")},
         nodes=[

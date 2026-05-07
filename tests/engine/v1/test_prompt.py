@@ -15,6 +15,7 @@ from shared.v1.workflow import ArtifactNode, VariableSpec, Workflow
 
 def _make_workflow_t1() -> Workflow:
     return Workflow(
+        schema_version=1,
         workflow="t1",
         variables={
             "request": VariableSpec(type="job-request"),
@@ -71,6 +72,7 @@ def test_collect_output_slots_basic() -> None:
 
 def test_collect_output_slots_optional() -> None:
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"x": VariableSpec(type="bug-report")},
         nodes=[
@@ -93,6 +95,7 @@ def test_collect_output_slots_undeclared_variable_raises() -> None:
     of the validator, so it raises directly rather than producing a useless
     prompt."""
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={},
         nodes=[

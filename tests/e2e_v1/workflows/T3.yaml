@@ -1,3 +1,4 @@
+schema_version: 1
 workflow: t3-with-code-node
 
 # T3: T2 + a `code`-kind node that fixes the bug from the design spec

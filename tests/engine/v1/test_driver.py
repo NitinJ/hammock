@@ -31,6 +31,7 @@ def _t1_yaml(tmp_path: Path) -> Path:
     p = tmp_path / "t1.yaml"
     p.write_text(
         """
+schema_version: 1
 workflow: t1
 variables:
   request: { type: job-request }
@@ -121,6 +122,7 @@ def test_submit_rejects_invalid_workflow(tmp_path: Path) -> None:
     p = tmp_path / "bad.yaml"
     p.write_text(
         """
+schema_version: 1
 workflow: bad
 variables:
   x: { type: not-a-real-type }
@@ -137,6 +139,7 @@ def test_submit_rejects_request_variable_with_wrong_type(tmp_path: Path) -> None
     p = tmp_path / "wrong.yaml"
     p.write_text(
         """
+schema_version: 1
 workflow: w
 variables:
   request: { type: bug-report }
@@ -154,6 +157,7 @@ nodes: []
 
 def test_topological_order_respects_after_edges() -> None:
     wf = Workflow(
+        schema_version=1,
         workflow="w",
         variables={"x": VariableSpec(type="bug-report")},
         nodes=[
@@ -174,6 +178,7 @@ def test_topological_order_respects_after_edges() -> None:
 
 def test_topological_order_raises_on_cycle() -> None:
     wf = Workflow(
+        schema_version=1,
         workflow="w",
         variables={},
         nodes=[

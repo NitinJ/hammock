@@ -92,6 +92,7 @@ def test_resolves_required_input_to_value_model(tmp_path: Path) -> None:
         value={"summary": "x", "document": "## Bug\n\nx"},
     )
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"bug_report": VariableSpec(type="bug-report")},
         nodes=[
@@ -115,6 +116,7 @@ def test_resolves_required_input_to_value_model(tmp_path: Path) -> None:
 def test_required_missing_variable_raises(tmp_path: Path) -> None:
     paths.ensure_job_layout("j1", root=tmp_path)
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"missing": VariableSpec(type="bug-report")},
         nodes=[
@@ -134,6 +136,7 @@ def test_required_missing_variable_raises(tmp_path: Path) -> None:
 def test_optional_missing_variable_yields_absent_slot(tmp_path: Path) -> None:
     paths.ensure_job_layout("j1", root=tmp_path)
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"prior_review": VariableSpec(type="review-verdict")},
         nodes=[
@@ -162,6 +165,7 @@ def test_field_access_returns_primitive(tmp_path: Path) -> None:
         value={"text": "Fix the bug"},
     )
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"request": VariableSpec(type="job-request")},
         nodes=[
@@ -188,6 +192,7 @@ def test_field_access_unknown_field_raises(tmp_path: Path) -> None:
         value={"text": "x"},
     )
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={"request": VariableSpec(type="job-request")},
         nodes=[
@@ -221,6 +226,7 @@ def test_resolves_multiple_inputs(tmp_path: Path) -> None:
         value={"summary": "the bug", "document": "## Bug\n\nthe bug"},
     )
     wf = Workflow(
+        schema_version=1,
         workflow="t",
         variables={
             "request": VariableSpec(type="job-request"),
