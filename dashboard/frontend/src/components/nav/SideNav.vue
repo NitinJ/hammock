@@ -12,8 +12,8 @@
 
       <li class="my-2 border-t border-border" />
 
-      <NavLink :to="{ name: 'hil-queue' }" icon="?">
-        HIL
+      <NavLink :to="{ name: 'hil-queue' }">
+        Review
         <span
           v-if="hilCount > 0"
           class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-300"
