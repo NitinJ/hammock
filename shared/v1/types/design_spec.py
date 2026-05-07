@@ -20,7 +20,10 @@ class DesignSpecDecl(BaseModel):
 
 
 class DesignSpecValue(BaseModel):
-    """A simple structured design doc. Concrete, minimal."""
+    """A simple structured design doc. Concrete, minimal.
+
+    Per Stage 2: carries a ``document`` field of markdown rendered by
+    the dashboard as the primary view."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -29,6 +32,8 @@ class DesignSpecValue(BaseModel):
     proposed_changes: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     out_of_scope: list[str] = Field(default_factory=list)
+    document: str = Field(..., min_length=1)
+    """Full design spec in markdown — primary view in the dashboard."""
 
 
 _PROMPT_HINT = """\
@@ -39,6 +44,9 @@ Strict JSON. Allowed fields ONLY:
 - `proposed_changes`: list of strings, each describing one change.
 - `risks`: list of strings, each describing one risk.
 - `out_of_scope`: list of strings.
+- `document`: full design spec as markdown (required, non-empty). Place
+  the narrative content here — the dashboard renders this as the
+  primary view and downstream agents consume it directly.
 
 Schema uses extra='forbid'. Do NOT add fields like `author`, `date`,
 `alternatives_considered`.\
@@ -95,6 +103,10 @@ class DesignSpecType:
             lines.append("\n**Out of scope:**")
             for x in value.out_of_scope:
                 lines.append(f"  - {x}")
+        lines.append("")
+        lines.append("#### Document")
+        lines.append("")
+        lines.append(value.document)
         return "\n".join(lines)
 
     def form_schema(self, decl: DesignSpecDecl) -> FormSchema | None:

@@ -22,7 +22,12 @@ class BugReportDecl(BaseModel):
 
 class BugReportValue(BaseModel):
     """Structured bug report. Concrete and minimal — just enough fields
-    for downstream nodes (design-spec writer, reviewer) to operate from."""
+    for downstream nodes (design-spec writer, reviewer) to operate from.
+
+    Per Stage 2 of ``docs/hammock-workflow.md``: bug-report carries a
+    ``document`` field of markdown alongside the structured fields. The
+    dashboard renders ``document`` as the primary view; downstream
+    agents read both the structured fields and the prose body."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -38,6 +43,10 @@ class BugReportValue(BaseModel):
     actual_behaviour: str | None = None
     """What happens currently (the bug)."""
 
+    document: str = Field(..., min_length=1)
+    """Full bug report in markdown — narrative the dashboard renders as
+    the primary view and downstream agents consume directly."""
+
 
 _PROMPT_HINT = """\
 Strict JSON. Allowed fields ONLY:
@@ -46,6 +55,9 @@ Strict JSON. Allowed fields ONLY:
 - `repro_steps`: list of strings (each one ordered repro step).
 - `expected_behaviour`: string or null.
 - `actual_behaviour`: string or null.
+- `document`: full bug report as markdown (required, non-empty). Place
+  the narrative content here — the dashboard renders this as the
+  primary view and downstream agents consume it directly.
 
 Do NOT add other fields like `severity`, `assignee`, `notes` — the schema
 uses extra='forbid' and they will be rejected.\
@@ -98,6 +110,10 @@ class BugReportType:
             lines.append("**Repro steps:**")
             for i, step in enumerate(value.repro_steps, 1):
                 lines.append(f"  {i}. {step}")
+        lines.append("")
+        lines.append("#### Document")
+        lines.append("")
+        lines.append(value.document)
         return "\n".join(lines)
 
     def form_schema(self, decl: BugReportDecl) -> FormSchema | None:

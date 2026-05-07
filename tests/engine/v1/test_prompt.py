@@ -210,7 +210,7 @@ def test_build_prompt_with_multiple_inputs(tmp_path: Path) -> None:
         "bug_report": ResolvedInput(
             name="bug_report",
             optional=False,
-            value=BugReportValue(summary="the bug"),
+            value=BugReportValue(summary="the bug", document="## Bug\n\nthe bug body"),
             present=True,
         )
     }

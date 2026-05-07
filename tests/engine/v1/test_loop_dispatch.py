@@ -123,7 +123,7 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
     )
     workflow = _count_loop_workflow_simple()
 
@@ -191,7 +191,7 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
     )
     workflow = _count_loop_workflow_simple()
 
@@ -243,7 +243,7 @@ def test_count_loop_zero_iters_produces_empty_list(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
     )
     workflow = _count_loop_workflow_simple()
     workflow.nodes[0].count = 0
@@ -305,6 +305,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
                 {"name": "s0", "description": "d0"},
                 {"name": "s1", "description": "d1"},
             ],
+            "document": "## Plan\n\nTwo stages.",
         },
     )
     paths.loop_variable_envelope_path(
@@ -343,7 +344,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
     )
 
     invocations = []
@@ -390,7 +391,7 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
     )
     workflow = _count_loop_workflow_simple()
     workflow.nodes[0].count = "3"
@@ -484,7 +485,7 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
     )
     workflow = _nested_workflow()
 
@@ -583,7 +584,7 @@ def test_per_iteration_substrate_uses_unique_node_id_per_iter(
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "t", "overview": "o"},
+        value={"title": "t", "overview": "o", "document": "## D\n\nt"},
     )
 
     job_repo = JobRepo(

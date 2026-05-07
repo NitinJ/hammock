@@ -70,7 +70,7 @@ def test_dispatch_code_happy_path(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\n."},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
@@ -138,7 +138,7 @@ def test_dispatch_writes_prompt_with_substrate_context(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\n."},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
@@ -192,7 +192,7 @@ def test_dispatch_fails_when_subprocess_nonzero(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\n."},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
@@ -223,7 +223,7 @@ def test_dispatch_fails_when_branch_has_no_commits(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\n."},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
@@ -253,7 +253,7 @@ def test_dispatch_fails_on_gh_error(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\n."},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)
@@ -301,7 +301,7 @@ def test_dispatch_code_inlines_middle_from_workflow_dir(tmp_path: Path) -> None:
         job_slug=job_slug,
         var_name="design_spec",
         type_name="design-spec",
-        value={"title": "x", "overview": "y"},
+        value={"title": "x", "overview": "y", "document": "## D\n\n."},
     )
     wf = _t3_workflow()
     substrate = _make_substrate(tmp_path)

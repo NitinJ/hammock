@@ -92,7 +92,7 @@ def test_dispatch_writes_prompt_to_attempt_dir(tmp_path: Path) -> None:
     job_slug = "j1"
     _seed_request(root=tmp_path, job_slug=job_slug)
     wf = _t1_workflow()
-    fake = _make_writer_fake({"bug_report": {"summary": "the bug"}})
+    fake = _make_writer_fake({"bug_report": {"summary": "the bug", "document": "## Bug\n\n."}})
     result = dispatch_artifact_agent(
         node=wf.nodes[0],
         workflow=wf,
@@ -110,7 +110,7 @@ def test_dispatch_persists_envelope(tmp_path: Path) -> None:
     job_slug = "j1"
     _seed_request(root=tmp_path, job_slug=job_slug)
     wf = _t1_workflow()
-    fake = _make_writer_fake({"bug_report": {"summary": "the bug"}})
+    fake = _make_writer_fake({"bug_report": {"summary": "the bug", "document": "## Bug\n\n."}})
     result = dispatch_artifact_agent(
         node=wf.nodes[0],
         workflow=wf,
@@ -129,6 +129,7 @@ def test_dispatch_persists_envelope(tmp_path: Path) -> None:
         "repro_steps": [],
         "expected_behaviour": None,
         "actual_behaviour": None,
+        "document": "## Bug\n\n.",
     }
 
 
@@ -241,7 +242,7 @@ def test_attempt_dir_layout_default_attempt_1(tmp_path: Path) -> None:
     job_slug = "j1"
     _seed_request(root=tmp_path, job_slug=job_slug)
     wf = _t1_workflow()
-    fake = _make_writer_fake({"bug_report": {"summary": "x"}})
+    fake = _make_writer_fake({"bug_report": {"summary": "x", "document": "## Bug\n\n."}})
     result = dispatch_artifact_agent(
         node=wf.nodes[0],
         workflow=wf,
@@ -274,7 +275,7 @@ def test_dispatch_inlines_middle_from_workflow_dir(tmp_path: Path) -> None:
     (wf_dir / "prompts").mkdir(parents=True)
     (wf_dir / "prompts" / "write-bug-report.md").write_text("DISPATCH-MIDDLE-SENTINEL-XYZ-9999\n")
 
-    fake = _make_writer_fake({"bug_report": {"summary": "x"}})
+    fake = _make_writer_fake({"bug_report": {"summary": "x", "document": "## Bug\n\n."}})
     result = dispatch_artifact_agent(
         node=wf.nodes[0],
         workflow=wf,

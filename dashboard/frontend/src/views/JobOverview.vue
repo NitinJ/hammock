@@ -127,12 +127,10 @@
 
           <div v-if="hasOutputs">
             <div class="text-xs uppercase text-text-secondary">Outputs</div>
-            <pre
-              v-for="(env, name) in nodeDetail.data.value.outputs"
-              :key="name"
-              class="mt-2 max-h-96 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-xs text-text-primary"
-              >{{ name }}: {{ JSON.stringify(env, null, 2) }}</pre
-            >
+            <div v-for="(env, name) in nodeDetail.data.value.outputs" :key="name" class="mt-2">
+              <div class="mb-1 font-mono text-xs text-text-secondary">{{ name }}</div>
+              <EnvelopeView :name="String(name)" :envelope="env" />
+            </div>
           </div>
           <div v-else class="text-xs text-text-secondary">No outputs produced yet.</div>
         </div>
@@ -163,6 +161,7 @@ import { useAnswerExplicitHil, useHilQueue, useJob, useNodeDetail } from "@/api/
 import type { HilQueueItem, NodeListEntry } from "@/api/schema.d";
 import StateBadge from "@/components/shared/StateBadge.vue";
 import FormRenderer from "@/components/hil/FormRenderer.vue";
+import EnvelopeView from "@/components/jobs/EnvelopeView.vue";
 import JobStreamPane from "@/components/jobs/JobStreamPane.vue";
 import { buildRenderedRows } from "@/components/jobs/renderRows.ts";
 

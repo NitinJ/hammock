@@ -70,7 +70,7 @@ def _start_job_with_workflow(fake_engine: FakeEngine) -> Path:
     spec_env = make_envelope(
         type_name="design-spec",
         producer_node="write-spec",
-        value_payload={"title": "T", "overview": "the spec"},
+        value_payload={"title": "T", "overview": "the spec", "document": "## D\n\nthe spec"},
     )
     atomic_write_text(
         v1_paths.variable_envelope_path(fake_engine.job_slug, "spec", root=fake_engine.root),
@@ -223,7 +223,7 @@ nodes:
     spec_env = make_envelope(
         type_name="design-spec",
         producer_node="write-spec",
-        value_payload={"title": "T", "overview": "the spec"},
+        value_payload={"title": "T", "overview": "the spec", "document": "## D\n\nthe spec"},
     )
     atomic_write_text(
         v1_paths.variable_envelope_path(fake_engine.job_slug, "spec", root=fake_engine.root),

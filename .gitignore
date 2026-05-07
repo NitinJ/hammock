@@ -12,6 +12,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Frontend src/lib/ is real source, not a venv artefact.
+!dashboard/frontend/src/lib/
 parts/
 sdist/
 var/

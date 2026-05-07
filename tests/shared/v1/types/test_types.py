@@ -102,6 +102,7 @@ def test_bug_report_produce_happy_path(tmp_path: Path) -> None:
         "repro_steps": ["Call add_integers()", "Inspect result"],
         "expected_behaviour": "0 (additive identity)",
         "actual_behaviour": "None",
+        "document": "## Bug\n\nadd_integers returns None on empty input.",
     }
     (tmp_path / "bug_report.json").write_text(json.dumps(payload))
     ctx = FakeNodeCtx(var_name="bug_report", job_dir=tmp_path)
@@ -155,7 +156,11 @@ def test_bug_report_render_for_producer_includes_path_and_schema_hint(
 
 def test_bug_report_render_for_consumer_includes_summary() -> None:
     t = BugReportType()
-    value = BugReportValue(summary="the summary line", repro_steps=["a", "b"])
+    value = BugReportValue(
+        summary="the summary line",
+        repro_steps=["a", "b"],
+        document="## Bug\n\nNarrative.",
+    )
     ctx = FakePromptCtx(var_name="bug_report", job_dir=Path("/tmp"))
     rendered = t.render_for_consumer(t.Decl(), value, ctx)
     assert "the summary line" in rendered
@@ -175,6 +180,7 @@ def test_design_spec_produce_happy_path(tmp_path: Path) -> None:
         "proposed_changes": ["Drop the `not nums` guard"],
         "risks": [],
         "out_of_scope": ["Type signature changes beyond removing | None"],
+        "document": "## Design\n\nReturn 0 instead of None on empty input.",
     }
     (tmp_path / "design_spec.json").write_text(json.dumps(payload))
     ctx = FakeNodeCtx(var_name="design_spec", job_dir=tmp_path)
@@ -189,6 +195,7 @@ def test_design_spec_render_for_consumer_lists_changes() -> None:
         title="t",
         overview="ov",
         proposed_changes=["change A", "change B"],
+        document="## Design\n\nNarrative.",
     )
     ctx = FakePromptCtx(var_name="design_spec", job_dir=Path("/tmp"))
     rendered = t.render_for_consumer(t.Decl(), value, ctx)

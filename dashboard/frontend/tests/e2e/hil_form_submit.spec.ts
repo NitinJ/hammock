@@ -36,7 +36,7 @@ nodes:
       repo: null,
       producer_node: "write-spec",
       produced_at: "2026-01-01T00:00:00",
-      value: { title: "T", overview: "X" },
+      value: { title: "T", overview: "X", document: "## D\n\n." },
     }),
   );
   seedPendingHil({

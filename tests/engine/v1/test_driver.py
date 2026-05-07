@@ -212,11 +212,12 @@ def test_run_job_drives_t1_to_completed(tmp_path: Path) -> None:
     )
     fake = _make_writer_fake(
         {
-            "write-bug-report": {"bug_report": {"summary": "the bug"}},
+            "write-bug-report": {"bug_report": {"summary": "the bug", "document": "## Bug\n\n."}},
             "write-design-spec": {
                 "design_spec": {
                     "title": "Fix",
                     "overview": "Make it return 0.",
+                    "document": "## D\n\n.",
                 }
             },
         }
@@ -235,8 +236,10 @@ def test_run_job_persists_node_runs(tmp_path: Path) -> None:
     )
     fake = _make_writer_fake(
         {
-            "write-bug-report": {"bug_report": {"summary": "x"}},
-            "write-design-spec": {"design_spec": {"title": "t", "overview": "o"}},
+            "write-bug-report": {"bug_report": {"summary": "x", "document": "## Bug\n\n."}},
+            "write-design-spec": {
+                "design_spec": {"title": "t", "overview": "o", "document": "## D\n\n."}
+            },
         }
     )
     run_job(job_slug="j1", root=tmp_path, claude_runner=fake)
@@ -258,8 +261,10 @@ def test_run_job_persists_all_envelopes(tmp_path: Path) -> None:
     )
     fake = _make_writer_fake(
         {
-            "write-bug-report": {"bug_report": {"summary": "x"}},
-            "write-design-spec": {"design_spec": {"title": "t", "overview": "o"}},
+            "write-bug-report": {"bug_report": {"summary": "x", "document": "## Bug\n\n."}},
+            "write-design-spec": {
+                "design_spec": {"title": "t", "overview": "o", "document": "## D\n\n."}
+            },
         }
     )
     run_job(job_slug="j1", root=tmp_path, claude_runner=fake)
@@ -318,7 +323,9 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
         variables_dir = job_dir / "variables"
         variables_dir.mkdir(parents=True, exist_ok=True)
         if node_id == "write-bug-report":
-            (variables_dir / "bug_report.json").write_text(json.dumps({"summary": "x"}))
+            (variables_dir / "bug_report.json").write_text(
+                json.dumps({"summary": "x", "document": "## Bug\n\n."})
+            )
         # write-design-spec writes nothing → fails
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
@@ -356,7 +363,7 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
         variables_dir.mkdir(parents=True, exist_ok=True)
         if node_id == "write-design-spec":
             (variables_dir / "design_spec.json").write_text(
-                json.dumps({"title": "t", "overview": "o"})
+                json.dumps({"title": "t", "overview": "o", "document": "## D\n\n."})
             )
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")

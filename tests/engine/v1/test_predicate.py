@@ -257,7 +257,7 @@ def test_evaluate_missing_field_returns_falsy(tmp_path: Path) -> None:
         job_slug="j",
         var_name="report",
         type_name="bug-report",
-        value={"summary": "x"},
+        value={"summary": "x", "document": "## Bug\n\nx"},
     )
     # `report.no_such_field` doesn't exist; should evaluate as if value None.
     assert (
