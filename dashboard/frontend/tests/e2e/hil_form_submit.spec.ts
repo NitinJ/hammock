@@ -59,7 +59,7 @@ test("HIL queue renders an explicit gate and submits to the right marker path", 
   });
 
   await page.goto("/hil");
-  await expect(page.getByRole("heading", { name: "HIL inbox" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review inbox" })).toBeVisible();
   await expect(page.getByText("Review the spec")).toBeVisible();
 
   await page.getByRole("button", { name: "approved" }).click();

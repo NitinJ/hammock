@@ -13,6 +13,7 @@ variables:
 
 nodes:
   - id: write-bug-report
+    name: "Write bug report"
     kind: artifact
     actor: agent
     inputs:
@@ -21,6 +22,7 @@ nodes:
       bug_report: $bug_report
 
   - id: write-design-spec
+    name: "Write design spec"
     kind: artifact
     actor: agent
     after: [write-bug-report]
@@ -30,6 +32,7 @@ nodes:
       design_spec: $design_spec
 
   - id: review-design-spec-agent
+    name: "Agent review of design spec"
     kind: artifact
     actor: agent
     after: [write-design-spec]

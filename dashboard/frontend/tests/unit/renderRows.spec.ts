@@ -10,6 +10,7 @@ function n(
 ): NodeListEntry {
   return {
     node_id,
+    name: null,
     kind: "artifact",
     actor: "agent",
     state: "succeeded",
@@ -87,5 +88,21 @@ describe("buildRenderedRows", () => {
     const headers = rows.filter((r) => r.kind === "header") as { label: string }[];
     expect(headers).toHaveLength(2);
     expect(headers.map((h) => h.label)).toEqual(["loop-a · iter 0", "loop-b · iter 0"]);
+  });
+
+  it("uses loop_names map for section labels when provided", () => {
+    const rows = buildRenderedRows(
+      [n("body", [0], ["impl-loop"], "impl-loop")],
+      { "impl-loop": "Implement step" },
+    );
+    const headers = rows.filter((r) => r.kind === "header") as { label: string }[];
+    expect(headers).toHaveLength(1);
+    expect(headers[0]?.label).toBe("Implement step · iter 0");
+  });
+
+  it("falls back to loop_id when loop_names lacks an entry", () => {
+    const rows = buildRenderedRows([n("body", [0], ["unnamed"], "unnamed")], {});
+    const headers = rows.filter((r) => r.kind === "header") as { label: string }[];
+    expect(headers[0]?.label).toBe("unnamed · iter 0");
   });
 });

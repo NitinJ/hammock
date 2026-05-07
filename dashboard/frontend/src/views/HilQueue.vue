@@ -1,7 +1,7 @@
 <template>
   <section class="space-y-4">
     <header>
-      <h1 class="text-xl font-semibold text-text-primary">HIL inbox</h1>
+      <h1 class="text-xl font-semibold text-text-primary">Review inbox</h1>
       <p class="text-sm text-text-secondary">
         Pending human-in-the-loop gates across all jobs. Both workflow-declared (<em>explicit</em>)
         and Claude-initiated

@@ -31,7 +31,10 @@ export interface HeaderRow {
 
 export type RenderRow = NodeRow | HeaderRow;
 
-export function buildRenderedRows(nodes: NodeListEntry[]): RenderRow[] {
+export function buildRenderedRows(
+  nodes: NodeListEntry[],
+  loopNames: Record<string, string> = {},
+): RenderRow[] {
   const out: RenderRow[] = [];
   let prev: NodeListEntry | null = null;
   for (const entry of nodes) {
@@ -44,12 +47,13 @@ export function buildRenderedRows(nodes: NodeListEntry[]): RenderRow[] {
         prev!.iter[depth] === entry.iter[depth] &&
         prev!.loop_path[depth] === entry.loop_path[depth];
       if (!same) {
-        const loopId = entry.loop_path[depth];
+        const loopId = entry.loop_path[depth] ?? "";
         const iterIdx = entry.iter[depth];
+        const loopLabel = loopId && loopNames[loopId] ? loopNames[loopId] : loopId;
         out.push({
           kind: "header",
           key: headerKey(entry, depth),
-          label: `${loopId} · iter ${iterIdx}`,
+          label: `${loopLabel} · iter ${iterIdx}`,
           depth,
         });
       }

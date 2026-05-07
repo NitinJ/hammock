@@ -7,13 +7,12 @@
     <ul class="flex flex-1 flex-col gap-0.5 text-sm">
       <NavLink :to="{ name: 'home' }" icon="⊞"> Dashboard </NavLink>
       <NavLink :to="{ name: 'jobs-list' }" icon="≡"> Jobs </NavLink>
-      <NavLink :to="{ name: 'job-submit' }" icon="＋"> New Job </NavLink>
       <NavLink :to="{ name: 'projects' }" icon="□"> Projects </NavLink>
 
       <li class="my-2 border-t border-border" />
 
-      <NavLink :to="{ name: 'hil-queue' }" icon="❓">
-        HIL
+      <NavLink :to="{ name: 'hil-queue' }">
+        Review
         <span
           v-if="hilCount > 0"
           class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-300"

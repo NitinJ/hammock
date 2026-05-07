@@ -123,3 +123,26 @@ If a long session compacts, the agent's working memory of recent decisions disap
 3. Encoding the discipline as a script if it's a checklist (`bin/preflight.sh`).
 
 Adding a third "remember to do X" memory note is the signal to convert X into a script.
+
+## `producer_node` is for traceability, not for filtering
+
+When a loop completes, its output projection (`outputs: x: $loop.x[last]`) re-writes the body's envelope at the outer loop's scope. The re-write preserves `producer_node` so the provenance chain stays intact — a downstream consumer that asks "who produced this design spec?" still gets `write-design-spec`, not `<loop:design-spec-loop>`.
+
+This means: **you cannot identify a node's direct outputs by `producer_node == node_id` alone.** A 2-deep nested loop body's envelope appears at 3 paths (the body's own loop-indexed path + 2 outer projections), all with the same `producer_node`. Naive filtering surfaces three copies of the same envelope under the body node's detail page — exactly the bug we shipped and then fixed.
+
+The right rule, used in `dashboard/state/projections.py:node_detail`:
+
+- Top-level node → its direct path is `<var>.json`.
+- Loop body node → its direct path is `loop_<innermost_parent_loop_id>_<var>_<iter>.json`.
+
+Filter envelopes by path shape, then producer_node, in that order. Anything else is by-product of loop projection and belongs to the loop, not the body node.
+
+If you're touching anything that walks `<job_dir>/variables/`, ask yourself: am I looking at provenance, or am I looking for the direct output? They're different queries.
+
+## Always construct envelopes via `make_envelope`
+
+A test fixture had `'"version":"1"'` in a hand-crafted JSON envelope. `Envelope` schema field is `type_version`, not `version`. The fixture's envelope was silently rejected by `Envelope.model_validate_json(...)` (extra-forbidden), the surrounding `try/except` swallowed the failure, and the test got back zero envelopes when it expected one. ~20 minutes of debugging.
+
+Rule: any test that needs an envelope on disk uses `make_envelope(type_name=..., producer_node=..., value_payload=...)` and writes `envelope.model_dump_json()`. Never hand-craft JSON for envelopes. The schema can drift; `make_envelope` won't.
+
+This applies to **every** envelope, including ones you're writing to simulate engine behaviour like loop output projections.

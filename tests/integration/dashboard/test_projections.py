@@ -194,6 +194,92 @@ async def test_nested_loop_iterations_unroll(
 
 
 @pytest.mark.asyncio
+async def test_node_detail_excludes_outer_loop_projection(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """A loop's output projection re-writes the body's envelope at a
+    higher scope, preserving ``producer_node`` for traceability. The
+    node-detail projection must filter those out — otherwise the
+    body's right-pane shows the same envelope N times for an N-deep
+    nested loop. Regression test for the dogfood report.
+
+    Concretely: leaf body's envelope sits at
+    ``loop_inner_bug_report_0.json``. The inner loop projects up to
+    ``loop_outer_bug_report_0.json``; the outer loop projects up to
+    top-level ``bug_report.json``. All three carry
+    ``producer_node: leaf``. node_detail should return only the first.
+    """
+    from shared.v1.envelope import make_envelope
+    from shared.v1.types.bug_report import BugReportValue
+
+    workflow = {
+        "schema_version": 1,
+        "workflow": "T-projection-deep",
+        "variables": {"bug_report": {"type": "bug-report"}},
+        "nodes": [
+            {
+                "id": "outer",
+                "kind": "loop",
+                "count": 1,
+                "body": [
+                    {
+                        "id": "inner",
+                        "kind": "loop",
+                        "count": 1,
+                        "body": [
+                            {
+                                "id": "leaf",
+                                "kind": "artifact",
+                                "actor": "agent",
+                                "outputs": {"bug_report": "$bug_report"},
+                            }
+                        ],
+                        "outputs": {"bug_report": "$inner.bug_report[last]"},
+                    }
+                ],
+                "outputs": {"bug_report": "$outer.bug_report[last]"},
+            }
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+
+    # Leaf's actual envelope under its immediate enclosing loop.
+    fake_engine.complete_node(
+        "leaf",
+        BugReportValue(summary="from-leaf", document="## Bug\n\n."),
+        iter=(0,),
+        loop_id="inner",
+        output_var_name="bug_report",
+    )
+
+    # Simulate the loop output projections re-writing the same envelope
+    # at outer scopes. ``producer_node`` is preserved so the provenance
+    # chain stays intact.
+    var_dir = fake_engine.root / "jobs" / fake_engine.job_slug / "variables"
+    projection = make_envelope(
+        type_name="bug-report",
+        producer_node="leaf",
+        value_payload={
+            "summary": "from-leaf",
+            "repro_steps": [],
+            "expected_behaviour": None,
+            "actual_behaviour": None,
+            "document": "## Bug\n\n.",
+        },
+    )
+    (var_dir / "loop_outer_bug_report_0.json").write_text(projection.model_dump_json())
+    (var_dir / "bug_report.json").write_text(projection.model_dump_json())
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}/nodes/leaf")
+    outputs = resp.json()["outputs"]
+    # Only the leaf's direct envelope (loop_inner_bug_report_0). The
+    # outer-loop projection at ``loop_outer_bug_report_0`` and the
+    # top-level ``bug_report`` are the same value at higher scopes —
+    # they belong to the loop nodes, not the leaf.
+    assert list(outputs.keys()) == ["loop_inner_bug_report_0"], outputs.keys()
+
+
+@pytest.mark.asyncio
 async def test_nested_hil_pending_carries_full_iter_path(
     dashboard: DashboardHandle, fake_engine: FakeEngine
 ) -> None:
@@ -269,3 +355,53 @@ async def test_nested_hil_pending_carries_full_iter_path(
     assert items[0]["node_id"] == "review-human"
     # The crux: full path, not just innermost.
     assert items[0]["iter"] == [0, 0]
+
+
+@pytest.mark.asyncio
+async def test_node_name_surfaces_in_overview(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """Workflow's optional ``name:`` per-node field comes through on
+    NodeListEntry; loop names come through on JobDetail.loop_names."""
+    workflow = {
+        "schema_version": 1,
+        "workflow": "T-named",
+        "variables": {
+            "bug_report": {"type": "bug-report"},
+            "bugs": {"type": "list[bug-report]"},
+        },
+        "nodes": [
+            {
+                "id": "named-loop",
+                "name": "Named loop section",
+                "kind": "loop",
+                "count": 1,
+                "body": [
+                    {
+                        "id": "named-body",
+                        "name": "Named body row",
+                        "kind": "artifact",
+                        "actor": "agent",
+                        "outputs": {"bug_report": "$bug_report"},
+                    }
+                ],
+                "outputs": {"bugs": "$named-loop.bug_report[*]"},
+            },
+            {
+                # No name → falls back to id on the frontend.
+                "id": "unnamed-node",
+                "kind": "artifact",
+                "actor": "agent",
+                "after": ["named-loop"],
+                "outputs": {"bug_report": "$bug_report"},
+            },
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    body = resp.json()
+    by_id = {n["node_id"]: n for n in body["nodes"]}
+    assert by_id["named-body"]["name"] == "Named body row"
+    assert by_id["unnamed-node"]["name"] is None
+    assert body["loop_names"] == {"named-loop": "Named loop section"}
