@@ -110,5 +110,6 @@ class ReviewVerdictType:
             fields=[
                 ("verdict", "select:approved,needs-revision,rejected"),
                 ("summary", "textarea"),
+                ("document", "textarea"),
             ]
         )

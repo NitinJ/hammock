@@ -132,6 +132,17 @@
               <EnvelopeView :name="String(name)" :envelope="env" />
             </div>
           </div>
+          <div
+            v-else-if="isSucceededWithoutOutput"
+            data-testid="empty-output-panel"
+            class="rounded-md border border-border bg-surface px-4 py-3"
+          >
+            <div class="text-sm text-text-primary">Node completed — no output produced.</div>
+            <div class="mt-1 text-xs text-text-secondary">
+              This node didn't write any envelopes. If logs are useful, they're under the node's
+              attempt directory on disk.
+            </div>
+          </div>
           <div v-else class="text-xs text-text-secondary">No outputs produced yet.</div>
         </div>
         <div v-else-if="nodeDetail.isPending.value" class="text-text-secondary">Loading…</div>
@@ -233,6 +244,17 @@ async function submitExplicit(varName: string, value: Record<string, string>): P
 const hasOutputs = computed(() => {
   const d = nodeDetail.data.value;
   return !!d && Object.keys(d.outputs ?? {}).length > 0;
+});
+
+/** A node that completed but produced no envelopes — e.g. tests-and-fix
+ *  with `tests_pr?` optional, no commits → no PR. Show a clear
+ *  "completed, nothing to display" panel rather than the generic
+ *  "no outputs produced yet" placeholder which reads like in-progress. */
+const isSucceededWithoutOutput = computed(() => {
+  const d = nodeDetail.data.value;
+  if (!d) return false;
+  if (d.state !== "succeeded") return false;
+  return Object.keys(d.outputs ?? {}).length === 0;
 });
 
 /** Distinguish "node hasn't been dispatched yet" (404) from real failures.

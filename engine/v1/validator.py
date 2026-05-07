@@ -278,7 +278,9 @@ def _check_loop_until_predicate_types(workflow: Workflow) -> list[ValidationFind
         for n in nodes:
             if isinstance(n, LoopNode):
                 if n.until is not None:
-                    f = _check_one_until(n, workflow, parse_predicate, get_type, UnknownVariableType)
+                    f = _check_one_until(
+                        n, workflow, parse_predicate, get_type, UnknownVariableType
+                    )
                     if f is not None:
                         findings.append(f)
                 visit(n.body)
@@ -319,7 +321,9 @@ def _check_loop_until_predicate_types(workflow: Workflow) -> list[ValidationFind
             f"(see pr-merged-loop in fix-bug for the correct pattern)"
         )
         path_repr = (
-            f"$" + (f"{ref.loop_id}." if ref.loop_id else "") + ref.var_name
+            "$"
+            + (f"{ref.loop_id}." if ref.loop_id else "")
+            + ref.var_name
             + (f"[{ref.index_form}]" if ref.index_form else "")
             + ("." + ".".join(ref.field_path) if ref.field_path else "")
         )

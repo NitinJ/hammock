@@ -734,9 +734,7 @@ def test_until_loop_reenters_on_needs_revision_then_exits_on_approved(
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         v = iter_verdicts[i] if i < len(iter_verdicts) else "approved"
-        target = paths.loop_variable_envelope_path(
-            job_slug, "lp", "verdict", i, root=tmp_path
-        )
+        target = paths.loop_variable_envelope_path(job_slug, "lp", "verdict", i, root=tmp_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             json.dumps(

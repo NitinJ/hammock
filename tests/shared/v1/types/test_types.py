@@ -294,4 +294,4 @@ def test_review_verdict_form_schema_defined() -> None:
     schema = t.form_schema(t.Decl())
     assert schema is not None
     field_names = [name for name, _ in schema.fields]
-    assert field_names == ["verdict", "summary"]
+    assert field_names == ["verdict", "summary", "document"]
