@@ -50,7 +50,18 @@ nodes:
     outputs: { design_spec: $design_spec }
 """
     )
+    _seed_prompts(tmp_path, ["write-bug-report", "write-design-spec"])
     return p
+
+
+def _seed_prompts(workflow_dir: Path, node_ids: list[str]) -> None:
+    """Write a stub prompt file for each agent-actor node id alongside
+    the synthetic workflow yaml. Stage 1 makes per-node prompts a
+    workflow-folder requirement; tests synthesize the matching layout."""
+    prompts_dir = workflow_dir / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    for nid in node_ids:
+        (prompts_dir / f"{nid}.md").write_text(f"Stub task instruction for {nid}.\n")
 
 
 def _make_writer_fake(

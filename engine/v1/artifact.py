@@ -107,6 +107,7 @@ def dispatch_artifact_agent(
     root: Path,
     attempt: int = 1,
     claude_runner: ClaudeRunner | None = None,
+    workflow_dir: Path | None = None,
     loop_id: str | None = None,
     iteration: int | None = None,
 ) -> DispatchResult:
@@ -137,6 +138,7 @@ def dispatch_artifact_agent(
         workflow=workflow,
         inputs=resolved,
         job_dir=job_dir,
+        workflow_dir=workflow_dir,
         loop_id=loop_id,
         iteration=iteration,
     )

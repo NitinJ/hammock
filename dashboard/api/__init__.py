@@ -54,9 +54,9 @@ class HealthResponse(BaseModel):
 class WorkflowListItem(BaseModel):
     """One entry in ``GET /api/workflows``.
 
-    ``job_type`` is the filename stem (drop ``.yaml``); the dashboard
-    submits ``POST /api/jobs`` with this string and the compiler
-    resolves it back to ``hammock/templates/workflows/<job_type>.yaml``."""
+    ``job_type`` is the workflow folder name; the dashboard submits
+    ``POST /api/jobs`` with this string and the compiler resolves it
+    back to ``hammock/templates/workflows/<job_type>/workflow.yaml``."""
 
     job_type: str
     workflow_name: str
@@ -81,21 +81,27 @@ _BUNDLED_WORKFLOWS_DIR = Path(__file__).parent.parent.parent / "hammock" / "temp
 
 @router.get("/api/workflows", response_model=list[WorkflowListItem])
 async def list_workflows() -> list[WorkflowListItem]:
-    """List bundled workflow YAMLs available for ``POST /api/jobs``.
+    """List bundled workflows available for ``POST /api/jobs``.
 
-    Each ``job_type`` is the filename stem; the loader's ``workflow:``
-    field provides ``workflow_name``. Malformed YAMLs are logged and
-    omitted so one bad file doesn't blank the dropdown."""
+    Each bundled workflow lives under
+    ``hammock/templates/workflows/<job_type>/workflow.yaml`` with a
+    sibling ``prompts/`` directory. ``job_type`` is the folder name;
+    the loader's ``workflow:`` field provides ``workflow_name``.
+    Malformed YAMLs are logged and omitted so one bad file doesn't
+    blank the dropdown."""
     if not _BUNDLED_WORKFLOWS_DIR.is_dir():
         return []
     out: list[WorkflowListItem] = []
-    for path in sorted(_BUNDLED_WORKFLOWS_DIR.glob("*.yaml")):
-        try:
-            wf = load_workflow(path)
-        except WorkflowLoadError as exc:
-            log.warning("skipping unloadable workflow %s: %s", path, exc)
+    for folder in sorted(p for p in _BUNDLED_WORKFLOWS_DIR.iterdir() if p.is_dir()):
+        wf_path = folder / "workflow.yaml"
+        if not wf_path.is_file():
             continue
-        out.append(WorkflowListItem(job_type=path.stem, workflow_name=wf.workflow))
+        try:
+            wf = load_workflow(wf_path)
+        except WorkflowLoadError as exc:
+            log.warning("skipping unloadable workflow %s: %s", wf_path, exc)
+            continue
+        out.append(WorkflowListItem(job_type=folder.name, workflow_name=wf.workflow))
     return out
 
 

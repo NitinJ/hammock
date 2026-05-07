@@ -190,7 +190,9 @@ def run_job(
     if not cfg_path.is_file():
         raise DriverError(f"job config not found at {cfg_path}")
     cfg = JobConfig.model_validate_json(cfg_path.read_text())
-    workflow = load_workflow(Path(cfg.workflow_path))
+    workflow_path = Path(cfg.workflow_path)
+    workflow = load_workflow(workflow_path)
+    workflow_dir = workflow_path.parent
 
     # Transition SUBMITTED → RUNNING (idempotent on resume).
     if cfg.state == JobState.SUBMITTED:
@@ -283,6 +285,7 @@ def run_job(
                 code_claude_runner=code_claude_runner,
                 hil_poll_interval_seconds=hil_poll_interval_seconds,
                 hil_timeout_seconds=hil_timeout_seconds,
+                workflow_dir=workflow_dir,
             )
             if not loop_result.succeeded:
                 _persist_node_run(
@@ -338,6 +341,7 @@ def run_job(
                 substrate=substrate,
                 attempt=attempt,
                 claude_runner=code_claude_runner,
+                workflow_dir=workflow_dir,
             )
             if not code_result.succeeded:
                 log.warning(
@@ -406,6 +410,7 @@ def run_job(
             root=root,
             attempt=attempt,
             claude_runner=claude_runner,
+            workflow_dir=workflow_dir,
         )
         if not result.succeeded:
             log.warning("node %s failed: %s — marking job FAILED", node.id, result.error)
