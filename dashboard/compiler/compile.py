@@ -245,7 +245,8 @@ def _derive_repo_slug(remote_url: str) -> str:
 def _resolve_bundled_workflow(job_type: str) -> Path | None:
     """Locate the bundled workflow YAML for a given job_type.
 
-    Looks under ``<repo>/hammock/templates/workflows/<job_type>.yaml``.
+    Looks under
+    ``<repo>/hammock/templates/workflows/<job_type>/workflow.yaml``.
     Returns None on miss; caller surfaces as ``workflow_not_found``.
     """
     bundled = (
@@ -253,7 +254,8 @@ def _resolve_bundled_workflow(job_type: str) -> Path | None:
         / "hammock"
         / "templates"
         / "workflows"
-        / f"{job_type}.yaml"
+        / job_type
+        / "workflow.yaml"
     )
     return bundled if bundled.is_file() else None
 

@@ -158,6 +158,7 @@ def dispatch_code_agent(
     substrate: CodeSubstrate,
     attempt: int = 1,
     claude_runner: ClaudeRunner | None = None,
+    workflow_dir: Path | None = None,
     loop_id: str | None = None,
     iteration: int | None = None,
 ) -> CodeDispatchResult:
@@ -194,6 +195,7 @@ def dispatch_code_agent(
         inputs=resolved,
         job_dir=job_dir,
         substrate=substrate,
+        workflow_dir=workflow_dir,
     )
     atomic_write_text(attempt_dir / "prompt.md", prompt)
 
@@ -258,11 +260,17 @@ def _build_code_prompt(
     inputs: dict,
     job_dir: Path,
     substrate: CodeSubstrate,
+    workflow_dir: Path | None = None,
 ) -> str:
     """Wrap the artifact prompt builder with code-aware substrate hints
     so per-output `render_for_producer` (for `pr`, `branch`, etc.) sees
-    the worktree + branch names."""
+    the worktree + branch names.
+
+    When ``workflow_dir`` is supplied, the per-node middle is loaded
+    from ``<workflow_dir>/prompts/<node.id>.md`` and inserted between
+    the substrate-hint header and the inputs section."""
     from engine.v1.prompt import _PromptCtx as _ArtifactPromptCtx
+    from engine.v1.prompt import load_node_middle
 
     # The artifact-prompt builder uses _PromptCtx for rendering each
     # output. For code outputs the type needs more context (worktree,
@@ -292,6 +300,15 @@ def _build_code_prompt(
         f"`{substrate.base_branch}`. Commit your changes here."
     )
     parts.append("")
+
+    # Middle — per-node task instruction loaded from disk.
+    if workflow_dir is not None:
+        middle = load_node_middle(workflow_dir, node.id).strip()
+        if middle:
+            parts.append("## Task")
+            parts.append("")
+            parts.append(middle)
+            parts.append("")
 
     # Inputs — render via each input's variable type.
     if inputs:

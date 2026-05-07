@@ -82,12 +82,34 @@ def collect_output_slots(node: ArtifactNode, workflow: Workflow) -> list[OutputS
     return slots
 
 
+def load_node_middle(workflow_dir: Path, node_id: str) -> str:
+    """Read the per-node middle prompt from
+    ``<workflow_dir>/prompts/<node_id>.md``.
+
+    Raises ``FileNotFoundError`` with a context-rich message when the
+    file is missing — a workflow shipped without per-node prompts is
+    broken and should fail loudly at dispatch time. Verification at
+    project-register / job-submit time is the chokepoint that should
+    catch this before runtime, but the engine still asserts the
+    invariant defensively.
+    """
+    path = workflow_dir / "prompts" / f"{node_id}.md"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"missing per-node prompt for {node_id!r}: expected at {path}. "
+            "Every agent-actor node needs a prompts/<node_id>.md file "
+            f"under its workflow folder ({workflow_dir})."
+        )
+    return path.read_text()
+
+
 def build_prompt(
     *,
     node: ArtifactNode,
     workflow: Workflow,
     inputs: dict[str, ResolvedInput],
     job_dir: Path,
+    workflow_dir: Path | None = None,
     loop_id: str | None = None,
     iteration: int | None = None,
 ) -> str:
@@ -95,7 +117,15 @@ def build_prompt(
 
     When the node runs inside a loop, pass ``loop_id`` and ``iteration``
     so the per-output `render_for_producer` includes the loop-indexed
-    output path."""
+    output path.
+
+    When ``workflow_dir`` is supplied, the per-node middle layer is
+    loaded from ``<workflow_dir>/prompts/<node.id>.md`` and inserted
+    between the engine header and the inputs section. Production
+    callers (driver, dispatchers) always pass ``workflow_dir`` derived
+    from ``JobConfig.workflow_path``; unit tests that don't care about
+    the middle may omit it.
+    """
     parts: list[str] = []
     parts.append(f"# Node: {node.id}")
     parts.append("")
@@ -106,6 +136,15 @@ def build_prompt(
         "Do not write anything to the working directory."
     )
     parts.append("")
+
+    # Middle — per-node task instruction loaded from disk.
+    if workflow_dir is not None:
+        middle = load_node_middle(workflow_dir, node.id).strip()
+        if middle:
+            parts.append("## Task")
+            parts.append("")
+            parts.append(middle)
+            parts.append("")
 
     # Inputs ------------------------------------------------------------
     if inputs:

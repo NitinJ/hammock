@@ -61,6 +61,10 @@ nodes:
       title: "Review the design spec"
 """
     )
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    for nid in ("write-bug-report", "write-design-spec", "review-design-spec-agent"):
+        (prompts_dir / f"{nid}.md").write_text(f"Stub task for {nid}.\n")
     return p
 
 

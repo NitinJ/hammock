@@ -91,6 +91,7 @@ def dispatch_loop(
     hil_poll_interval_seconds: float = 1.0,
     hil_timeout_seconds: float | None = None,
     parent_loop_context: ParentLoopContext | None = None,
+    workflow_dir: Path | None = None,
 ) -> LoopDispatchResult:
     """Iterate ``node.body`` per the loop's count/until config."""
     # Resolve the loop kind: count vs until.
@@ -217,6 +218,7 @@ def dispatch_loop(
                 code_claude_runner=code_claude_runner,
                 hil_poll_interval_seconds=hil_poll_interval_seconds,
                 hil_timeout_seconds=hil_timeout_seconds,
+                workflow_dir=workflow_dir,
             )
             if not ok.succeeded:
                 return LoopDispatchResult(
@@ -298,6 +300,7 @@ def _dispatch_body_node(
     code_claude_runner: CodeClaudeRunner | None,
     hil_poll_interval_seconds: float,
     hil_timeout_seconds: float | None,
+    workflow_dir: Path | None = None,
 ) -> _BodyDispatchOk:
     if isinstance(body_node, LoopNode):
         # Nested loop: recurse with parent context = this loop's iter.
@@ -314,6 +317,7 @@ def _dispatch_body_node(
             hil_poll_interval_seconds=hil_poll_interval_seconds,
             hil_timeout_seconds=hil_timeout_seconds,
             parent_loop_context=ParentLoopContext(loop_id=loop_node.id, iteration=iteration),
+            workflow_dir=workflow_dir,
         )
         return _BodyDispatchOk(succeeded=result.succeeded, error=result.error)
 
@@ -353,6 +357,7 @@ def _dispatch_body_node(
             substrate=code_substrate,
             attempt=attempts,
             claude_runner=code_claude_runner,
+            workflow_dir=workflow_dir,
             loop_id=loop_node.id,
             iteration=iteration,
         )
@@ -414,6 +419,7 @@ def _dispatch_body_node(
         root=root,
         attempt=attempts,
         claude_runner=artifact_claude_runner,
+        workflow_dir=workflow_dir,
         loop_id=loop_node.id,
         iteration=iteration,
     )

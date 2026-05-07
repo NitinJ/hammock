@@ -253,3 +253,36 @@ def test_attempt_dir_layout_default_attempt_1(tmp_path: Path) -> None:
     assert result.attempt_dir == expected
     assert (expected / "prompt.md").is_file()
     assert (expected / "stdout.log").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 — dispatcher threads workflow_dir through to prompt assembly
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_inlines_middle_from_workflow_dir(tmp_path: Path) -> None:
+    """When the dispatcher is given ``workflow_dir``, it loads the
+    per-node prompt file and the assembled prompt contains its content.
+
+    This test catches the wiring (driver → dispatcher → prompt builder)
+    in addition to the build_prompt unit test."""
+    job_slug = "j1"
+    _seed_request(root=tmp_path, job_slug=job_slug)
+    wf = _t1_workflow()
+
+    wf_dir = tmp_path / "wf"
+    (wf_dir / "prompts").mkdir(parents=True)
+    (wf_dir / "prompts" / "write-bug-report.md").write_text("DISPATCH-MIDDLE-SENTINEL-XYZ-9999\n")
+
+    fake = _make_writer_fake({"bug_report": {"summary": "x"}})
+    result = dispatch_artifact_agent(
+        node=wf.nodes[0],
+        workflow=wf,
+        job_slug=job_slug,
+        root=tmp_path,
+        claude_runner=fake,
+        workflow_dir=wf_dir,
+    )
+    assert result.succeeded
+    prompt_text = (result.attempt_dir / "prompt.md").read_text()
+    assert "DISPATCH-MIDDLE-SENTINEL-XYZ-9999" in prompt_text

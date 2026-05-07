@@ -284,3 +284,58 @@ def test_dispatch_fails_on_gh_error(tmp_path: Path) -> None:
         )
     assert not result.succeeded
     assert "gh error" in (result.error or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 — code dispatcher threads workflow_dir through to prompt assembly
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_code_inlines_middle_from_workflow_dir(tmp_path: Path) -> None:
+    """When the code dispatcher is given ``workflow_dir``, the assembled
+    prompt contains the per-node middle from
+    ``<workflow_dir>/prompts/<node_id>.md``."""
+    job_slug = "j"
+    _seed_var(
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "x", "overview": "y"},
+    )
+    wf = _t3_workflow()
+    substrate = _make_substrate(tmp_path)
+
+    wf_dir = tmp_path / "wf"
+    (wf_dir / "prompts").mkdir(parents=True)
+    (wf_dir / "prompts" / "implement.md").write_text("CODE-MIDDLE-SENTINEL-ABC-7777\n")
+
+    def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
+        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "stderr.log").write_text("")
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    with (
+        patch.object(git_ops, "has_commits_beyond", return_value=True),
+        patch.object(git_ops, "push_branch"),
+        patch.object(
+            git_ops,
+            "gh_create_pr",
+            return_value="https://github.com/me/repo/pull/1",
+        ),
+        patch.object(git_ops, "latest_commit_subject", return_value="t"),
+        patch.object(git_ops, "latest_commit_body", return_value=""),
+    ):
+        result = dispatch_code_agent(
+            node=wf.nodes[0],
+            workflow=wf,
+            job_slug=job_slug,
+            root=tmp_path,
+            substrate=substrate,
+            claude_runner=fake,
+            workflow_dir=wf_dir,
+        )
+
+    assert result.succeeded
+    prompt_text = (result.attempt_dir / "prompt.md").read_text()
+    assert "CODE-MIDDLE-SENTINEL-ABC-7777" in prompt_text
