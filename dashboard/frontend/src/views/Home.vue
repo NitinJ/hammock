@@ -3,11 +3,11 @@
     <header>
       <h1 class="text-xl font-semibold text-text-primary">Dashboard</h1>
       <p class="text-sm text-text-secondary">
-        Welcome to Hammock. Submit a job, watch nodes run, answer HIL gates.
+        Welcome to Hammock. Submit a job, watch nodes run, answer review gates.
       </p>
     </header>
 
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <RouterLink
         :to="{ name: 'jobs-list' }"
         class="block rounded-md border border-border bg-surface-raised p-4 hover:bg-surface-highlight"
@@ -21,17 +21,10 @@
         :to="{ name: 'hil-queue' }"
         class="block rounded-md border border-border bg-surface-raised p-4 hover:bg-surface-highlight"
       >
-        <div class="text-xs uppercase text-text-secondary">HIL pending</div>
+        <div class="text-xs uppercase text-text-secondary">Review pending</div>
         <div class="mt-1 text-2xl font-semibold text-text-primary">
           {{ hil.data.value?.length ?? 0 }}
         </div>
-      </RouterLink>
-      <RouterLink
-        :to="{ name: 'job-submit' }"
-        class="block rounded-md border border-border bg-surface-raised p-4 hover:bg-surface-highlight"
-      >
-        <div class="text-xs uppercase text-text-secondary">Submit a job</div>
-        <div class="mt-1 text-sm text-text-primary">＋ New Job</div>
       </RouterLink>
     </div>
 
