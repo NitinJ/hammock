@@ -37,7 +37,9 @@ def _make_writer_fake(
     variable name into the job's variables/ dir, mimicking what a real
     agent would do for an artifact node."""
 
-    def fake(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def fake(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         # job_dir = attempt_dir.parent.parent.parent.parent
         # path is jobs/<slug>/nodes/<id>/runs/<n>
         job_dir = attempt_dir.parents[3]
@@ -56,7 +58,9 @@ def _make_writer_fake(
 
 
 def _make_failing_fake() -> Callable[[str, Path], subprocess.CompletedProcess[str]]:
-    def fake(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def fake(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("(fake) agent crashed\n")
         return subprocess.CompletedProcess(args=["claude"], returncode=2, stdout=b"", stderr=b"")
@@ -177,7 +181,9 @@ def test_dispatch_fails_on_invalid_json_output(tmp_path: Path) -> None:
     _seed_request(root=tmp_path, job_slug=job_slug)
     wf = _t1_workflow()
 
-    def broken(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def broken(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         job_dir = attempt_dir.parents[3]
         (job_dir / "variables").mkdir(parents=True, exist_ok=True)
         (job_dir / "variables" / "bug_report.json").write_text("{ broken")
@@ -287,3 +293,84 @@ def test_dispatch_inlines_middle_from_workflow_dir(tmp_path: Path) -> None:
     assert result.succeeded
     prompt_text = (result.attempt_dir / "prompt.md").read_text()
     assert "DISPATCH-MIDDLE-SENTINEL-XYZ-9999" in prompt_text
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 — artifact agent runs with cwd inside <job_dir>/repo when present
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_passes_repo_dir_as_cwd_to_runner(tmp_path: Path) -> None:
+    """When the job has a repo clone (any code-bearing workflow), the
+    artifact dispatcher must invoke the claude runner with cwd =
+    ``<job_dir>/repo``. This is what gives the agent free access to the
+    project's ``CLAUDE.md`` and lets it grep / Read project files when
+    grounding its outputs.
+
+    Verified by stubbing the runner with a 3rd positional arg ``cwd``
+    and asserting the path the dispatcher hands in."""
+    job_slug = "j1"
+    _seed_request(root=tmp_path, job_slug=job_slug)
+    wf = _t1_workflow()
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    captured: dict[str, object] = {}
+
+    def fake(prompt: str, attempt_dir: Path, cwd: Path | None) -> subprocess.CompletedProcess[str]:
+        captured["cwd"] = cwd
+        # Still need to write the expected output for produce() to succeed.
+        job_dir = attempt_dir.parents[3]
+        variables_dir = job_dir / "variables"
+        variables_dir.mkdir(parents=True, exist_ok=True)
+        (variables_dir / "bug_report.json").write_text(
+            json.dumps({"summary": "x", "document": "## Bug\n\n."})
+        )
+        (attempt_dir / "stdout.log").write_text("(fake) ok\n")
+        (attempt_dir / "stderr.log").write_text("")
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    result = dispatch_artifact_agent(
+        node=wf.nodes[0],
+        workflow=wf,
+        job_slug=job_slug,
+        root=tmp_path,
+        claude_runner=fake,
+        repo_dir=repo_dir,
+    )
+    assert result.succeeded
+    assert captured["cwd"] == repo_dir, f"expected cwd={repo_dir}, got {captured['cwd']}"
+
+
+def test_dispatch_passes_cwd_none_when_no_repo(tmp_path: Path) -> None:
+    """T1 / artifact-only workflows have no repo. The dispatcher must
+    still call the runner — passing ``cwd=None`` so the runner runs
+    with the engine's default cwd (no project repo to root in)."""
+    job_slug = "j1"
+    _seed_request(root=tmp_path, job_slug=job_slug)
+    wf = _t1_workflow()
+
+    captured: dict[str, object] = {}
+
+    def fake(prompt: str, attempt_dir: Path, cwd: Path | None) -> subprocess.CompletedProcess[str]:
+        captured["cwd"] = cwd
+        job_dir = attempt_dir.parents[3]
+        variables_dir = job_dir / "variables"
+        variables_dir.mkdir(parents=True, exist_ok=True)
+        (variables_dir / "bug_report.json").write_text(
+            json.dumps({"summary": "x", "document": "## Bug\n\n."})
+        )
+        (attempt_dir / "stdout.log").write_text("(fake) ok\n")
+        (attempt_dir / "stderr.log").write_text("")
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    result = dispatch_artifact_agent(
+        node=wf.nodes[0],
+        workflow=wf,
+        job_slug=job_slug,
+        root=tmp_path,
+        claude_runner=fake,
+        # repo_dir omitted — artifact-only workflow
+    )
+    assert result.succeeded
+    assert captured["cwd"] is None

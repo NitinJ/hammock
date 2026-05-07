@@ -420,6 +420,7 @@ def _dispatch_body_node(
         attempt=attempts,
         claude_runner=artifact_claude_runner,
         workflow_dir=workflow_dir,
+        repo_dir=job_repo.repo_dir if job_repo is not None else None,
         loop_id=loop_node.id,
         iteration=iteration,
     )

@@ -71,7 +71,9 @@ nodes:
 def _make_writer_fake(
     payloads_per_node: dict[str, dict[str, dict]],
 ) -> Callable[[str, Path], subprocess.CompletedProcess[str]]:
-    def fake(prompt: str, attempt_dir: Path) -> subprocess.CompletedProcess[str]:
+    def fake(
+        prompt: str, attempt_dir: Path, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         node_id = prompt.splitlines()[0].removeprefix("# Node: ").strip()
         job_dir = attempt_dir.parents[3]
         variables_dir = job_dir / "variables"

@@ -129,7 +129,7 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
 
     invocations: list[Path] = []
 
-    def fake_runner(prompt: str, attempt_dir: Path):
+    def fake_runner(prompt: str, attempt_dir: Path, cwd=None):
         invocations.append(attempt_dir)
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "stdout.log").write_text("")
@@ -195,7 +195,7 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
     )
     workflow = _count_loop_workflow_simple()
 
-    def fake_runner(prompt: str, attempt_dir: Path):
+    def fake_runner(prompt: str, attempt_dir: Path, cwd=None):
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "stdout.log").write_text("")
         (attempt_dir / "stderr.log").write_text("")
@@ -248,7 +248,7 @@ def test_count_loop_zero_iters_produces_empty_list(tmp_path: Path) -> None:
     workflow = _count_loop_workflow_simple()
     workflow.nodes[0].count = 0
 
-    def fake_runner(prompt: str, attempt_dir: Path):  # pragma: no cover
+    def fake_runner(prompt: str, attempt_dir: Path, cwd=None):  # pragma: no cover
         raise AssertionError("body must not run for count=0")
 
     result = dispatch_loop(
@@ -349,7 +349,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
 
     invocations = []
 
-    def fake(prompt, attempt_dir):
+    def fake(prompt, attempt_dir, cwd=None):
         invocations.append(attempt_dir)
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "stdout.log").write_text("")
@@ -398,7 +398,7 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
 
     invocations = []
 
-    def fake(prompt, attempt_dir):
+    def fake(prompt, attempt_dir, cwd=None):
         invocations.append(attempt_dir)
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "stdout.log").write_text("")
@@ -491,7 +491,7 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
 
     invocation_count = {"n": 0}
 
-    def fake(prompt, attempt_dir):
+    def fake(prompt, attempt_dir, cwd=None):
         invocation_count["n"] += 1
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "stdout.log").write_text("")
