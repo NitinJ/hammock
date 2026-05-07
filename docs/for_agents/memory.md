@@ -125,15 +125,3 @@ These came out of dogfood and are worth tracking but didn't block any stage from
 2. **Bundled prompt rewrite** — apply two-phase pattern to all `write-*.md`. Defence-in-depth above (1).
 3. **`bin/preflight.sh`** — encode the full CI gauntlet as a script, with a CI test that diffs the script against `.github/workflows/*.yml`. The "remember to lint after format" rule belongs in a script, not in human memory.
 4. **Splitting discovery from execution in subagent sweeps** — when delegating "find all sites and update them", the agent often misses one or two. Right pattern: agent does discovery, returns count, you compare against expectation, then agent sweeps.
-
-## Code node narrative envelope (deferred from dogfood-fixes-2)
-
-Today every artifact-narrative type carries `document: str` so reviewer/operator can read the agent's reasoning in the dashboard, and downstream agents inline the prose via `render_for_consumer`. **Code nodes have no equivalent.** Their reasoning lives in the commit message + PR body, both of which die outside Hammock — the dashboard's right pane on a code node shows only the `pr` envelope (branch, commit sha, url) with no narrative.
-
-The dogfood-fixes-2 round added `document` to `review-verdict` (the missing reviewer narrative). The code-node case is bigger and was deliberately deferred:
-
-- **Where the prose belongs.** Adding `document: str` to `PRValue` is the obvious move, but the agent already wrote a PR body — duplicating that into a Hammock envelope is double-work. Worth a design pass on whether the PR body itself is the source of truth (engine reads it back) or whether `document` is independent.
-- **Empty-output edge case.** `tests-and-fix` with `tests_pr?` optional can succeed with no envelope at all (no failing tests, no PR opened). Today the dashboard shows "Node completed — no output produced." (the dogfood-fixes-2 fallback). When code nodes gain `document`, the empty-when-no-PR branch needs a story too — maybe `document` is required-but-can-be-empty, or `summary` becomes the standalone prose slot.
-- **Prompt + producer + tests.** `implement.md` and `tests-and-fix.md` would need imperative phrasing for the new field; `engine/v1/code_dispatch.py:_build_code_prompt` would render the slot in the footer; `pr_review_verdict` consumer rendering would inline `pr.document` so reviewer agents see the implementer's narrative.
-
-Don't sneak this into a small PR. It's a v1+ design conversation.
