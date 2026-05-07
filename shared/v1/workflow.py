@@ -48,6 +48,9 @@ class ArtifactNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    name: str | None = None
+    """Human-readable label shown in the dashboard. Falls back to ``id``
+    when absent. Optional so existing workflows keep loading."""
     kind: Literal["artifact"]
     actor: Actor
     after: list[str] = Field(default_factory=list)
@@ -78,6 +81,9 @@ class CodeNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    name: str | None = None
+    """Human-readable label shown in the dashboard. Falls back to ``id``
+    when absent."""
     kind: Literal["code"]
     actor: Actor
     after: list[str] = Field(default_factory=list)
@@ -105,6 +111,9 @@ class LoopNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    name: str | None = None
+    """Human-readable label shown in the dashboard as the section header
+    for this loop's iterations. Falls back to ``id`` when absent."""
     kind: Literal["loop"]
     after: list[str] = Field(default_factory=list)
     runs_if: str | None = None

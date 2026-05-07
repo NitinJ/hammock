@@ -191,3 +191,53 @@ async def test_nested_loop_iterations_unroll(
     rows = resp.json()["nodes"]
     leaf_rows = [r for r in rows if r["node_id"] == "leaf"]
     assert [r["iter"] for r in leaf_rows] == [[0, 0], [0, 1], [1, 0], [1, 1]]
+
+
+@pytest.mark.asyncio
+async def test_node_name_surfaces_in_overview(
+    dashboard: DashboardHandle, fake_engine: FakeEngine
+) -> None:
+    """Workflow's optional ``name:`` per-node field comes through on
+    NodeListEntry; loop names come through on JobDetail.loop_names."""
+    workflow = {
+        "schema_version": 1,
+        "workflow": "T-named",
+        "variables": {
+            "bug_report": {"type": "bug-report"},
+            "bugs": {"type": "list[bug-report]"},
+        },
+        "nodes": [
+            {
+                "id": "named-loop",
+                "name": "Named loop section",
+                "kind": "loop",
+                "count": 1,
+                "body": [
+                    {
+                        "id": "named-body",
+                        "name": "Named body row",
+                        "kind": "artifact",
+                        "actor": "agent",
+                        "outputs": {"bug_report": "$bug_report"},
+                    }
+                ],
+                "outputs": {"bugs": "$named-loop.bug_report[*]"},
+            },
+            {
+                # No name → falls back to id on the frontend.
+                "id": "unnamed-node",
+                "kind": "artifact",
+                "actor": "agent",
+                "after": ["named-loop"],
+                "outputs": {"bug_report": "$bug_report"},
+            },
+        ],
+    }
+    fake_engine.start_job(workflow=workflow, request="x")
+
+    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
+    body = resp.json()
+    by_id = {n["node_id"]: n for n in body["nodes"]}
+    assert by_id["named-body"]["name"] == "Named body row"
+    assert by_id["unnamed-node"]["name"] is None
+    assert body["loop_names"] == {"named-loop": "Named loop section"}

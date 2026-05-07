@@ -45,10 +45,17 @@
               @click="selectNode(row.entry)"
             >
               <div class="flex items-center justify-between gap-2">
-                <span class="font-mono text-xs text-text-primary">{{ row.entry.node_id }}</span>
+                <span class="text-sm text-text-primary">{{
+                  row.entry.name ?? row.entry.node_id
+                }}</span>
                 <StateBadge :state="row.entry.state" />
               </div>
-              <div v-if="row.entry.actor || row.entry.kind" class="text-xs text-text-secondary">
+              <div
+                v-if="row.entry.name || row.entry.actor || row.entry.kind"
+                class="text-xs text-text-secondary"
+              >
+                <span v-if="row.entry.name" class="font-mono">{{ row.entry.node_id }}</span>
+                <span v-if="row.entry.name && (row.entry.actor || row.entry.kind)"> · </span>
                 {{ [row.entry.actor, row.entry.kind].filter(Boolean).join(" · ") }}
               </div>
             </li>
@@ -66,9 +73,15 @@
         <!-- HIL form for explicit pending nodes -->
         <div v-else-if="explicitHilForSelected" class="space-y-4">
           <div>
-            <h2 class="font-mono text-sm font-semibold text-text-primary">
-              {{ explicitHilForSelected.node_id }}
+            <h2 class="text-sm font-semibold text-text-primary">
+              {{ selectedNodeName }}
             </h2>
+            <div
+              v-if="selectedNodeName !== selectedNodeId"
+              class="font-mono text-xs text-text-secondary"
+            >
+              {{ explicitHilForSelected.node_id }}
+            </div>
             <p class="text-xs text-text-secondary">Awaiting human input.</p>
           </div>
           <div
@@ -99,12 +112,18 @@
         <!-- Default node detail -->
         <div v-else-if="nodeDetail.data.value" class="space-y-4">
           <div>
-            <h2 class="font-mono text-sm font-semibold text-text-primary">
-              {{ selectedNodeId }}
+            <h2 class="text-sm font-semibold text-text-primary">
+              {{ selectedNodeName }}
               <span v-if="iterParam.length > 0" class="text-text-secondary">
                 · iter [{{ iterParam.join(", ") }}]
               </span>
             </h2>
+            <div
+              v-if="selectedNodeName !== selectedNodeId"
+              class="font-mono text-xs text-text-secondary"
+            >
+              {{ selectedNodeId }}
+            </div>
             <div class="mt-1 flex items-center gap-3 text-xs">
               <StateBadge :state="nodeDetail.data.value.state" />
               <span class="text-text-secondary">
@@ -137,8 +156,11 @@
         <div v-else-if="nodeDetail.isPending.value" class="text-text-secondary">Loading…</div>
         <div v-else-if="isNodeNotStartedError" class="space-y-2">
           <div class="text-text-secondary">
-            <span class="font-mono text-sm text-text-primary">{{ selectedNodeId }}</span>
+            <span class="text-sm text-text-primary">{{ selectedNodeName }}</span>
             <span v-if="iterParam.length > 0"> · iter [{{ iterParam.join(", ") }}]</span>
+            <div v-if="selectedNodeName !== selectedNodeId" class="font-mono text-xs">
+              {{ selectedNodeId }}
+            </div>
           </div>
           <p class="text-text-secondary">
             Not started yet. The engine writes node state on first dispatch — once it reaches this
@@ -185,7 +207,18 @@ const iterParam = computed<number[]>(() => {
 
 const nodeDetail = useNodeDetail(jobSlug, selectedNodeId);
 
-const renderedRows = computed(() => buildRenderedRows(job.data.value?.nodes ?? []));
+const renderedRows = computed(() =>
+  buildRenderedRows(job.data.value?.nodes ?? [], job.data.value?.loop_names ?? {}),
+);
+
+/** Display name for the selected node — picks the name from any matching
+ *  node row (by node_id), or falls back to node_id when no name is set. */
+const selectedNodeName = computed(() => {
+  const id = selectedNodeId.value;
+  if (!id) return "";
+  const match = (job.data.value?.nodes ?? []).find((n) => n.node_id === id);
+  return match?.name ?? id;
+});
 
 function isSelected(entry: NodeListEntry): boolean {
   if (entry.node_id !== selectedNodeId.value) return false;

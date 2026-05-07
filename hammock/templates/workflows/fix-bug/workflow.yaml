@@ -50,6 +50,7 @@ variables:
 
 nodes:
   - id: write-bug-report
+    name: "Write bug report"
     kind: artifact
     actor: agent
     inputs:
@@ -59,17 +60,20 @@ nodes:
 
   # ----- design-spec block (until-of-until) -----
   - id: design-spec-loop
+    name: "Design spec — review cycle"
     kind: loop
     after: [write-bug-report]
     until: $design-spec-loop.design_spec_review_human[i]
     max_iterations: 1
     body:
       - id: design-spec-agent-loop
+        name: "Design spec — agent draft + review"
         kind: loop
         until: $design-spec-agent-loop.design_spec_review_agent[i]
         max_iterations: 1
         body:
           - id: write-design-spec
+            name: "Write design spec"
             kind: artifact
             actor: agent
             inputs:
@@ -77,6 +81,7 @@ nodes:
             outputs:
               design_spec: $design_spec
           - id: review-design-spec-agent
+            name: "Agent review of design spec"
             kind: artifact
             actor: agent
             inputs:
@@ -86,6 +91,7 @@ nodes:
         outputs:
           design_spec: $design-spec-agent-loop.design_spec[last]
       - id: review-design-spec-human
+        name: "Human review of design spec"
         kind: artifact
         actor: human
         inputs:
@@ -99,17 +105,20 @@ nodes:
 
   # ----- impl-spec block (mirrors design-spec) -----
   - id: impl-spec-loop
+    name: "Impl spec — review cycle"
     kind: loop
     after: [design-spec-loop]
     until: $impl-spec-loop.impl_spec_review_human[i]
     max_iterations: 1
     body:
       - id: impl-spec-agent-loop
+        name: "Impl spec — agent draft + review"
         kind: loop
         until: $impl-spec-agent-loop.impl_spec_review_agent[i]
         max_iterations: 1
         body:
           - id: write-impl-spec
+            name: "Write impl spec"
             kind: artifact
             actor: agent
             inputs:
@@ -118,6 +127,7 @@ nodes:
             outputs:
               impl_spec: $impl_spec
           - id: review-impl-spec-agent
+            name: "Agent review of impl spec"
             kind: artifact
             actor: agent
             inputs:
@@ -127,6 +137,7 @@ nodes:
         outputs:
           impl_spec: $impl-spec-agent-loop.impl_spec[last]
       - id: review-impl-spec-human
+        name: "Human review of impl spec"
         kind: artifact
         actor: human
         inputs:
@@ -140,17 +151,20 @@ nodes:
 
   # ----- impl-plan block (mirrors design-spec) -----
   - id: impl-plan-loop
+    name: "Impl plan — review cycle"
     kind: loop
     after: [impl-spec-loop]
     until: $impl-plan-loop.impl_plan_review_human[i]
     max_iterations: 1
     body:
       - id: impl-plan-agent-loop
+        name: "Impl plan — agent draft + review"
         kind: loop
         until: $impl-plan-agent-loop.impl_plan_review_agent[i]
         max_iterations: 1
         body:
           - id: write-impl-plan
+            name: "Write impl plan"
             kind: artifact
             actor: agent
             inputs:
@@ -158,6 +172,7 @@ nodes:
             outputs:
               impl_plan: $impl_plan
           - id: review-impl-plan-agent
+            name: "Agent review of impl plan"
             kind: artifact
             actor: agent
             inputs:
@@ -167,6 +182,7 @@ nodes:
         outputs:
           impl_plan: $impl-plan-agent-loop.impl_plan[last]
       - id: review-impl-plan-human
+        name: "Human review of impl plan"
         kind: artifact
         actor: human
         inputs:
@@ -180,18 +196,21 @@ nodes:
 
   # ----- Implement (count loop driven by impl_plan.count, with inner until) -----
   - id: implement-loop
+    name: "Implement — one iteration per plan step"
     kind: loop
     after: [impl-plan-loop]
     count: $impl-plan-loop.impl_plan[last].count
     substrate: per-iteration
     body:
       - id: pr-merged-loop
+        name: "PR merge cycle"
         kind: loop
         until: $pr-merged-loop.pr_review[i].verdict == 'merged'
         max_iterations: 2
         substrate: shared
         body:
           - id: implement
+            name: "Implement step"
             kind: code
             actor: agent
             inputs:
@@ -200,6 +219,7 @@ nodes:
             outputs:
               pr: $pr
           - id: pr-review-hil
+            name: "Merge PR"
             kind: artifact
             actor: human
             inputs:
@@ -217,6 +237,7 @@ nodes:
 
   # ----- Tests + fix (single agent node; optional pr if anything to fix) -----
   - id: tests-and-fix
+    name: "Run tests and fix"
     kind: code
     actor: agent
     after: [implement-loop]
@@ -227,6 +248,7 @@ nodes:
 
   # ----- Conditional HIL: only if tests-and-fix produced a PR -----
   - id: tests-pr-review-hil
+    name: "Merge tests-and-fix PR"
     kind: artifact
     actor: human
     after: [tests-and-fix]
@@ -244,6 +266,7 @@ nodes:
 
   # ----- Summary -----
   - id: write-summary
+    name: "Write summary"
     kind: artifact
     actor: agent
     after: [tests-and-fix, tests-pr-review-hil]

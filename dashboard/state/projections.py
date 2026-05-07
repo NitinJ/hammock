@@ -84,6 +84,11 @@ class NodeListEntry(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     node_id: str
+    name: str | None = None
+    """Workflow's optional ``name:`` field — human-readable label.
+    Frontend displays this in the node list and falls back to ``node_id``
+    when absent. Loop body rows use the body node's name; the parent
+    loop's name surfaces via ``JobDetail.loop_names``."""
     kind: Literal["artifact", "code"] | None = None
     actor: Literal["agent", "human", "engine"] | None = None
     state: NodeRunState
@@ -106,6 +111,12 @@ class JobDetail(BaseModel):
     updated_at: datetime
     repo_slug: str | None = None
     nodes: list[NodeListEntry] = Field(default_factory=list)
+    loop_names: dict[str, str] = Field(default_factory=dict)
+    """Loop ``id`` → ``name`` for every loop in the workflow. Loop nodes
+    are not emitted as rows; the frontend synthesises section headers
+    from ``NodeListEntry.loop_path`` + iter, and uses this map to label
+    those headers. Loops without a ``name:`` are absent here; the
+    frontend falls back to the loop_id."""
 
 
 class NodeDetail(BaseModel):
@@ -287,7 +298,27 @@ def job_detail(root: Path, job_slug: str) -> JobDetail | None:
         updated_at=cfg.updated_at,
         repo_slug=cfg.repo_slug,
         nodes=_list_nodes(root, job_slug, workflow),
+        loop_names=_collect_loop_names(workflow),
     )
+
+
+def _collect_loop_names(workflow: Workflow | None) -> dict[str, str]:
+    """Walk the DAG (including nested loop bodies) and collect every
+    LoopNode's ``id → name`` where ``name`` is set. Loops without a
+    name are absent so the frontend falls back to the loop_id."""
+    if workflow is None:
+        return {}
+    names: dict[str, str] = {}
+
+    def visit(nodes: list[Node]) -> None:
+        for n in nodes:
+            if isinstance(n, LoopNode):
+                if n.name:
+                    names[n.id] = n.name
+                visit(n.body)
+
+    visit(workflow.nodes)
+    return names
 
 
 def _try_load_workflow(workflow_path: str) -> Workflow | None:
@@ -462,6 +493,7 @@ def _build_node_entry(
 
     return NodeListEntry(
         node_id=node.id,
+        name=node.name,
         kind=node.kind,
         actor=node.actor,
         state=state,

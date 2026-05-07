@@ -12,7 +12,7 @@
 
       <li class="my-2 border-t border-border" />
 
-      <NavLink :to="{ name: 'hil-queue' }" icon="❓">
+      <NavLink :to="{ name: 'hil-queue' }" icon="?">
         HIL
         <span
           v-if="hilCount > 0"

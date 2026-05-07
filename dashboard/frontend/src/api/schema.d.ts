@@ -40,6 +40,9 @@ export interface JobListItem {
  *  enclosing loop. Loop nodes themselves are not emitted. */
 export interface NodeListEntry {
   node_id: string;
+  /** Human-readable label from the workflow's optional `name:` field.
+   *  When null, fall back to `node_id`. */
+  name: string | null;
   kind: NodeKind | null;
   actor: NodeActor | null;
   state: NodeRunState;
@@ -61,6 +64,10 @@ export interface JobDetail {
   updated_at: string;
   repo_slug: string | null;
   nodes: NodeListEntry[];
+  /** Loop `id → name` map for every loop with a `name:` set. Frontend
+   *  uses this to label section headers (loop nodes are not emitted as
+   *  rows). Loops without a name are absent; fall back to the loop_id. */
+  loop_names: Record<string, string>;
 }
 
 export interface NodeDetail {
