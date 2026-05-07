@@ -307,7 +307,7 @@ def test_assert_hil_answered_succeeds_when_envelope_present(
     pending_path.unlink()
     fake_engine_offline.complete_node(
         "review-spec-human",
-        ReviewVerdictValue(verdict="approved", summary="LGTM"),
+        ReviewVerdictValue(verdict="approved", summary="LGTM", document="## Review\n\nlgtm"),
     )
 
     value = fake_engine_offline.assert_hil_answered("review-spec-human")

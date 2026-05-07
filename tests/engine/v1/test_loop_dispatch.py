@@ -148,6 +148,7 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
                 {
                     "verdict": "approved",
                     "summary": f"iter-{iter_idx}",
+                    "document": f"## Review iter-{iter_idx}\n\nlgtm",
                 }
             )
         )
@@ -207,7 +208,15 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
             job_slug, "vlist", "verdict", iter_idx, root=tmp_path
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({"verdict": "approved", "summary": f"iter-{iter_idx}"}))
+        target.write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": f"iter-{iter_idx}",
+                    "document": f"## Review iter-{iter_idx}\n\nlgtm",
+                }
+            )
+        )
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
     result = dispatch_loop(
@@ -364,6 +373,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
                 {
                     "verdict": "approved",
                     "summary": f"i{idx}",
+                    "document": f"## Review i{idx}\n\nlgtm",
                 }
             )
         )
@@ -413,6 +423,7 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
                 {
                     "verdict": "approved",
                     "summary": f"i-{idx}",
+                    "document": f"## Review i-{idx}\n\nlgtm",
                 }
             )
         )
@@ -510,6 +521,7 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
                 {
                     "verdict": "approved",
                     "summary": f"call-{invocation_count['n']}",
+                    "document": f"## Review call-{invocation_count['n']}\n\nlgtm",
                 }
             )
         )

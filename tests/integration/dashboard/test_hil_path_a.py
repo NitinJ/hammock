@@ -100,7 +100,11 @@ async def test_review_verdict_round_trip(
 
     answer = {
         "var_name": "review",
-        "value": {"verdict": "approved", "summary": "lgtm"},
+        "value": {
+            "verdict": "approved",
+            "summary": "lgtm",
+            "document": "## Review\n\nlgtm",
+        },
     }
     resp = await dashboard.client.post(
         f"/api/hil/{fake_engine.job_slug}/review-spec-human/answer", json=answer
@@ -249,7 +253,7 @@ nodes:
 
     answer = {
         "var_name": "review",
-        "value": {"verdict": "approved", "summary": "ok"},
+        "value": {"verdict": "approved", "summary": "ok", "document": "## Review\n\nok"},
     }
     resp = await dashboard.client.post(
         f"/api/hil/{fake_engine.job_slug}/review-spec-human/answer", json=answer
