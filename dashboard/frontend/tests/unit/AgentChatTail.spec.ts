@@ -5,6 +5,7 @@
  *  - assistant tool_use → chip
  *  - user tool_result → collapsed details
  *  - result → footer line with turns + cost
+ *  - scroll preservation when user has scrolled up (Stage D)
  */
 import { mount, flushPromises } from "@vue/test-utils";
 import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
@@ -17,7 +18,7 @@ interface ChatBody {
   has_chat: boolean;
 }
 
-function mountWithFetch(body: ChatBody) {
+function mountWithFetch(body: ChatBody, qc?: QueryClient) {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify(body), {
       status: 200,
@@ -25,11 +26,11 @@ function mountWithFetch(body: ChatBody) {
     }),
   );
   vi.stubGlobal("fetch", fetchMock);
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = qc ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(AgentChatTail, {
     props: { jobSlug: "j", nodeId: "n", attempt: 1 },
     global: {
-      plugins: [[VueQueryPlugin, { queryClient: qc }]],
+      plugins: [[VueQueryPlugin, { queryClient: client }]],
     },
   });
 }
@@ -128,6 +129,99 @@ describe("AgentChatTail", () => {
     expect((details.element as HTMLDetailsElement).open).toBe(false);
     expect(details.find("summary").text()).toContain("tool result");
     expect(details.find("summary").text()).toContain("17"); // length of content
+  });
+
+  it("auto-scrolls to bottom when user is already at the bottom", async () => {
+    const initialTurns = [
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "First" }] },
+      },
+    ];
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = mountWithFetch({ turns: initialTurns, attempt: 1, has_chat: true }, qc);
+    await flushPromises();
+    await flushPromises();
+
+    const scrollerEl = wrapper.find("[data-testid='agent-chat-tail'] > div.overflow-auto")
+      .element as HTMLElement;
+    // Pin layout so the user is "at the bottom" (distance 0 ≤ 50).
+    Object.defineProperty(scrollerEl, "scrollHeight", { configurable: true, value: 200 });
+    Object.defineProperty(scrollerEl, "clientHeight", { configurable: true, value: 100 });
+    scrollerEl.scrollTop = 100;
+
+    const queryKey = ["jobs", "j", "nodes", "n", "iter", "top", "chat", 1];
+    qc.setQueryData(queryKey, {
+      turns: [
+        ...initialTurns,
+        {
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "text", text: "Second" }] },
+        },
+      ],
+      attempt: 1,
+      has_chat: true,
+    });
+    await flushPromises();
+    await flushPromises();
+
+    // The new turn rendered and the watcher pulled the scroller back
+    // to the bottom — scrollTop ends at scrollHeight (auto-scroll).
+    expect(wrapper.html()).toContain("Second");
+    expect(scrollerEl.scrollTop).toBe(scrollerEl.scrollHeight);
+  });
+
+  it("preserves scroll position when user is scrolled up and new turn arrives", async () => {
+    // Initial chat: a few text turns the user is reading from earlier.
+    const initialTurns = [
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "First" }] },
+      },
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "Second" }] },
+      },
+    ];
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = mountWithFetch({ turns: initialTurns, attempt: 1, has_chat: true }, qc);
+    await flushPromises();
+    await flushPromises();
+
+    // Find the scroll container and pin its layout: 200px content,
+    // 100px viewport, scrolled to the very top (200 - 100 - 0 = 200px
+    // from bottom, far above the 50px auto-scroll threshold).
+    const scrollerEl = wrapper.find("[data-testid='agent-chat-tail'] > div.overflow-auto")
+      .element as HTMLElement;
+    expect(scrollerEl).toBeTruthy();
+    Object.defineProperty(scrollerEl, "scrollHeight", { configurable: true, value: 200 });
+    Object.defineProperty(scrollerEl, "clientHeight", { configurable: true, value: 100 });
+    scrollerEl.scrollTop = 0;
+
+    // A new turn lands; the SSE invalidation path would refetch the
+    // chat endpoint and replace the cache. Simulate that by writing
+    // directly into the matching query key.
+    const queryKey = ["jobs", "j", "nodes", "n", "iter", "top", "chat", 1];
+    qc.setQueryData(queryKey, {
+      turns: [
+        ...initialTurns,
+        {
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "text", text: "Third" }] },
+        },
+      ],
+      attempt: 1,
+      has_chat: true,
+    });
+    await flushPromises();
+    await flushPromises();
+
+    // The new turn renders…
+    const html = wrapper.html();
+    expect(html).toContain("Third");
+    // …but the user's scrollTop is preserved (NOT yanked to the
+    // bottom). 0 was set above; auto-scroll would have set it to 200.
+    expect(scrollerEl.scrollTop).toBe(0);
   });
 
   it("renders result footer with turns and cost", async () => {

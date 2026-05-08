@@ -118,13 +118,28 @@ const scrollerRef = ref<HTMLElement | null>(null);
  *  pre-compute on data change so v-html stays synchronous. */
 const renderedText = ref<Record<string, string>>({});
 
+/** Pixel slack for "user is at the bottom". Below this threshold from
+ *  the bottom we auto-scroll on new turns; above it we leave the
+ *  scroll position alone so the user can read older turns without
+ *  the live update yanking them down. */
+const AUTO_SCROLL_THRESHOLD_PX = 50;
+
+let priorTurnCount = 0;
+
 watch(
   () => chat.data.value?.turns,
   async (turns) => {
     if (!turns) {
       renderedText.value = {};
+      priorTurnCount = 0;
       return;
     }
+
+    // Capture scroll intent BEFORE we do any async markdown work so
+    // we read the user's actual viewport, not a state we mutated.
+    const isInitialLoad = priorTurnCount === 0;
+    const wasAtBottom = isScrollerAtBottom();
+
     const next: Record<string, string> = {};
     for (let i = 0; i < turns.length; i++) {
       const t = turns[i];
@@ -140,14 +155,25 @@ watch(
       }
     }
     renderedText.value = next;
-    // Scroll to bottom on initial render and on new content.
+    priorTurnCount = turns.length;
+
     await nextTick();
-    if (scrollerRef.value) {
+    // Only auto-scroll on initial render or when the user was already
+    // at the bottom; otherwise preserve scroll so SSE pokes don't yank
+    // the viewport while the user is reading earlier turns.
+    if ((isInitialLoad || wasAtBottom) && scrollerRef.value) {
       scrollerRef.value.scrollTop = scrollerRef.value.scrollHeight;
     }
   },
   { immediate: true },
 );
+
+function isScrollerAtBottom(): boolean {
+  const el = scrollerRef.value;
+  if (!el) return true;
+  const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+  return distanceFromBottom <= AUTO_SCROLL_THRESHOLD_PX;
+}
 
 interface ContentBlock {
   type: string;

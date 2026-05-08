@@ -263,11 +263,18 @@ export interface LiveSseEvent {
     | "pending"
     | "ask"
     | "events_jsonl"
+    | "chat_jsonl"
     | "unknown"
     | string;
   job_slug?: string;
   node_id?: string;
   var_name?: string;
+  /** Full iter_path tuple — present whenever the classified path
+   *  carries one (node state, variable envelope, pending marker,
+   *  chat.jsonl). Empty array = top-level execution. */
+  iter?: number[];
+  /** Attempt number — present only on `chat_jsonl` events. */
+  attempt?: number;
   loop_id?: string;
   iteration?: number;
   project_slug?: string;
