@@ -97,40 +97,68 @@ async def get_job(request: Request, job_slug: str) -> JobDetail:
     return detail
 
 
-@router.get("/{job_slug}/nodes/{node_id}/chat", response_model=AgentChatResponse)
-async def get_node_chat(
+@router.get(
+    "/{job_slug}/nodes/{node_id}/iter/{iter_token}/chat",
+    response_model=AgentChatResponse,
+)
+async def get_node_chat_at_iter(
     request: Request,
     job_slug: str,
     node_id: str,
+    iter_token: str,
     attempt: Annotated[int, Query(ge=1, description="attempt number (default 1)")] = 1,
 ) -> AgentChatResponse:
-    """Per-node chat transcript: parse the agent's stream-json output.
+    """Per-(node, iter_path, attempt) chat transcript.
+
+    With v2 keying, every (node_id, iter_path) execution has its own
+    chat.jsonl under ``nodes/<id>/<iter_token>/runs/<attempt>/``.
+    Top-level executions use ``iter_token='top'``; loop body executions
+    use ``i<...>``. Bad token -> 400.
 
     Always 200; the file's absence is signalled via ``has_chat=False``
-    in the response body so the frontend distinguishes 'no transcript
-    yet' from 'job/node not found'.
+    so the frontend distinguishes 'no transcript yet' from 'job/node
+    not found'.
     """
     settings = request.app.state.settings  # type: ignore[attr-defined]
-    turns = read_agent_chat(settings.root, job_slug, node_id, attempt=attempt)
+    try:
+        iter_path = v1_paths.parse_iter_token(iter_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"bad iter_token: {exc}") from exc
+    turns = read_agent_chat(settings.root, job_slug, node_id, iter_path, attempt=attempt)
     has_chat = (
-        v1_paths.node_attempt_dir(job_slug, node_id, attempt, root=settings.root) / "chat.jsonl"
+        v1_paths.node_attempt_dir(job_slug, node_id, attempt, iter_path, root=settings.root)
+        / "chat.jsonl"
     ).is_file()
     return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
 
 
 @router.get("/{job_slug}/nodes/{node_id}", response_model=NodeDetail)
-async def get_node(request: Request, job_slug: str, node_id: str) -> NodeDetail:
-    """Per-node drilldown: state + envelopes produced by this node id.
+async def get_node(
+    request: Request,
+    job_slug: str,
+    node_id: str,
+    iter: Annotated[
+        str,
+        Query(description="iter_token (e.g. 'top', 'i0', 'i0_1'); default 'top'"),
+    ] = "top",
+) -> NodeDetail:
+    """Per-(node, iter_path) drilldown.
 
-    Note: for loop body nodes, ``state.json`` reflects the latest
-    iteration only; the per-iteration state is reconstructed from
-    envelope existence in the parent loop's iteration row of
-    ``GET /api/jobs/{slug}``."""
+    With v2 keying every node-execution has its own state.json under
+    ``nodes/<id>/<iter_token>/state.json`` and outputs at
+    ``variables/<var>__<iter_token>.json``. The optional ``?iter=<token>``
+    query parameter selects the iteration; default ``top`` means the
+    top-level execution."""
     settings = request.app.state.settings  # type: ignore[attr-defined]
-    detail = projections.node_detail(settings.root, job_slug, node_id)
+    try:
+        iter_path = v1_paths.parse_iter_token(iter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"bad iter_token: {exc}") from exc
+    detail = projections.node_detail(settings.root, job_slug, node_id, iter_path)
     if detail is None:
         raise HTTPException(
-            status_code=404, detail=f"no node {node_id!r} on disk for job {job_slug!r}"
+            status_code=404,
+            detail=(f"no node {node_id!r} (iter={iter!r}) on disk for job {job_slug!r}"),
         )
     return detail
 

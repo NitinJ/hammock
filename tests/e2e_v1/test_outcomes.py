@@ -86,7 +86,7 @@ def _seed_node_run(
     state: NodeRunState,
     attempt: int = 1,
 ) -> None:
-    paths.node_dir(job_slug, node_id, root=root).mkdir(parents=True, exist_ok=True)
+    paths.node_iter_dir(job_slug, node_id, root=root).mkdir(parents=True, exist_ok=True)
     run = make_node_run(node_id)
     run = run.model_copy(
         update={

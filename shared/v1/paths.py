@@ -6,20 +6,69 @@ helpers; nothing should construct paths by string concatenation.
 Layout (under ``<root>``):
 
     jobs/<job_slug>/
-        job.json                       JobConfig
-        events.jsonl                   append-only event log
-        variables/<var_name>.json      typed variable envelopes
-        nodes/<node_id>/state.json     NodeRun
-        nodes/<node_id>/runs/<n>/      per-attempt agent artefacts
+        job.json                                JobConfig
+        events.jsonl                            append-only event log
+        variables/<var>__<iter_token>.json      typed variable envelopes
+        nodes/<node_id>/<iter_token>/state.json NodeRun (per-iter)
+        nodes/<node_id>/<iter_token>/runs/<n>/  per-attempt agent artefacts
             prompt.md
             chat.jsonl
             stderr.log
-            result.json
+            output.json                         agent's raw value JSON
+        pending/<node_id>__<iter_token>.json    HIL markers
+
+The ``iter_token`` axis is universal: top-level executions use the
+literal string ``"top"`` so every path obeys one rule. Loop-body
+executions use ``i<i0>`` (single nesting) or ``i<i0>_<i1>_...``
+(deeper nesting), one int per enclosing loop, outermost first.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+
+_TOP_TOKEN = "top"
+
+
+def iter_token(iter_path: tuple[int, ...]) -> str:
+    """Stringify *iter_path* into a flat, sortable, ASCII-only token.
+
+    - ``()``           → ``"top"``
+    - ``(0,)``         → ``"i0"``
+    - ``(0, 1)``       → ``"i0_1"``
+    - ``(2, 0, 4)``    → ``"i2_0_4"``
+
+    Negative indices are rejected — iter_path components are loop
+    iteration indices, which are always >= 0.
+    """
+    for i in iter_path:
+        if i < 0:
+            raise ValueError(f"iter_path component must be >= 0, got {i!r} in {iter_path!r}")
+    if not iter_path:
+        return _TOP_TOKEN
+    return "i" + "_".join(str(i) for i in iter_path)
+
+
+def parse_iter_token(token: str) -> tuple[int, ...]:
+    """Inverse of :func:`iter_token`. Round-trips both directions.
+
+    Raises :class:`ValueError` on malformed tokens (no leading ``i``,
+    non-digit components, empty body after ``i``).
+    """
+    if token == _TOP_TOKEN:
+        return ()
+    if not token.startswith("i"):
+        raise ValueError(f"iter token must start with 'i' or be 'top', got {token!r}")
+    body = token[1:]
+    if not body:
+        raise ValueError(f"iter token has empty body: {token!r}")
+    parts = body.split("_")
+    out: list[int] = []
+    for p in parts:
+        if not p.isdigit():
+            raise ValueError(f"iter token component {p!r} is not a non-negative integer")
+        out.append(int(p))
+    return tuple(out)
 
 
 def jobs_dir(*, root: Path) -> Path:
@@ -42,8 +91,19 @@ def variables_dir(job_slug: str, *, root: Path) -> Path:
     return job_dir(job_slug, root=root) / "variables"
 
 
-def variable_envelope_path(job_slug: str, var_name: str, *, root: Path) -> Path:
-    return variables_dir(job_slug, root=root) / f"{var_name}.json"
+def variable_envelope_path(
+    job_slug: str,
+    var_name: str,
+    iter_path: tuple[int, ...] = (),
+    *,
+    root: Path,
+) -> Path:
+    """Variable envelope path keyed by full iter_path.
+
+    Top-level: ``<job_dir>/variables/<var>__top.json``
+    Loop body: ``<job_dir>/variables/<var>__i<...>.json``
+    """
+    return variables_dir(job_slug, root=root) / f"{var_name}__{iter_token(iter_path)}.json"
 
 
 def nodes_dir(job_slug: str, *, root: Path) -> Path:
@@ -51,19 +111,74 @@ def nodes_dir(job_slug: str, *, root: Path) -> Path:
 
 
 def node_dir(job_slug: str, node_id: str, *, root: Path) -> Path:
+    """Container for every iteration of *node_id* under this job."""
     return nodes_dir(job_slug, root=root) / node_id
 
 
-def node_state_path(job_slug: str, node_id: str, *, root: Path) -> Path:
-    return node_dir(job_slug, node_id, root=root) / "state.json"
+def node_iter_dir(
+    job_slug: str,
+    node_id: str,
+    iter_path: tuple[int, ...] = (),
+    *,
+    root: Path,
+) -> Path:
+    """Per-(node, iter_path) container. Holds ``state.json`` and ``runs/``."""
+    return node_dir(job_slug, node_id, root=root) / iter_token(iter_path)
 
 
-def node_runs_dir(job_slug: str, node_id: str, *, root: Path) -> Path:
-    return node_dir(job_slug, node_id, root=root) / "runs"
+def node_state_path(
+    job_slug: str,
+    node_id: str,
+    iter_path: tuple[int, ...] = (),
+    *,
+    root: Path,
+) -> Path:
+    return node_iter_dir(job_slug, node_id, iter_path, root=root) / "state.json"
 
 
-def node_attempt_dir(job_slug: str, node_id: str, attempt: int, *, root: Path) -> Path:
-    return node_runs_dir(job_slug, node_id, root=root) / str(attempt)
+def node_runs_dir(
+    job_slug: str,
+    node_id: str,
+    iter_path: tuple[int, ...] = (),
+    *,
+    root: Path,
+) -> Path:
+    return node_iter_dir(job_slug, node_id, iter_path, root=root) / "runs"
+
+
+def node_attempt_dir(
+    job_slug: str,
+    node_id: str,
+    attempt: int,
+    iter_path: tuple[int, ...] = (),
+    *,
+    root: Path,
+) -> Path:
+    """Per-attempt directory under a (node, iter_path).
+
+    Attempts are numbered per (node_id, iter_path) — each fresh iter
+    starts at attempt 1.
+    """
+    return node_runs_dir(job_slug, node_id, iter_path, root=root) / str(attempt)
+
+
+def pending_dir(job_slug: str, *, root: Path) -> Path:
+    return job_dir(job_slug, root=root) / "pending"
+
+
+def pending_marker_path(
+    job_slug: str,
+    node_id: str,
+    iter_path: tuple[int, ...] = (),
+    *,
+    root: Path,
+) -> Path:
+    """HIL pending marker path keyed by (node_id, iter_path).
+
+    Filename: ``<node_id>__<iter_token>.json``. Top-level HIL gates use
+    the ``top`` token; loop body gates use ``i<...>``.
+    """
+    return pending_dir(job_slug, root=root) / f"{node_id}__{iter_token(iter_path)}.json"
 
 
 def ensure_job_layout(job_slug: str, *, root: Path) -> Path:
@@ -104,31 +219,3 @@ def job_branch_name(job_slug: str) -> str:
 
 def stage_branch_name(job_slug: str, node_id: str) -> str:
     return f"hammock/stages/{job_slug}/{node_id}"
-
-
-# ---------------------------------------------------------------------------
-# Loop variable paths (T4+) — indexed by iteration
-# ---------------------------------------------------------------------------
-
-
-def _safe_loop_id(loop_id: str) -> str:
-    """Replace path-unsafe characters in a loop id."""
-    return loop_id.replace("/", "_").replace(" ", "_")
-
-
-def loop_variable_envelope_path(
-    job_slug: str,
-    loop_id: str,
-    var_name: str,
-    iteration: int,
-    *,
-    root: Path,
-) -> Path:
-    """On-disk path for a body-produced variable inside a loop.
-
-    Layout (flat, operator-friendly per design-patch §1.3):
-    ``<job_dir>/variables/loop_<loop-id>_<var>_<i>.json``"""
-    return (
-        variables_dir(job_slug, root=root)
-        / f"loop_{_safe_loop_id(loop_id)}_{var_name}_{iteration}.json"
-    )

@@ -33,21 +33,24 @@ def _seed_request(*, root: Path, job_slug: str, text: str = "Fix the bug") -> No
 def _make_writer_fake(
     payloads: dict[str, dict],
 ) -> Callable[[str, Path], subprocess.CompletedProcess[str]]:
-    """Build a fake claude_runner that writes JSON payloads keyed by
-    variable name into the job's variables/ dir, mimicking what a real
-    agent would do for an artifact node."""
+    """Build a fake claude_runner that writes the agent's raw output.json
+    (per v2's path split: agent's value-JSON lives under the per-attempt
+    dir, distinct from the engine's wrapped envelope path).
+
+    The fake supports a single output for simplicity — most tests have
+    one. Multi-output nodes that need different values per output drive
+    custom runners."""
 
     def fake(
         prompt: str, attempt_dir: Path, cwd: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
-        # job_dir = attempt_dir.parent.parent.parent.parent
-        # path is jobs/<slug>/nodes/<id>/runs/<n>
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
-        for var_name, payload in payloads.items():
-            (variables_dir / f"{var_name}.json").write_text(json.dumps(payload))
-        # Touch stdout/stderr so the dispatcher can verify they exist.
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        # Engine reads attempt_dir / "output.json" once after claude
+        # exits; for nodes with multiple outputs the engine still reads
+        # the same file per slot, so a single payload is sufficient.
+        if payloads:
+            payload = next(iter(payloads.values()))
+            (attempt_dir / "output.json").write_text(json.dumps(payload))
         (attempt_dir / "chat.jsonl").write_text("(fake) agent succeeded\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(
@@ -185,9 +188,8 @@ def test_dispatch_fails_on_invalid_json_output(tmp_path: Path) -> None:
     def broken(
         prompt: str, attempt_dir: Path, cwd: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
-        job_dir = attempt_dir.parents[3]
-        (job_dir / "variables").mkdir(parents=True, exist_ok=True)
-        (job_dir / "variables" / "bug_report.json").write_text("{ broken")
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "output.json").write_text("{ broken")
         (attempt_dir / "chat.jsonl").write_text("ok\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
@@ -321,11 +323,9 @@ def test_dispatch_passes_repo_dir_as_cwd_to_runner(tmp_path: Path) -> None:
 
     def fake(prompt: str, attempt_dir: Path, cwd: Path | None) -> subprocess.CompletedProcess[str]:
         captured["cwd"] = cwd
-        # Still need to write the expected output for produce() to succeed.
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
-        (variables_dir / "bug_report.json").write_text(
+        # v2: agent writes raw value-JSON to attempt_dir / output.json.
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "output.json").write_text(
             json.dumps({"summary": "x", "document": "## Bug\n\n."})
         )
         (attempt_dir / "chat.jsonl").write_text("(fake) ok\n")
@@ -356,10 +356,8 @@ def test_dispatch_passes_cwd_none_when_no_repo(tmp_path: Path) -> None:
 
     def fake(prompt: str, attempt_dir: Path, cwd: Path | None) -> subprocess.CompletedProcess[str]:
         captured["cwd"] = cwd
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
-        (variables_dir / "bug_report.json").write_text(
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "output.json").write_text(
             json.dumps({"summary": "x", "document": "## Bug\n\n."})
         )
         (attempt_dir / "chat.jsonl").write_text("(fake) ok\n")

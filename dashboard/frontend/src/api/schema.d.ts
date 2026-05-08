@@ -80,11 +80,11 @@ export interface NodeDetail {
   outputs: Record<string, EnvelopePayload>;
 }
 
-/** Response from `GET /api/jobs/{slug}/nodes/{id}/chat`. `turns` is the
- *  raw stream-json output emitted by claude (`type: system|assistant|
- *  user|result`). `has_chat=false` means no `chat.jsonl` on disk — old
- *  jobs and not-yet-run nodes both surface this way; the frontend
- *  renders "no transcript" in either case. */
+/** Response from `GET /api/jobs/{slug}/nodes/{id}/iter/{iter_token}/chat`.
+ *  `turns` is the raw stream-json output emitted by claude (`type:
+ *  system|assistant|user|result`). `has_chat=false` means no
+ *  `chat.jsonl` on disk — not-yet-run nodes surface this way; the
+ *  frontend renders "no transcript" in that case. */
 export interface AgentChatResponse {
   turns: Record<string, unknown>[];
   attempt: number;
@@ -263,11 +263,18 @@ export interface LiveSseEvent {
     | "pending"
     | "ask"
     | "events_jsonl"
+    | "chat_jsonl"
     | "unknown"
     | string;
   job_slug?: string;
   node_id?: string;
   var_name?: string;
+  /** Full iter_path tuple — present whenever the classified path
+   *  carries one (node state, variable envelope, pending marker,
+   *  chat.jsonl). Empty array = top-level execution. */
+  iter?: number[];
+  /** Attempt number — present only on `chat_jsonl` events. */
+  attempt?: number;
   loop_id?: string;
   iteration?: number;
   project_slug?: string;

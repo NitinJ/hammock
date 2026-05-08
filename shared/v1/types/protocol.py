@@ -79,8 +79,16 @@ class NodeContext(Protocol):
     from the dict (not present-with-None)."""
 
     def expected_path(self) -> Path:
-        """Where engine stores files for this variable. Engine owns the
-        layout; types are path-agnostic except via this method."""
+        """Where engine stores the durable envelope for this variable.
+        Engine owns the layout; types are path-agnostic except via this
+        method. v2 keying: ``variables/<var>__<iter_token>.json``."""
+        ...
+
+    def attempt_output_path(self) -> Path:
+        """The agent's raw value-JSON write target for this attempt:
+        ``nodes/<id>/<iter_token>/runs/<n>/output.json``. Distinct from
+        ``expected_path()`` so an empty-output failure mode can't be
+        confused with a stale envelope from a prior run."""
         ...
 
 
@@ -96,9 +104,13 @@ class PromptContext(Protocol):
 
     def expected_path(self) -> Path:
         """Where the engine will look for this variable's value on disk.
-        ``render_for_producer`` uses this to tell the agent the exact
-        path to write to — kept in sync with ``NodeContext.expected_path``
-        so prompt and produce agree."""
+        Kept in sync with ``NodeContext.expected_path`` so prompt and
+        produce agree."""
+        ...
+
+    def attempt_output_path(self) -> Path:
+        """The agent's raw value-JSON write target. ``render_for_producer``
+        uses this to tell the agent exactly where to write."""
         ...
 
 

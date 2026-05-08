@@ -18,8 +18,9 @@ from __future__ import annotations
 import logging
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from engine.v1.prompt import OutputSlot, build_prompt, collect_output_slots
 from engine.v1.resolver import resolve_node_inputs
@@ -39,28 +40,33 @@ class _NodeContext:
     type's `produce` needs for an artifact node — no worktree, no branch,
     no repo helpers (those are `code` kind concerns).
 
-    When the node runs inside a loop, ``loop_id`` and ``iteration`` are
-    set; ``expected_path`` then resolves to the loop-indexed envelope
-    location instead of the plain one."""
+    ``iter_path`` keys this execution: empty tuple = top-level, otherwise
+    one int per enclosing loop (outermost first). Both
+    ``expected_path`` (the envelope target) and ``attempt_output_path``
+    (the agent's raw output.json) use the same iter token derived from
+    this tuple."""
 
     var_name: str
     job_dir: Path
-    loop_id: str | None = None
-    iteration: int | None = None
+    iter_path: tuple[int, ...] = ()
+    attempt_dir: Path | None = None
+    inputs: dict[str, Any] = field(default_factory=dict)
 
     def expected_path(self) -> Path:
-        if self.loop_id is not None and self.iteration is not None:
-            from shared.v1 import paths as _paths
+        slug = self.job_dir.name
+        root = self.job_dir.parent.parent
+        return paths.variable_envelope_path(slug, self.var_name, self.iter_path, root=root)
 
-            # Carry the job_dir's parent layout into the loop helper.
-            # job_dir = <root>/jobs/<slug>; we recompute via _paths so
-            # the layout stays in one place.
-            slug = self.job_dir.name
-            root = self.job_dir.parent.parent
-            return _paths.loop_variable_envelope_path(
-                slug, self.loop_id, self.var_name, self.iteration, root=root
+    def attempt_output_path(self) -> Path:
+        """Per-attempt raw output.json the agent writes. Distinct from the
+        envelope path so a missing output can't be confused with a stale
+        envelope."""
+        if self.attempt_dir is None:
+            raise RuntimeError(
+                "attempt_output_path requires attempt_dir on the context — "
+                "the dispatcher must populate it before invoking produce"
             )
-        return self.job_dir / "variables" / f"{self.var_name}.json"
+        return self.attempt_dir / "output.json"
 
 
 @dataclass
@@ -127,14 +133,12 @@ def dispatch_artifact_agent(
     claude_runner: ClaudeRunner | None = None,
     workflow_dir: Path | None = None,
     repo_dir: Path | None = None,
-    loop_id: str | None = None,
-    iteration: int | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> DispatchResult:
     """Run a single artifact + agent node end-to-end.
 
-    When the node runs inside a loop, pass ``loop_id`` and ``iteration``
-    so per-output produce + prompt rendering use the loop-indexed
-    envelope paths.
+    ``iter_path`` keys this execution. Empty tuple = top-level node;
+    otherwise one int per enclosing loop, outermost first.
 
     ``repo_dir`` is the project's repo clone at ``<job_dir>/repo``. When
     set, the spawned claude process runs with cwd there — Stage 3's
@@ -144,7 +148,7 @@ def dispatch_artifact_agent(
     runner = claude_runner or _default_claude_runner
 
     job_dir = paths.job_dir(job_slug, root=root)
-    attempt_dir = paths.node_attempt_dir(job_slug, node.id, attempt, root=root)
+    attempt_dir = paths.node_attempt_dir(job_slug, node.id, attempt, iter_path, root=root)
     attempt_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Resolve inputs.
@@ -153,8 +157,7 @@ def dispatch_artifact_agent(
         workflow=workflow,
         job_slug=job_slug,
         root=root,
-        loop_id=loop_id,
-        iteration=iteration,
+        iter_path=iter_path,
     )
 
     # 2. Build prompt.
@@ -164,8 +167,8 @@ def dispatch_artifact_agent(
         inputs=resolved,
         job_dir=job_dir,
         workflow_dir=workflow_dir,
-        loop_id=loop_id,
-        iteration=iteration,
+        attempt_dir=attempt_dir,
+        iter_path=iter_path,
     )
     atomic_write_text(attempt_dir / "prompt.md", prompt)
 
@@ -192,8 +195,8 @@ def dispatch_artifact_agent(
             node_id=node.id,
             job_slug=job_slug,
             root=root,
-            loop_id=loop_id,
-            iteration=iteration,
+            attempt_dir=attempt_dir,
+            iter_path=iter_path,
         )
     except VariableTypeError as exc:
         return DispatchResult(
@@ -211,8 +214,8 @@ def _produce_outputs(
     node_id: str,
     job_slug: str,
     root: Path,
-    loop_id: str | None = None,
-    iteration: int | None = None,
+    attempt_dir: Path,
+    iter_path: tuple[int, ...],
 ) -> None:
     """Call each output type's `produce`, write envelopes to disk.
 
@@ -220,8 +223,10 @@ def _produce_outputs(
     silently skipped. Required outputs that are absent raise
     `VariableTypeError` from the type's own check, which propagates up.
 
-    When invoked inside a loop body, ``loop_id`` + ``iteration`` route
-    envelope writes to the indexed path layout (``loop_<id>_<var>_<i>.json``).
+    The type's ``produce`` reads the agent's raw value-JSON from
+    ``ctx.attempt_output_path()`` and validates it. The dispatcher (this
+    function) is responsible for wrapping the validated value in an
+    Envelope and writing it to the iter-keyed variable path.
     """
     job_dir = paths.job_dir(job_slug, root=root)
     paths.variables_dir(job_slug, root=root).mkdir(parents=True, exist_ok=True)
@@ -231,8 +236,8 @@ def _produce_outputs(
         ctx = _NodeContext(
             var_name=slot.var_name,
             job_dir=job_dir,
-            loop_id=loop_id,
-            iteration=iteration,
+            iter_path=iter_path,
+            attempt_dir=attempt_dir,
         )
         # Optional output: attempt produce but tolerate "not produced".
         if slot.optional:
@@ -257,10 +262,5 @@ def _produce_outputs(
             producer_node=node_id,
             value_payload=value.model_dump(mode="json"),
         )
-        if loop_id is not None and iteration is not None:
-            target = paths.loop_variable_envelope_path(
-                job_slug, loop_id, slot.var_name, iteration, root=root
-            )
-        else:
-            target = paths.variable_envelope_path(job_slug, slot.var_name, root=root)
+        target = paths.variable_envelope_path(job_slug, slot.var_name, iter_path, root=root)
         atomic_write_text(target, env.model_dump_json())

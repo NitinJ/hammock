@@ -111,10 +111,8 @@ async def test_review_verdict_round_trip(
     )
     assert resp.status_code == 200, resp.text
 
-    pending = (
-        v1_paths.job_dir(fake_engine.job_slug, root=fake_engine.root)
-        / "pending"
-        / "review-spec-human.json"
+    pending = v1_paths.pending_marker_path(
+        fake_engine.job_slug, "review-spec-human", root=fake_engine.root
     )
     assert not pending.exists()
 
@@ -155,10 +153,8 @@ async def test_post_invalid_payload_is_rejected_pending_remains(
         json={"var_name": "review", "value": {"verdict": "approved"}},
     )
     assert resp.status_code == 400
-    pending = (
-        v1_paths.job_dir(fake_engine.job_slug, root=fake_engine.root)
-        / "pending"
-        / "review-spec-human.json"
+    pending = v1_paths.pending_marker_path(
+        fake_engine.job_slug, "review-spec-human", root=fake_engine.root
     )
     assert pending.exists()
 
@@ -260,9 +256,9 @@ nodes:
     )
     assert resp.status_code == 200, resp.text
 
-    # Loop-indexed envelope path lands on disk.
-    env_path = v1_paths.loop_variable_envelope_path(
-        fake_engine.job_slug, "review-loop", "review", 0, root=fake_engine.root
+    # Loop-body envelope path (iter-keyed) lands on disk.
+    env_path = v1_paths.variable_envelope_path(
+        fake_engine.job_slug, "review", (0,), root=fake_engine.root
     )
     assert env_path.is_file()
     env = json.loads(env_path.read_text())

@@ -105,21 +105,23 @@ def assert_all_declared_outputs_produced(root: Path, job_slug: str, workflow: Wo
 def assert_envelopes_well_formed(root: Path, job_slug: str, workflow: Workflow) -> None:
     """Every persisted variable envelope (plain or loop-indexed) is
     JSON-valid, has the right ``type`` field, and the ``value`` payload
-    validates against the type's ``Value`` Pydantic model."""
-    import re as _re
+    validates against the type's ``Value`` Pydantic model.
+
+    v2 layout: every envelope filename is ``<var>__<iter_token>.json``
+    where ``iter_token`` is ``top`` for top-level, ``i<...>`` for loop
+    bodies. Pointer files (``{"$ref": "<stem>"}``) are skipped — the
+    source they point at is validated separately.
+    """
+    import json as _json
 
     vars_dir = paths.variables_dir(job_slug, root=root)
     if not vars_dir.is_dir():
         raise AssertionError(f"variables dir missing at {vars_dir}")
 
-    loop_indexed_re = _re.compile(r"^loop_(.+?)_([a-zA-Z_][a-zA-Z0-9_]*)_(\d+)$")
-
     for env_path in sorted(vars_dir.glob("*.json")):
         stem = env_path.stem
-        m = loop_indexed_re.match(stem)
-        if m is not None:
-            # Loop-indexed envelope: extract the underlying var name.
-            var_name = m.group(2)
+        if "__" in stem:
+            var_name = stem.rsplit("__", 1)[0]
         else:
             var_name = stem
 
@@ -127,6 +129,15 @@ def assert_envelopes_well_formed(root: Path, job_slug: str, workflow: Workflow) 
             raw = env_path.read_text()
         except OSError as exc:
             raise AssertionError(f"could not read envelope at {env_path}: {exc}") from exc
+        # Skip $ref pointer files written by loop output projections —
+        # the body's source envelope they reference is validated on its
+        # own pass.
+        try:
+            parsed = _json.loads(raw)
+        except _json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
+            continue
         try:
             envelope = Envelope.model_validate_json(raw)
         except Exception as exc:

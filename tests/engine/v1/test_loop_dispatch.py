@@ -53,9 +53,12 @@ def _seed_loop_envelope(
     type_name: str,
     value: dict,
 ) -> None:
+    """Seed an iter-keyed envelope. ``loop_id`` is unused in v2's
+    universal keying — retained for call-site readability."""
+    del loop_id
     paths.ensure_job_layout(job_slug, root=root)
     env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
-    paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iteration, root=root).write_text(
+    paths.variable_envelope_path(job_slug, var_name, (iteration,), root=root).write_text(
         env.model_dump_json()
     )
 
@@ -135,15 +138,11 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
-        # Simulate the agent writing the raw verdict JSON to the
-        # expected loop-indexed path. The dispatcher's produce will read
-        # it, validate, and wrap into an envelope at that same path.
         iter_idx = len(invocations) - 1
-        target = paths.loop_variable_envelope_path(
-            job_slug, "vlist", "verdict", iter_idx, root=tmp_path
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
+        # v2: agent writes raw value-JSON to attempt_dir / output.json;
+        # the dispatcher reads, validates, wraps, and writes the
+        # envelope at variables/<var>__<iter_token>.json.
+        (attempt_dir / "output.json").write_text(
             json.dumps(
                 {
                     "verdict": "approved",
@@ -201,14 +200,9 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
-        # write body envelope at the iter path
-        envs = list(paths.variables_dir(job_slug, root=tmp_path).glob("loop_vlist_verdict_*.json"))
+        envs = list(paths.variables_dir(job_slug, root=tmp_path).glob("verdict__i*.json"))
         iter_idx = len(envs)
-        target = paths.loop_variable_envelope_path(
-            job_slug, "vlist", "verdict", iter_idx, root=tmp_path
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
+        (attempt_dir / "output.json").write_text(
             json.dumps(
                 {
                     "verdict": "approved",
@@ -229,19 +223,22 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
     )
     assert result.succeeded, result.error
 
-    state_path = paths.node_state_path(job_slug, "pick", root=tmp_path)
-    assert state_path.is_file(), (
-        f"loop body node 'pick' should have nodes/<id>/state.json after "
-        f"successful dispatch; not found at {state_path}"
-    )
+    # v2: body state lives under iter token, one file per iteration.
     from shared.v1.job import NodeRun, NodeRunState
 
-    nr = NodeRun.model_validate_json(state_path.read_text())
-    assert nr.node_id == "pick"
-    assert nr.state == NodeRunState.SUCCEEDED
-    # State.json reflects the latest iteration; for a count-of-2 loop,
-    # attempts is 2.
-    assert nr.attempts == 2
+    for k in range(2):
+        state_path = paths.node_state_path(job_slug, "pick", (k,), root=tmp_path)
+        assert state_path.is_file(), (
+            f"loop body node 'pick' should have iter-keyed state.json at {state_path}"
+        )
+        nr = NodeRun.model_validate_json(state_path.read_text())
+        assert nr.node_id == "pick"
+        assert nr.state == NodeRunState.SUCCEEDED
+        # Attempts numbering is per-(node, iter_path); each iter starts at 1.
+        assert nr.attempts == 1
+    # Top-level state.json must NOT exist for a body node — that's the
+    # v1.0 leakage v2 explicitly closes.
+    assert not paths.node_state_path(job_slug, "pick", (), root=tmp_path).is_file()
 
 
 def test_count_loop_zero_iters_produces_empty_list(tmp_path: Path) -> None:
@@ -318,9 +315,11 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
             "document": "## Plan\n\nTwo stages.",
         },
     )
-    paths.loop_variable_envelope_path(
-        job_slug, "impl-plan-loop", "impl_plan", 0, root=tmp_path
-    ).write_text(plan_env.model_dump_json())
+    # v2 keying: variables/impl_plan__i0.json (iter-keyed; loop_id is
+    # not part of the path).
+    paths.variable_envelope_path(job_slug, "impl_plan", (0,), root=tmp_path).write_text(
+        plan_env.model_dump_json()
+    )
 
     workflow = Workflow(
         schema_version=1,
@@ -366,9 +365,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
         (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         idx = len(invocations) - 1
-        paths.loop_variable_envelope_path(
-            job_slug, "impl", "verdict", idx, root=tmp_path
-        ).write_text(
+        (attempt_dir / "output.json").write_text(
             json.dumps(
                 {
                     "verdict": "approved",
@@ -390,7 +387,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
     assert result.succeeded, result.error
     # count was resolved from impl_plan.count == 2 → 2 iters.
     assert result.iterations_run == 2
-    list_path = paths.variable_envelope_path(job_slug, "verdict_list", root=tmp_path)
+    list_path = paths.variable_envelope_path(job_slug, "verdict_list", (), root=tmp_path)
     env = Envelope.model_validate_json(list_path.read_text())
     assert len(env.value) == 2
 
@@ -416,9 +413,7 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
         (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         idx = len(invocations) - 1
-        paths.loop_variable_envelope_path(
-            job_slug, "vlist", "verdict", idx, root=tmp_path
-        ).write_text(
+        (attempt_dir / "output.json").write_text(
             json.dumps(
                 {
                     "verdict": "approved",
@@ -510,13 +505,10 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
         attempt_dir.mkdir(parents=True, exist_ok=True)
         (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
-        # Write raw verdict JSON to the inner-loop indexed path; the
-        # dispatcher's produce reads and wraps. Approving immediately
-        # means until exits at inner iter 0 each outer iter.
-        inner_iter = 0
-        paths.loop_variable_envelope_path(
-            job_slug, "inner", "verdict", inner_iter, root=tmp_path
-        ).write_text(
+        # v2: agent writes raw value-JSON to attempt_dir / output.json.
+        # Approving immediately means the inner until-loop exits at
+        # iter 0 of each outer iteration.
+        (attempt_dir / "output.json").write_text(
             json.dumps(
                 {
                     "verdict": "approved",
@@ -538,15 +530,16 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
 
     assert result.succeeded, result.error
     assert result.iterations_run == 2
-    # Outer iter projected envelopes (each one is the inner's [last]
-    # verdict for that outer iter).
+    # v2: outer iter projection writes a $ref pointer file at
+    # variables/verdict__i<k>.json pointing at the inner's body envelope.
     for k in range(2):
-        outer_indexed = paths.loop_variable_envelope_path(
-            job_slug, "outer", "verdict", k, root=tmp_path
-        )
-        assert outer_indexed.is_file(), f"outer-indexed inner projection missing for k={k}"
-    # Outer's [*] aggregated list at plain path.
-    list_path = paths.variable_envelope_path(job_slug, "verdict_list", root=tmp_path)
+        outer_proj = paths.variable_envelope_path(job_slug, "verdict", (k,), root=tmp_path)
+        assert outer_proj.is_file(), f"outer-projection $ref missing for k={k}"
+        proj = json.loads(outer_proj.read_text())
+        assert "$ref" in proj, f"outer projection at iter {k} should be a $ref pointer, got {proj}"
+    # Outer's [*] aggregated list at top-level path (materialised, not
+    # pointer'd — [*] aggregations have no single source to point at).
+    list_path = paths.variable_envelope_path(job_slug, "verdict_list", (), root=tmp_path)
     assert list_path.is_file()
     env = Envelope.model_validate_json(list_path.read_text())
     assert env.type == "list[review-verdict]"
@@ -734,9 +727,7 @@ def test_until_loop_reenters_on_needs_revision_then_exits_on_approved(
         (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         v = iter_verdicts[i] if i < len(iter_verdicts) else "approved"
-        target = paths.loop_variable_envelope_path(job_slug, "lp", "verdict", i, root=tmp_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
+        (attempt_dir / "output.json").write_text(
             json.dumps(
                 {
                     "verdict": v,
@@ -760,12 +751,109 @@ def test_until_loop_reenters_on_needs_revision_then_exits_on_approved(
     # Two iterations: needs-revision → re-enter → approved → exit.
     assert result.iterations_run == 2
     assert invocation_count["n"] == 2
-    # Both indexed envelopes on disk.
+    # Both iter-keyed envelopes on disk.
     for i in range(2):
-        p = paths.loop_variable_envelope_path(job_slug, "lp", "verdict", i, root=tmp_path)
+        p = paths.variable_envelope_path(job_slug, "verdict", (i,), root=tmp_path)
         assert p.is_file(), f"iter {i} envelope missing"
-    # Final projection picks iter 1's approved value.
-    final_path = paths.variable_envelope_path(job_slug, "final", root=tmp_path)
+    # Final projection writes a $ref pointer at the outer (top) scope
+    # pointing at the iter-1 body envelope. Resolver follows it.
+    final_path = paths.variable_envelope_path(job_slug, "final", (), root=tmp_path)
     assert final_path.is_file()
-    final_env = Envelope.model_validate_json(final_path.read_text())
-    assert final_env.value["verdict"] == "approved"
+    final_proj = json.loads(final_path.read_text())
+    assert final_proj == {"$ref": "verdict__i1"}, (
+        f"expected pointer to iter-1 envelope, got {final_proj}"
+    )
+    # The pointed-at body envelope holds the approved verdict.
+    body = Envelope.model_validate_json(
+        paths.variable_envelope_path(job_slug, "verdict", (1,), root=tmp_path).read_text()
+    )
+    assert body.value["verdict"] == "approved"
+
+
+# ---------------------------------------------------------------------------
+# v2 on-disk shape regression — Stage B smoke test
+# ---------------------------------------------------------------------------
+
+
+def test_v2_path_layout_after_nested_loop(tmp_path: Path) -> None:
+    """Drive a 2-deep nested fake-engine workflow and assert v2's
+    on-disk shape:
+
+    - ``nodes/<id>/i0_1/state.json`` exists; ``nodes/<id>/state.json`` does not
+    - ``variables/<var>__i0_1.json`` exists; the v1.0
+      ``loop_<id>_<var>_<iter>.json`` shape does not
+    - Outer projection at ``variables/<var>__i0.json`` is exactly
+      ``{"$ref": "<stem>"}`` (text match), not a copy of the source
+      envelope
+
+    Regression for the loops-v2 keying — guards against any
+    re-introduction of the old flat layout.
+    """
+    job_slug = "j"
+    paths.ensure_job_layout(job_slug, root=tmp_path)
+    workflow = _nested_workflow()
+
+    def fake(prompt, attempt_dir, cwd=None):
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "chat.jsonl").write_text("")
+        (attempt_dir / "stderr.log").write_text("")
+        # Approve immediately so the inner until-loop exits at iter 0.
+        (attempt_dir / "output.json").write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": "lgtm",
+                    "document": "## Review\n\nlgtm",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    _seed_envelope(
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
+    )
+    result = dispatch_loop(
+        node=workflow.nodes[0],
+        workflow=workflow,
+        job_slug=job_slug,
+        root=tmp_path,
+        job_repo=None,
+        artifact_claude_runner=fake,
+    )
+    assert result.succeeded, result.error
+    assert result.iterations_run == 2
+
+    # 1. Iter-keyed state file exists; flat top-level state does not.
+    inner_state = paths.node_state_path(job_slug, "reviewer", (0, 0), root=tmp_path)
+    assert inner_state.is_file(), f"expected iter-keyed state at {inner_state}"
+    inner_state_2 = paths.node_state_path(job_slug, "reviewer", (1, 0), root=tmp_path)
+    assert inner_state_2.is_file()
+    flat_state = paths.node_state_path(job_slug, "reviewer", (), root=tmp_path)
+    assert not flat_state.is_file(), (
+        f"v1.0-shaped flat state file leaked at {flat_state} — body nodes must "
+        "only have iter-keyed state"
+    )
+
+    # 2. Iter-keyed variable envelope exists; v1.0 loop_<id>_<var>_<iter>
+    #    shape does not.
+    inner_env_0 = paths.variable_envelope_path(job_slug, "verdict", (0, 0), root=tmp_path)
+    assert inner_env_0.is_file()
+    inner_env_1 = paths.variable_envelope_path(job_slug, "verdict", (1, 0), root=tmp_path)
+    assert inner_env_1.is_file()
+    legacy_pattern = list(paths.variables_dir(job_slug, root=tmp_path).glob("loop_*_*.json"))
+    assert legacy_pattern == [], (
+        f"v1.0-shaped loop_<id>_<var>_<iter>.json files leaked: {legacy_pattern}"
+    )
+
+    # 3. Outer projection at variables/verdict__i0.json is a $ref pointer
+    #    (text match), not a copy of the body envelope.
+    outer_proj = paths.variable_envelope_path(job_slug, "verdict", (0,), root=tmp_path)
+    assert outer_proj.is_file()
+    proj = json.loads(outer_proj.read_text())
+    assert proj == {"$ref": "verdict__i0_0"}, (
+        f"expected exact $ref pointer at outer scope, got {proj}"
+    )

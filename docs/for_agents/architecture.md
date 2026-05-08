@@ -16,11 +16,11 @@ operator
            │
            │  job dir on disk: ~/.hammock/jobs/<slug>/
            │     job.json (JobConfig)
-           │     variables/<var_name>.json (typed envelopes)
-           │     nodes/<node_id>/state.json + runs/<n>/
+           │     variables/<var_name>__<iter_token>.json (typed envelopes)
+           │     nodes/<node_id>/<iter_token>/state.json + runs/<n>/
            │     repo/ (project clone, on hammock/jobs/<slug>)
            │     repo-worktrees/<node_id>/ (per-stage)
-           │     pending/<node_id>.json (HIL markers)
+           │     pending/<node_id>__<iter_token>.json (HIL markers)
            ▼
 ┌──────────────────────────────────────────────┐
 │  engine/v1/driver.py — run_job              │
@@ -115,8 +115,9 @@ Every output is wrapped in an `Envelope` (Pydantic, `shared/v1/envelope.py`):
 
 Path layout (single source of truth: `shared/v1/paths.py`):
 
-- Top-level: `<job_dir>/variables/<var_name>.json`
-- Loop-indexed: `<job_dir>/variables/loop_<loop_id>_<var_name>_<iter>.json`
+- Top-level: `<job_dir>/variables/<var_name>__top.json`
+- Loop-body: `<job_dir>/variables/<var_name>__i<iter_path>.json` (one int per enclosing loop, outermost first; e.g. `design_spec__i0_1.json`)
+- Loop output projections: `{"$ref": "<source-stem>"}` pointer file at the outer-scope path; resolver follows once. `[*]` aggregations materialize the actual `list[T]` envelope.
 
 For narrative artifact types (`bug-report`, `design-spec`, `impl-spec`, `impl-plan`, `summary`), the value carries a `document: str` markdown field alongside the structured fields. The dashboard renders `document` as the primary view; downstream agents consume it directly.
 
@@ -169,21 +170,24 @@ Each running job has its own MCP server spawned by the dashboard so the agent ca
     ├── job-driver.pid                    # for resume / kill
     ├── driver.log
     ├── variables/
-    │   ├── request.json                  # job-request envelope
-    │   ├── bug_report.json               # typed envelope
-    │   └── loop_<id>_<var>_<iter>.json   # loop-indexed
-    ├── nodes/<node_id>/
+    │   ├── request__top.json             # job-request envelope (top-level)
+    │   ├── bug_report__top.json          # typed envelope (top-level)
+    │   ├── verdict__i0.json              # body envelope, single-loop nesting
+    │   ├── verdict__i0_1.json            # body envelope, two-deep nesting
+    │   └── design_spec__top.json         # may be {"$ref": "<stem>"} (loop projection)
+    ├── nodes/<node_id>/<iter_token>/     # iter_token = "top" or "i<...>"
     │   ├── state.json                    # NodeRun (state, attempts, last_error)
     │   └── runs/<n>/
     │       ├── prompt.md                 # exact prompt sent to claude
     │       ├── chat.jsonl
-    │       └── stderr.log
-    ├── pending/<node_id>.json            # HIL markers
+    │       ├── stderr.log
+    │       └── output.json               # agent's raw value-JSON (v2 split)
+    ├── pending/<node_id>__<iter_token>.json   # HIL markers
     ├── repo/                             # project clone, on hammock/jobs/<slug>
     └── repo-worktrees/<node_id>/         # per-code-node, on hammock/stages/.../<id>
 ```
 
-This layout is the contract. The dashboard's projections read this tree directly; the engine writes it; tests assert against it.
+This layout is the contract. The dashboard's projections read this tree directly; the engine writes it; tests assert against it. Use `shared/v1/paths.py` helpers — never hand-build paths.
 
 ## Where to look when X happens
 

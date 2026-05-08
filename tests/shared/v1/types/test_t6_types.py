@@ -32,6 +32,11 @@ class FakeNodeCtx:
     def expected_path(self) -> Path:
         return self.job_dir / f"{self.var_name}.json"
 
+    def attempt_output_path(self) -> Path:
+        # v2 produce() reads from attempt_output_path; tests still write
+        # to <tmp>/<var>.json so we point both at the same file.
+        return self.job_dir / f"{self.var_name}.json"
+
 
 # ---------------------------------------------------------------------------
 # Registry

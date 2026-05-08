@@ -11,6 +11,7 @@
  */
 
 import type { QueryClient } from "@tanstack/vue-query";
+import { iterToken } from "./paths";
 import type { LiveSseEvent, SseEvent } from "./schema.d";
 
 export function applySseInvalidation(qc: QueryClient, event: SseEvent): void {
@@ -25,15 +26,53 @@ export function applySseInvalidation(qc: QueryClient, event: SseEvent): void {
       return;
     }
     case "node": {
-      // node/<slug>/<id>/state.json — affects job detail (left pane state
-      // badge) and per-node detail (state, attempts, last_error).
+      // node/<slug>/<id>/<iter_token>/state.json — affects job detail
+      // (left pane state badge) and per-node detail (state, attempts,
+      // last_error). Each (node, iter) cache is keyed by iter_token so
+      // we narrow the invalidation when we have the iter; otherwise
+      // fall back to invalidating all iters of the node.
       if (live.job_slug) {
         qc.invalidateQueries({ queryKey: ["jobs", "detail", live.job_slug] });
         if (live.node_id) {
-          qc.invalidateQueries({
-            queryKey: ["jobs", live.job_slug, "nodes", live.node_id],
-          });
+          if (live.iter !== undefined) {
+            qc.invalidateQueries({
+              queryKey: [
+                "jobs",
+                live.job_slug,
+                "nodes",
+                live.node_id,
+                "iter",
+                iterToken(live.iter),
+              ],
+            });
+          } else {
+            qc.invalidateQueries({
+              queryKey: ["jobs", live.job_slug, "nodes", live.node_id],
+            });
+          }
         }
+      }
+      return;
+    }
+    case "chat_jsonl": {
+      // jobs/<slug>/nodes/<id>/<iter_token>/runs/<n>/chat.jsonl —
+      // appended to as the agent runs. Refetch the matching chat tail
+      // so AgentChatTail re-renders with the new turns. The agentChat
+      // key carries iter_token + attempt so a precise invalidation
+      // hits exactly one cache entry.
+      if (live.job_slug && live.node_id && live.iter !== undefined && live.attempt !== undefined) {
+        qc.invalidateQueries({
+          queryKey: [
+            "jobs",
+            live.job_slug,
+            "nodes",
+            live.node_id,
+            "iter",
+            iterToken(live.iter),
+            "chat",
+            live.attempt,
+          ],
+        });
       }
       return;
     }

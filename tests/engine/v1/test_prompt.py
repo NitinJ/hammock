@@ -135,6 +135,7 @@ def test_build_prompt_includes_node_header(tmp_path: Path) -> None:
         inputs=inputs,
         job_dir=tmp_path,
         workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
     assert prompt.startswith("# Node: write-bug-report")
 
@@ -152,7 +153,12 @@ def test_build_prompt_inlines_input_via_render_for_consumer(tmp_path: Path) -> N
         )
     }
     prompt = build_prompt(
-        node=node, workflow=wf, inputs=inputs, job_dir=tmp_path, workflow_dir=wf_dir
+        node=node,
+        workflow=wf,
+        inputs=inputs,
+        job_dir=tmp_path,
+        workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
     assert "Fix the empty-args bug" in prompt
     assert "(job-request)" in prompt
@@ -171,9 +177,14 @@ def test_build_prompt_describes_output_via_render_for_producer(tmp_path: Path) -
         )
     }
     prompt = build_prompt(
-        node=node, workflow=wf, inputs=inputs, job_dir=tmp_path, workflow_dir=wf_dir
+        node=node,
+        workflow=wf,
+        inputs=inputs,
+        job_dir=tmp_path,
+        workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
-    assert "bug_report.json" in prompt
+    assert "output.json" in prompt
     assert "extra='forbid'" in prompt or "summary" in prompt
 
 
@@ -195,7 +206,12 @@ def test_build_prompt_renders_absent_optional_input(tmp_path: Path) -> None:
         )
     }
     prompt = build_prompt(
-        node=node, workflow=wf, inputs=inputs, job_dir=tmp_path, workflow_dir=wf_dir
+        node=node,
+        workflow=wf,
+        inputs=inputs,
+        job_dir=tmp_path,
+        workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
     assert "optional, not produced" in prompt
 
@@ -218,10 +234,15 @@ def test_build_prompt_with_multiple_inputs(tmp_path: Path) -> None:
         )
     }
     prompt = build_prompt(
-        node=node, workflow=wf, inputs=inputs, job_dir=tmp_path, workflow_dir=wf_dir
+        node=node,
+        workflow=wf,
+        inputs=inputs,
+        job_dir=tmp_path,
+        workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
     assert "the bug" in prompt
-    assert "design_spec.json" in prompt
+    assert "output.json" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +266,12 @@ def test_build_prompt_inlines_middle_from_prompts_file(tmp_path: Path) -> None:
         )
     }
     prompt = build_prompt(
-        node=node, workflow=wf, inputs=inputs, job_dir=tmp_path, workflow_dir=wf_dir
+        node=node,
+        workflow=wf,
+        inputs=inputs,
+        job_dir=tmp_path,
+        workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
     assert "UNIQUE-MIDDLE-SENTINEL-ABCDEF" in prompt
 
@@ -268,7 +294,12 @@ def test_build_prompt_middle_appears_before_inputs(tmp_path: Path) -> None:
         )
     }
     prompt = build_prompt(
-        node=node, workflow=wf, inputs=inputs, job_dir=tmp_path, workflow_dir=wf_dir
+        node=node,
+        workflow=wf,
+        inputs=inputs,
+        job_dir=tmp_path,
+        workflow_dir=wf_dir,
+        attempt_dir=tmp_path / "attempt",
     )
     middle_idx = prompt.find("MIDDLE-ORDER-SENTINEL-12345")
     inputs_idx = prompt.find("## Inputs")

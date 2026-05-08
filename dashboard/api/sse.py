@@ -61,10 +61,10 @@ def _format_change(change: CacheChange, scope: str) -> str:
         data["node_id"] = classified.node_id
     if classified.var_name is not None:
         data["var_name"] = classified.var_name
-    if classified.loop_id is not None:
-        data["loop_id"] = classified.loop_id
-    if classified.iteration is not None:
-        data["iteration"] = classified.iteration
+    if classified.iter_path is not None:
+        data["iter"] = list(classified.iter_path)
+    if classified.attempt is not None:
+        data["attempt"] = classified.attempt
     if classified.project_slug is not None:
         data["project_slug"] = classified.project_slug
     if classified.call_id is not None:

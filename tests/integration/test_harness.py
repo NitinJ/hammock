@@ -176,12 +176,12 @@ def test_complete_node_with_iter_writes_loop_indexed_envelope(
         loop_id="impl-loop",
     )
 
-    # Loop-indexed envelope path: variables/loop_<loop_id>_<var>_<i>.json.
-    indexed_path = v1_paths.loop_variable_envelope_path(
+    # v2 path: variables/<var>__<iter_token>.json (loop_id is no longer
+    # part of the layout — iter_path is the address).
+    indexed_path = v1_paths.variable_envelope_path(
         fake_engine_offline.job_slug,
-        "impl-loop",
         "body-node",
-        0,
+        (0,),
         root=fake_engine_offline.root,
     )
     assert indexed_path.exists(), f"expected envelope at {indexed_path}"
@@ -264,10 +264,8 @@ def test_request_hil_writes_pending_marker(
     # The contract: returns the node_id as the gate identifier.
     assert hil_id == "review-spec-human"
 
-    pending_path = (
-        v1_paths.job_dir(fake_engine_offline.job_slug, root=fake_engine_offline.root)
-        / "pending"
-        / "review-spec-human.json"
+    pending_path = v1_paths.pending_marker_path(
+        fake_engine_offline.job_slug, "review-spec-human", root=fake_engine_offline.root
     )
     assert pending_path.exists()
     marker = json.loads(pending_path.read_text())
@@ -299,10 +297,8 @@ def test_assert_hil_answered_succeeds_when_envelope_present(
     # Simulate the dashboard POST having succeeded:
     # - remove pending marker
     # - write envelope
-    pending_path = (
-        v1_paths.job_dir(fake_engine_offline.job_slug, root=fake_engine_offline.root)
-        / "pending"
-        / "review-spec-human.json"
+    pending_path = v1_paths.pending_marker_path(
+        fake_engine_offline.job_slug, "review-spec-human", root=fake_engine_offline.root
     )
     pending_path.unlink()
     fake_engine_offline.complete_node(

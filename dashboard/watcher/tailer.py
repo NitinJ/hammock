@@ -15,6 +15,11 @@ Scopes (str keys):
 
 ``events.jsonl`` appends are tailed and emitted as typed ``Event``
 records via ``events_pubsub`` (separate channel).
+
+``chat.jsonl`` (per-attempt agent transcript) appends are coalesced
+to at most one event per (job_slug, node_id, iter_token, attempt)
+within a ``CHAT_COALESCE_WINDOW_S`` window — the SSE consumer
+refetches the whole chat on poke, so over-emitting just wastes work.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +42,14 @@ from dashboard.state.classify import (
     classify_path,
     scopes_for,
 )
+from shared.v1 import paths as v1_paths
+
+CHAT_COALESCE_WINDOW_S: float = 0.5
+"""chat_appended events collapse to one per (key, 500ms window).
+
+Under steady-state agent streaming we'd otherwise emit one SSE message
+per turn line. Refetch-on-poke means the consumer only needs to know
+'something changed recently' — fine-grained pacing buys nothing."""
 
 LOG = logging.getLogger(__name__)
 
@@ -96,8 +110,12 @@ async def run(
         with contextlib.suppress(OSError):
             file_offsets[existing] = existing.stat().st_size
 
+    # Last emit time per (job_slug, node_id, iter_token, attempt) tuple
+    # for chat_appended coalescing. Survives across batches.
+    chat_last_emit: dict[tuple[str, str, str, int], float] = {}
+
     async for batch in _watcher:
-        _process_batch(root, pubsub, events_pubsub, file_offsets, batch)
+        _process_batch(root, pubsub, events_pubsub, file_offsets, chat_last_emit, batch)
 
 
 def _process_batch(
@@ -105,6 +123,7 @@ def _process_batch(
     pubsub: object,
     events_pubsub: object | None,
     file_offsets: dict[Path, int],
+    chat_last_emit: dict[tuple[str, str, str, int], float],
     batch: Iterable[tuple[Change, str]],
 ) -> None:
     publish = getattr(pubsub, "publish", None)
@@ -129,9 +148,51 @@ def _process_batch(
                 _tail_and_publish_events(path, classified, file_offsets, events_publish)
             continue
 
+        # Coalesce chat.jsonl appends to one event per (key, CHAT_COALESCE_WINDOW_S).
+        if classified.kind == "chat_jsonl" and not _should_emit_chat(
+            classified, kind, chat_last_emit
+        ):
+            continue
+
         msg = PathChange(path=path, kind=kind, classified=classified)
         for scope in scopes_for(classified):
             publish(scope, msg)
+
+
+def _should_emit_chat(
+    classified: ClassifiedPath,
+    kind: ChangeKind,
+    chat_last_emit: dict[tuple[str, str, str, int], float],
+) -> bool:
+    """Return True iff this chat.jsonl change should publish.
+
+    DELETED always publishes (cleanup signal). MODIFIED / ADDED collapse
+    to one event per (job, node, iter_token, attempt) per
+    ``CHAT_COALESCE_WINDOW_S`` window. Missing key fields shouldn't
+    happen for a chat_jsonl classification, but we drop on incomplete
+    metadata rather than emitting incoherent events.
+    """
+    if kind is ChangeKind.DELETED:
+        return True
+    if (
+        classified.job_slug is None
+        or classified.node_id is None
+        or classified.iter_path is None
+        or classified.attempt is None
+    ):
+        return False
+    key = (
+        classified.job_slug,
+        classified.node_id,
+        v1_paths.iter_token(classified.iter_path),
+        classified.attempt,
+    )
+    now = time.monotonic()
+    last = chat_last_emit.get(key)
+    if last is not None and (now - last) < CHAT_COALESCE_WINDOW_S:
+        return False
+    chat_last_emit[key] = now
+    return True
 
 
 def _tail_and_publish_events(

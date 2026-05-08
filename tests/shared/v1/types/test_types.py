@@ -38,6 +38,12 @@ class FakeNodeCtx:
     def expected_path(self) -> Path:
         return self.job_dir / f"{self.var_name}.json"
 
+    def attempt_output_path(self) -> Path:
+        # v2: produce() reads raw value-JSON from output.json under the
+        # attempt dir. Tests stage the file at <tmp>/<var>.json; point
+        # both methods at the same place so the existing fixtures work.
+        return self.job_dir / f"{self.var_name}.json"
+
 
 @dataclass
 class FakePromptCtx:
@@ -46,6 +52,9 @@ class FakePromptCtx:
 
     def expected_path(self) -> Path:
         return self.job_dir / "variables" / f"{self.var_name}.json"
+
+    def attempt_output_path(self) -> Path:
+        return self.job_dir / "nodes" / f"{self.var_name}__top" / "runs" / "1" / "output.json"
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +158,9 @@ def test_bug_report_render_for_producer_includes_path_and_schema_hint(
     t = BugReportType()
     ctx = FakePromptCtx(var_name="bug_report", job_dir=tmp_path)
     rendered = t.render_for_producer(t.Decl(), ctx)
-    assert "bug_report.json" in rendered
+    # v2: render_for_producer points at the per-attempt output.json under
+    # the iter-keyed attempt dir.
+    assert "output.json" in rendered
     assert "summary" in rendered  # schema field hint
     assert "extra='forbid'" in rendered
 

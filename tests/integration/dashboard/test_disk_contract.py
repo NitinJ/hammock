@@ -43,14 +43,16 @@ def test_top_level_variable_envelope_classified(tmp_path: Path) -> None:
     assert cp.var_name == "design_spec"
 
 
-def test_loop_indexed_variable_envelope_classified(tmp_path: Path) -> None:
-    p = v1_paths.loop_variable_envelope_path("alpha", "impl-loop", "pr", 2, root=tmp_path)
+def test_loop_body_variable_envelope_classified(tmp_path: Path) -> None:
+    """v2 keys envelopes by full iter_path. ``variables/<var>__i0_2.json``
+    is a body-execution envelope at iter_path=(0, 2). The classifier
+    decodes the iter_path; loop_id is no longer part of the path."""
+    p = v1_paths.variable_envelope_path("alpha", "pr", (0, 2), root=tmp_path)
     cp = classify_path(p, tmp_path)
-    assert cp.kind == "loop_variable"
+    assert cp.kind == "variable"
     assert cp.job_slug == "alpha"
     assert cp.var_name == "pr"
-    assert cp.loop_id == "impl-loop"
-    assert cp.iteration == 2
+    assert cp.iter_path == (0, 2)
 
 
 def test_events_jsonl_classified(tmp_path: Path) -> None:
@@ -61,11 +63,22 @@ def test_events_jsonl_classified(tmp_path: Path) -> None:
 
 
 def test_pending_marker_classified(tmp_path: Path) -> None:
-    p = v1_paths.job_dir("alpha", root=tmp_path) / "pending" / "review-spec.json"
+    p = v1_paths.pending_marker_path("alpha", "review-spec", root=tmp_path)
     cp = classify_path(p, tmp_path)
     assert cp.kind == "pending"
     assert cp.job_slug == "alpha"
     assert cp.node_id == "review-spec"
+    assert cp.iter_path == ()
+
+
+def test_pending_marker_loop_body_classified(tmp_path: Path) -> None:
+    """Pending HIL inside a 2-deep nested loop carries the full iter_path."""
+    p = v1_paths.pending_marker_path("alpha", "review-spec", (1, 2), root=tmp_path)
+    cp = classify_path(p, tmp_path)
+    assert cp.kind == "pending"
+    assert cp.job_slug == "alpha"
+    assert cp.node_id == "review-spec"
+    assert cp.iter_path == (1, 2)
 
 
 def test_unknown_paths_are_unknown(tmp_path: Path) -> None:
@@ -79,11 +92,32 @@ def test_path_outside_root_is_unknown(tmp_path: Path) -> None:
     assert cp.kind == "unknown"
 
 
-def test_node_run_attempt_artefact_unknown(tmp_path: Path) -> None:
-    """Per-attempt run artefacts (chat.jsonl etc.) intentionally don't
-    classify — the dashboard reads them on demand via projections.
-    Watching them would create event spam."""
+def test_chat_jsonl_classified(tmp_path: Path) -> None:
+    """v2: ``chat.jsonl`` writes are watched so the SSE pipeline can emit
+    ``chat_appended`` events for the live agent-chat tail. The classifier
+    decodes the (node_id, iter_path, attempt) key from the path."""
     p = v1_paths.node_attempt_dir("alpha", "write-spec", 1, root=tmp_path) / "chat.jsonl"
+    cp = classify_path(p, tmp_path)
+    assert cp.kind == "chat_jsonl"
+    assert cp.job_slug == "alpha"
+    assert cp.node_id == "write-spec"
+    assert cp.iter_path == ()
+    assert cp.attempt == 1
+
+
+def test_chat_jsonl_loop_body_classified(tmp_path: Path) -> None:
+    """A loop-body chat.jsonl carries the full iter_path."""
+    p = v1_paths.node_attempt_dir("alpha", "write-spec", 2, (0, 1), root=tmp_path) / "chat.jsonl"
+    cp = classify_path(p, tmp_path)
+    assert cp.kind == "chat_jsonl"
+    assert cp.iter_path == (0, 1)
+    assert cp.attempt == 2
+
+
+def test_node_run_other_artefact_unknown(tmp_path: Path) -> None:
+    """Per-attempt artefacts other than chat.jsonl (prompt.md, output.json,
+    stderr.log) are not watched — the dashboard reads them on demand."""
+    p = v1_paths.node_attempt_dir("alpha", "write-spec", 1, root=tmp_path) / "prompt.md"
     cp = classify_path(p, tmp_path)
     assert cp.kind == "unknown"
 

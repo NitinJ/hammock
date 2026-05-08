@@ -75,7 +75,7 @@ class ImplPlanType:
     Value: ClassVar[type[ImplPlanValue]] = ImplPlanValue
 
     def produce(self, decl: ImplPlanDecl, ctx: NodeContext) -> ImplPlanValue:
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(f"impl-plan not produced at {path}")
         raw = path.read_bytes()
@@ -93,7 +93,7 @@ class ImplPlanType:
     def render_for_producer(self, decl: ImplPlanDecl, ctx: PromptContext) -> str:
         return (
             f"### Output `{ctx.var_name}` (impl-plan)\n\n"
-            f"Write your output as JSON to: `{ctx.expected_path()}`.\n\n"
+            f"Write your output as JSON to: `{ctx.attempt_output_path()}`.\n\n"
             f"{_PROMPT_HINT}\n"
         )
 
