@@ -56,6 +56,8 @@ The bundled `write-design-spec.md` had this issue during dogfood. Followup: tigh
 
 ## Empty chat.jsonl from claude isn't always a clear failure
 
+Partially mitigated in v2: the engine now reads the agent's RAW value-JSON from `nodes/<id>/<iter_token>/runs/<n>/output.json` (distinct from the durable `<var>__<iter_token>.json` envelope). If `output.json` is missing or empty, the dispatcher hard-fails with that specific cause — no chance of validating a stale envelope as the new value. The diagnostic flow below still applies.
+
 `claude -p` with `bypassPermissions` can return rc=0 with completely empty stdout. The dispatcher sees rc=0, runs `produce()`, finds the expected output file missing, and reports "output contract failed".
 
 When debugging:
@@ -82,9 +84,9 @@ If you're refactoring this function, read `rules.md` "State persistence ordering
 
 ## Loop-indexed envelope path
 
-When a loop body produces a variable, the envelope path is **not** `<job_dir>/variables/<var>.json`. It's `<job_dir>/variables/loop_<loop_id>_<var_name>_<iter>.json`. Use `paths.loop_variable_envelope_path(...)`, never construct it by hand.
+In v2 every variable envelope lives at `<job_dir>/variables/<var>__<iter_token>.json` where `iter_token` is `top` for top-level executions and `i<...>` (one int per enclosing loop, outermost first) for loop bodies. Use `paths.variable_envelope_path(slug, var, iter_path, root=root)`, never construct it by hand. The old `paths.loop_variable_envelope_path` helper was deleted in loops-v2.
 
-Variable references inside loops use the `[i]` / `[last]` / `[*]` syntax to read these. Predicate evaluation handles the path resolution. If you're adding a test that seeds loop-indexed envelopes manually, use the helper.
+Variable references inside loops use the `[i]` / `[last]` / `[*]` syntax to read these. Predicate evaluation handles the path resolution. Outer-scope projections (`outputs: x: $loop.x[last]`) write a tiny `{"$ref": "<source-stem>"}` pointer file at `<var>__<outer-token>.json`; the resolver follows it once. `[*]` aggregations are the one case that materializes the actual `list[T]` envelope at the outer path. If you're adding a test that seeds iter-keyed envelopes manually, use the helper.
 
 ## File-on-disk paths are the contract
 
@@ -126,16 +128,13 @@ Adding a third "remember to do X" memory note is the signal to convert X into a 
 
 ## `producer_node` is for traceability, not for filtering
 
+**Historical** (structurally fixed in v2 via `$ref` pointer files; see `docs/loop-execution-model.md`). Kept for context — the failure mode it describes informed the v2 design.
+
 When a loop completes, its output projection (`outputs: x: $loop.x[last]`) re-writes the body's envelope at the outer loop's scope. The re-write preserves `producer_node` so the provenance chain stays intact — a downstream consumer that asks "who produced this design spec?" still gets `write-design-spec`, not `<loop:design-spec-loop>`.
 
 This means: **you cannot identify a node's direct outputs by `producer_node == node_id` alone.** A 2-deep nested loop body's envelope appears at 3 paths (the body's own loop-indexed path + 2 outer projections), all with the same `producer_node`. Naive filtering surfaces three copies of the same envelope under the body node's detail page — exactly the bug we shipped and then fixed.
 
-The right rule, used in `dashboard/state/projections.py:node_detail`:
-
-- Top-level node → its direct path is `<var>.json`.
-- Loop body node → its direct path is `loop_<innermost_parent_loop_id>_<var>_<iter>.json`.
-
-Filter envelopes by path shape, then producer_node, in that order. Anything else is by-product of loop projection and belongs to the loop, not the body node.
+In v2 the body's envelope sits at exactly one path (`<var>__<iter_token>.json`), and outer-scope projections write tiny `{"$ref": "<source-stem>"}` pointer files instead of duplicate envelopes. The "is this the direct output" filter is now a structural check on file shape ($ref vs full envelope), not a heuristic over producer_node.
 
 If you're touching anything that walks `<job_dir>/variables/`, ask yourself: am I looking at provenance, or am I looking for the direct output? They're different queries.
 

@@ -167,7 +167,7 @@ Adds `iter_token` helper and updates path helpers to take optional `iter_path` p
 - Round-trip check: `iter_token((0,1)) == "i0_1"` and `parse_iter_token("i0_1") == (0,1)`
 - Top-level: `iter_token(()) == "top"`
 
-### Stage B — Engine migration
+### Stage B — Engine migration ✅ DONE (commits `55383e5`, `509c691`)
 
 Migrate the engine end-to-end: dispatchers thread `iter_path`, agent raw output split, resolver `$ref` follow, loop projection writes. After this stage the engine is fully on the new keying. Deprecated path shims from Stage A get DELETED at the end of this stage.
 
@@ -197,7 +197,7 @@ Migrate the engine end-to-end: dispatchers thread `iter_path`, agent raw output 
 
 **Done when**: ALL bullet points pass.
 
-### Stage C — Dashboard backend
+### Stage C — Dashboard backend ✅ DONE (commits `31dd184`, `fd4d406`, `f4d31a3`, `7da1d51`)
 
 Update projections, chat endpoint, and SSE pipeline to use the new keying. Test fixtures in `tests/integration/dashboard/` migrate as part of this stage (since the projections move to new paths).
 
@@ -219,7 +219,7 @@ Update projections, chat endpoint, and SSE pipeline to use the new keying. Test 
 
 **Done when**: ALL bullet points pass.
 
-### Stage D — Frontend
+### Stage D — Frontend ✅ DONE (commits `77a1f64`, `e6c108f`, `1040207`, `914ddb8`)
 
 Universal iter_path handling + live chat tail subscription.
 
@@ -348,7 +348,7 @@ Drop `outputs:` on loops entirely. Consumers explicitly say `$design-spec-loop.d
 - **Pros**: Simplest. No new concept. No projection logic anywhere.
 - **Cons**: Every workflow author needs to track the enclosing-loop structure. Reusable workflow fragments break (you can't write a node that references `$design_spec` without knowing whether it's wrapped in a loop). Today's bundled YAMLs would all need rewriting.
 
-### My lean
+### Resolution — Option B (locked)
 
 **Option B** for these reasons:
 
@@ -359,9 +359,7 @@ Drop `outputs:` on loops entirely. Consumers explicitly say `$design-spec-loop.d
 
 Option C is more pure-KISS but the cost (every workflow YAML changes, all consumer references become loop-aware) outweighs the simplicity win — especially for the project-local custom workflows operators have already written.
 
-If we pick B, the resolver gains one rule: "if a variable file is `{\"$ref\": \"...\"}`, follow it." Everything else stays the same.
-
-I want a yes/no on B before locking the migration plan. The path scheme depends on it.
+The resolver's one new rule: "if a variable file is `{\"$ref\": \"...\"}`, follow it once to the source." `[*]` aggregations don't fit the pointer-file approach (no single source) and are the one case that materializes the actual `list[T]` envelope at the outer-scope path.
 
 ## Decisions locked
 
