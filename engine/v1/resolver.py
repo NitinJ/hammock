@@ -96,7 +96,7 @@ def _read_envelope(path: Path) -> Envelope | None:
         if not current.is_file():
             return None
         if current in visited:
-            chain = " → ".join(str(p) for p in visited + [current])
+            chain = " → ".join(str(p) for p in [*visited, current])
             raise ResolutionError(f"$ref pointer cycle detected: {chain}")
         visited.append(current)
         raw = current.read_bytes()
