@@ -78,11 +78,16 @@ def _make_writer_fake(
         first_line = prompt.splitlines()[0]
         prefix = "# Node: "
         node_id = first_line[len(prefix) :].strip() if first_line.startswith(prefix) else "?"
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
-        for var_name, payload in payloads_per_node.get(node_id, {}).items():
-            (variables_dir / f"{var_name}.json").write_text(json.dumps(payload))
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        # v2: agent writes raw value-JSON to attempt_dir / output.json.
+        # The test's payloads_per_node still supports multiple var names
+        # but the engine reads one output.json per attempt, so use the
+        # first variable's payload — single-output nodes are the common
+        # shape.
+        node_payloads = payloads_per_node.get(node_id, {})
+        if node_payloads:
+            payload = next(iter(node_payloads.values()))
+            (attempt_dir / "output.json").write_text(json.dumps(payload))
         (attempt_dir / "chat.jsonl").write_text(f"(fake) {node_id} succeeded\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
@@ -328,11 +333,9 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
         counter["calls"] += 1
         first_line = prompt.splitlines()[0]
         node_id = first_line.removeprefix("# Node: ").strip()
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
+        attempt_dir.mkdir(parents=True, exist_ok=True)
         if node_id == "write-bug-report":
-            (variables_dir / "bug_report.json").write_text(
+            (attempt_dir / "output.json").write_text(
                 json.dumps({"summary": "x", "document": "## Bug\n\n."})
             )
         # write-design-spec writes nothing → fails
@@ -369,11 +372,9 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
         counter["calls"] += 1
         first_line = prompt.splitlines()[0]
         node_id = first_line.removeprefix("# Node: ").strip()
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
+        attempt_dir.mkdir(parents=True, exist_ok=True)
         if node_id == "write-design-spec":
-            (variables_dir / "design_spec.json").write_text(
+            (attempt_dir / "output.json").write_text(
                 json.dumps({"title": "t", "overview": "o", "document": "## D\n\n."})
             )
         (attempt_dir / "chat.jsonl").write_text("")

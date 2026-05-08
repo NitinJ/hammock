@@ -155,9 +155,13 @@ def _seed_loop_envelope(
     type_name: str,
     value: dict,
 ) -> None:
+    """Seed an iter-keyed envelope. ``loop_id`` is unused in v2's
+    universal keying — the envelope path is determined by iter_path
+    alone — but the param is retained to keep call sites readable."""
+    del loop_id
     paths.ensure_job_layout(job_slug, root=root)
     env = make_envelope(type_name=type_name, producer_node="<test>", value_payload=value)
-    paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iteration, root=root).write_text(
+    paths.variable_envelope_path(job_slug, var_name, (iteration,), root=root).write_text(
         env.model_dump_json()
     )
 
@@ -180,7 +184,7 @@ def test_evaluate_loop_i_at_current_iteration(tmp_path: Path) -> None:
         workflow=_empty_workflow(),
         job_slug="j",
         root=tmp_path,
-        current_iteration=0,
+        iter_path=(0,),
     )
     assert ok is True
 
@@ -196,7 +200,7 @@ def test_evaluate_loop_i_minus_1_on_first_iter_returns_false(
         workflow=_empty_workflow(),
         job_slug="j",
         root=tmp_path,
-        current_iteration=0,
+        iter_path=(0,),
     )
     assert ok is False
 
@@ -243,7 +247,7 @@ def test_evaluate_neq_on_string(tmp_path: Path) -> None:
         workflow=_empty_workflow(),
         job_slug="j",
         root=tmp_path,
-        current_iteration=0,
+        iter_path=(0,),
     )
     assert ok is True
 

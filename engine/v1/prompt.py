@@ -27,23 +27,24 @@ from shared.v1.workflow import ArtifactNode, Workflow
 class _PromptCtx:
     var_name: str
     job_dir: Path
-    loop_id: str | None = None
-    iteration: int | None = None
+    iter_path: tuple[int, ...] = ()
+    attempt_dir: Path | None = None
 
     def expected_path(self) -> Path:
         """Mirrors `engine.v1.artifact._NodeContext.expected_path` so the
-        prompt fragment and the post-actor `produce` agree on the file
-        path. Loop-aware: produces the indexed path when running inside
-        a loop body."""
-        if self.loop_id is not None and self.iteration is not None:
-            from shared.v1 import paths as _paths
+        prompt fragment and the post-actor `produce` agree. Returns the
+        durable envelope path (variable_envelope_path with iter_path)."""
+        from shared.v1 import paths as _paths
 
-            slug = self.job_dir.name
-            root = self.job_dir.parent.parent
-            return _paths.loop_variable_envelope_path(
-                slug, self.loop_id, self.var_name, self.iteration, root=root
-            )
-        return self.job_dir / "variables" / f"{self.var_name}.json"
+        slug = self.job_dir.name
+        root = self.job_dir.parent.parent
+        return _paths.variable_envelope_path(slug, self.var_name, self.iter_path, root=root)
+
+    def attempt_output_path(self) -> Path:
+        """The agent's raw value-JSON write target for this attempt."""
+        if self.attempt_dir is None:
+            raise RuntimeError("attempt_output_path requires attempt_dir on the prompt context")
+        return self.attempt_dir / "output.json"
 
 
 @dataclass(frozen=True)
@@ -110,8 +111,8 @@ def build_prompt(
     inputs: dict[str, ResolvedInput],
     job_dir: Path,
     workflow_dir: Path | None = None,
-    loop_id: str | None = None,
-    iteration: int | None = None,
+    attempt_dir: Path | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> str:
     """Assemble the full markdown prompt for `node`.
 
@@ -167,7 +168,12 @@ def build_prompt(
                 type_name = _type_name_from_value(slot.value, workflow)
                 if type_name:
                     type_obj = get_type(type_name)
-                    ctx = _PromptCtx(var_name=slot_name, job_dir=job_dir)
+                    ctx = _PromptCtx(
+                        var_name=slot_name,
+                        job_dir=job_dir,
+                        iter_path=iter_path,
+                        attempt_dir=attempt_dir,
+                    )
                     rendered = type_obj.render_for_consumer(type_obj.Decl(), slot.value, ctx)
                     parts.append(rendered)
                     parts.append("")
@@ -188,8 +194,8 @@ def build_prompt(
             ctx = _PromptCtx(
                 var_name=slot.var_name,
                 job_dir=job_dir,
-                loop_id=loop_id,
-                iteration=iteration,
+                iter_path=iter_path,
+                attempt_dir=attempt_dir,
             )
             rendered = type_obj.render_for_producer(type_obj.Decl(), ctx)
             parts.append(rendered)

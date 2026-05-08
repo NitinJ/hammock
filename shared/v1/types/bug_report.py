@@ -70,7 +70,7 @@ class BugReportType:
     Value: ClassVar[type[BugReportValue]] = BugReportValue
 
     def produce(self, decl: BugReportDecl, ctx: NodeContext) -> BugReportValue:
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(
                 f"bug-report not produced at {path} — agent must write JSON here"
@@ -90,7 +90,7 @@ class BugReportType:
     def render_for_producer(self, decl: BugReportDecl, ctx: PromptContext) -> str:
         return (
             f"### Output `{ctx.var_name}` (bug-report)\n\n"
-            f"Write your output as JSON to: `{ctx.expected_path()}`.\n\n"
+            f"Write your output as JSON to: `{ctx.attempt_output_path()}`.\n\n"
             f"{_PROMPT_HINT}\n"
         )
 

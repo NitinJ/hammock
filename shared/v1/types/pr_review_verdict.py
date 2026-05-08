@@ -125,7 +125,7 @@ class PRReviewVerdictType:
     def produce(self, decl: PRReviewVerdictDecl, ctx: NodeContext) -> PRReviewVerdictValue:
         """Read submission, verify via gh, populate summary, return."""
         # 1. Read the human's submission.
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(f"pr-review-verdict not produced at {path}")
         try:

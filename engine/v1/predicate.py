@@ -17,6 +17,7 @@ and not None (per design-patch §1.6 rule 1).
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,44 +139,83 @@ def _resolve_index(index_form: str, current_iteration: int | None) -> int | None
     return int(index_form)
 
 
+def _read_envelope(path: Path) -> Envelope | None:
+    """Read an envelope at *path*, following one ``$ref`` indirection.
+
+    Mirrors ``engine.v1.resolver._read_envelope`` so loop output
+    projections written as ``{"$ref": "<stem>"}`` pointer files resolve
+    transparently for predicate evaluation as well.
+    """
+    if not path.is_file():
+        return None
+    raw = path.read_bytes()
+    if not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
+        stem = parsed["$ref"]
+        if not isinstance(stem, str) or not stem:
+            raise PredicateError(f"$ref pointer at {path} has invalid stem {stem!r}")
+        source = path.parent / f"{stem}.json"
+        if not source.is_file():
+            return None
+        source_raw = source.read_bytes()
+        if not source_raw.strip():
+            return None
+        source_parsed = json.loads(source_raw)
+        if isinstance(source_parsed, dict) and set(source_parsed.keys()) == {"$ref"}:
+            raise PredicateError(
+                f"$ref pointer at {path} resolves to another $ref at {source}; "
+                "multi-hop chaining is not allowed"
+            )
+        return Envelope.model_validate_json(source_raw)
+    return Envelope.model_validate_json(raw)
+
+
 def _read_loop_envelope(
     *,
     job_slug: str,
-    loop_id: str,
     var_name: str,
-    iteration: int,
+    iter_path: tuple[int, ...],
     root: Path,
 ) -> Envelope | None:
-    p = paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iteration, root=root)
-    if not p.is_file():
-        return None
-    return Envelope.model_validate_json(p.read_text())
+    return _read_envelope(paths.variable_envelope_path(job_slug, var_name, iter_path, root=root))
 
 
 def _read_plain_envelope(*, job_slug: str, var_name: str, root: Path) -> Envelope | None:
-    p = paths.variable_envelope_path(job_slug, var_name, root=root)
-    if not p.is_file():
-        return None
-    return Envelope.model_validate_json(p.read_text())
+    return _read_envelope(paths.variable_envelope_path(job_slug, var_name, (), root=root))
 
 
 def _highest_loop_iteration(
-    *, job_slug: str, loop_id: str, var_name: str, root: Path
+    *,
+    job_slug: str,
+    var_name: str,
+    enclosing_iter_path: tuple[int, ...],
+    root: Path,
 ) -> int | None:
-    """Find the largest iteration index for which the variable has been
-    produced inside the loop. Used by ``[last]``."""
-    safe = paths._safe_loop_id(loop_id)
-    pattern = f"loop_{safe}_{var_name}_*.json"
+    """Find the largest inner-loop iter index the body has produced for
+    *var_name* under *enclosing_iter_path*. Used by ``[last]``."""
     vd = paths.variables_dir(job_slug, root=root)
-    matches = sorted(vd.glob(pattern))
-    if not matches:
+    if not vd.is_dir():
         return None
-    suffix_re = re.compile(rf"loop_{re.escape(safe)}_{re.escape(var_name)}_(\d+)\.json")
-    indices = []
-    for m in matches:
-        sm = suffix_re.match(m.name)
-        if sm is not None:
-            indices.append(int(sm.group(1)))
+    prefix = f"{var_name}__"
+    indices: list[int] = []
+    for f in vd.iterdir():
+        if not f.name.startswith(prefix) or not f.name.endswith(".json"):
+            continue
+        token = f.name[len(prefix) : -len(".json")]
+        try:
+            ip = paths.parse_iter_token(token)
+        except ValueError:
+            continue
+        if len(ip) != len(enclosing_iter_path) + 1:
+            continue
+        if ip[: len(enclosing_iter_path)] != enclosing_iter_path:
+            continue
+        indices.append(ip[-1])
     return max(indices) if indices else None
 
 
@@ -206,18 +246,25 @@ def evaluate(
     workflow: Workflow,
     job_slug: str,
     root: Path,
-    current_iteration: int | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> bool:
     """Evaluate a predicate to a bool. Used by loop until / runs_if.
 
-    Resolution rules per design-patch §1.5:
-    - In-loop reference (`$loop-id.var[i]`): reads envelope from
-      indexed-variable storage.
-    - Out-of-loop reference (`$variable`): reads from the plain variable store.
-    - Bare reference truthiness: present and non-None ⇒ True; absent ⇒ False.
+    ``iter_path`` keys the calling execution. For loop-scoped references
+    (``$loop-id.var[i]``) the loop's body executes under
+    ``iter_path[:-1]``; the innermost component of iter_path is "this
+    loop's iter".
     """
     parsed = parse_predicate(text)
     ref = parsed.ref
+
+    # Compute enclosing iter_path / current iter for loop-scoped refs.
+    if iter_path:
+        enclosing_iter_path: tuple[int, ...] = iter_path[:-1]
+        current_iter: int | None = iter_path[-1]
+    else:
+        enclosing_iter_path = ()
+        current_iter = None
 
     # Resolve the value the LHS points at.
     value: object | None
@@ -225,31 +272,32 @@ def evaluate(
         # Loop-scoped reference.
         if ref.index_form is None:
             raise PredicateError(f"loop-scoped reference must have an index: {text!r}")
-        idx = _resolve_index(ref.index_form, current_iteration)
+        idx = _resolve_index(ref.index_form, current_iter)
         if idx is None:
             # `[i-1]` on iteration 0, or `[i]` outside a loop. Treat as absent.
             value = None
         elif idx == -1:  # 'last' sentinel
             highest = _highest_loop_iteration(
-                job_slug=job_slug, loop_id=ref.loop_id, var_name=ref.var_name, root=root
+                job_slug=job_slug,
+                var_name=ref.var_name,
+                enclosing_iter_path=enclosing_iter_path,
+                root=root,
             )
             if highest is None:
                 value = None
             else:
                 envelope = _read_loop_envelope(
                     job_slug=job_slug,
-                    loop_id=ref.loop_id,
                     var_name=ref.var_name,
-                    iteration=highest,
+                    iter_path=(*enclosing_iter_path, highest),
                     root=root,
                 )
                 value = _materialise_envelope_value(envelope) if envelope else None
         else:
             envelope = _read_loop_envelope(
                 job_slug=job_slug,
-                loop_id=ref.loop_id,
                 var_name=ref.var_name,
-                iteration=idx,
+                iter_path=(*enclosing_iter_path, idx),
                 root=root,
             )
             value = _materialise_envelope_value(envelope) if envelope else None

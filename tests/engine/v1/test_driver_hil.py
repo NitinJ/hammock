@@ -76,11 +76,12 @@ def _make_writer_fake(
         prompt: str, attempt_dir: Path, cwd: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         node_id = prompt.splitlines()[0].removeprefix("# Node: ").strip()
-        job_dir = attempt_dir.parents[3]
-        variables_dir = job_dir / "variables"
-        variables_dir.mkdir(parents=True, exist_ok=True)
-        for var_name, payload in payloads_per_node.get(node_id, {}).items():
-            (variables_dir / f"{var_name}.json").write_text(json.dumps(payload))
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        # v2: agent writes raw value-JSON to attempt_dir / output.json.
+        node_payloads = payloads_per_node.get(node_id, {})
+        if node_payloads:
+            payload = next(iter(node_payloads.values()))
+            (attempt_dir / "output.json").write_text(json.dumps(payload))
         (attempt_dir / "chat.jsonl").write_text(f"(fake) {node_id} done\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")

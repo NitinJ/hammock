@@ -49,7 +49,7 @@ class SummaryType:
     Value: ClassVar[type[SummaryValue]] = SummaryValue
 
     def produce(self, decl: SummaryDecl, ctx: NodeContext) -> SummaryValue:
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(f"summary not produced at {path}")
         raw = path.read_bytes()
@@ -67,7 +67,7 @@ class SummaryType:
     def render_for_producer(self, decl: SummaryDecl, ctx: PromptContext) -> str:
         return (
             f"### Output `{ctx.var_name}` (summary)\n\n"
-            f"Write your output as JSON to: `{ctx.expected_path()}`.\n\n"
+            f"Write your output as JSON to: `{ctx.attempt_output_path()}`.\n\n"
             f"{_PROMPT_HINT}\n"
         )
 

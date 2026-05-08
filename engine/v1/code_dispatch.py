@@ -17,8 +17,9 @@ from __future__ import annotations
 import logging
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from engine.v1 import git_ops
 from engine.v1.prompt import OutputSlot, collect_output_slots
@@ -39,8 +40,9 @@ class _CodeNodeContext:
     """NodeContext for `code` kind. Exposes substrate fields and git/gh
     helpers so variable types like `pr` can do post-actor mechanics.
 
-    Loop-aware: when ``loop_id`` and ``iteration`` are set, ``expected_path``
-    routes to the indexed envelope location."""
+    ``iter_path`` keys this execution; ``expected_path`` and
+    ``attempt_output_path`` use it to compute the same v2 paths the
+    artifact dispatcher uses."""
 
     var_name: str
     job_dir: Path
@@ -49,17 +51,22 @@ class _CodeNodeContext:
     base_branch: str
     repo_slug: str
     repo_dir: Path
-    loop_id: str | None = None
-    iteration: int | None = None
+    iter_path: tuple[int, ...] = field(default_factory=tuple)
+    attempt_dir: Path | None = None
+    inputs: dict[str, Any] = field(default_factory=dict)
 
     def expected_path(self) -> Path:
-        if self.loop_id is not None and self.iteration is not None:
-            slug = self.job_dir.name
-            root = self.job_dir.parent.parent
-            return paths.loop_variable_envelope_path(
-                slug, self.loop_id, self.var_name, self.iteration, root=root
+        slug = self.job_dir.name
+        root = self.job_dir.parent.parent
+        return paths.variable_envelope_path(slug, self.var_name, self.iter_path, root=root)
+
+    def attempt_output_path(self) -> Path:
+        if self.attempt_dir is None:
+            raise RuntimeError(
+                "attempt_output_path requires attempt_dir on the context — "
+                "the dispatcher must populate it before invoking produce"
             )
-        return self.job_dir / "variables" / f"{self.var_name}.json"
+        return self.attempt_dir / "output.json"
 
     @property
     def repo(self) -> str:
@@ -112,9 +119,18 @@ class _CodePromptCtx:
     actor_workdir: Path
     stage_branch: str
     base_branch: str
+    iter_path: tuple[int, ...] = field(default_factory=tuple)
+    attempt_dir: Path | None = None
 
     def expected_path(self) -> Path:
-        return self.job_dir / "variables" / f"{self.var_name}.json"
+        slug = self.job_dir.name
+        root = self.job_dir.parent.parent
+        return paths.variable_envelope_path(slug, self.var_name, self.iter_path, root=root)
+
+    def attempt_output_path(self) -> Path:
+        if self.attempt_dir is None:
+            raise RuntimeError("attempt_output_path requires attempt_dir on the prompt context")
+        return self.attempt_dir / "output.json"
 
 
 @dataclass
@@ -168,8 +184,7 @@ def dispatch_code_agent(
     attempt: int = 1,
     claude_runner: ClaudeRunner | None = None,
     workflow_dir: Path | None = None,
-    loop_id: str | None = None,
-    iteration: int | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> CodeDispatchResult:
     """Run a single code + agent node end-to-end.
 
@@ -178,22 +193,21 @@ def dispatch_code_agent(
     Post-condition on success: every declared output has a typed
     envelope on disk and (for `pr` outputs) a real PR is open on GitHub.
 
-    When invoked inside a loop body, ``loop_id`` and ``iteration`` route
-    envelope writes to the indexed path layout."""
+    ``iter_path`` keys this execution. Empty tuple = top-level node;
+    otherwise one int per enclosing loop, outermost first."""
     runner = claude_runner or _default_claude_runner
 
     job_dir = paths.job_dir(job_slug, root=root)
-    attempt_dir = paths.node_attempt_dir(job_slug, node.id, attempt, root=root)
+    attempt_dir = paths.node_attempt_dir(job_slug, node.id, attempt, iter_path, root=root)
     attempt_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Resolve inputs (loop-aware).
+    # 1. Resolve inputs (iter-aware).
     resolved = resolve_node_inputs(
         node=node,
         workflow=workflow,
         job_slug=job_slug,
         root=root,
-        loop_id=loop_id,
-        iteration=iteration,
+        iter_path=iter_path,
     )
 
     # 2. Build prompt with code-aware context (so the `pr` type's
@@ -205,6 +219,8 @@ def dispatch_code_agent(
         job_dir=job_dir,
         substrate=substrate,
         workflow_dir=workflow_dir,
+        attempt_dir=attempt_dir,
+        iter_path=iter_path,
     )
     atomic_write_text(attempt_dir / "prompt.md", prompt)
 
@@ -237,8 +253,8 @@ def dispatch_code_agent(
             job_slug=job_slug,
             root=root,
             substrate=substrate,
-            loop_id=loop_id,
-            iteration=iteration,
+            attempt_dir=attempt_dir,
+            iter_path=iter_path,
         )
     except VariableTypeError as exc:
         return CodeDispatchResult(
@@ -270,6 +286,8 @@ def _build_code_prompt(
     job_dir: Path,
     substrate: CodeSubstrate,
     workflow_dir: Path | None = None,
+    attempt_dir: Path | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> str:
     """Wrap the artifact prompt builder with code-aware substrate hints
     so per-output `render_for_producer` (for `pr`, `branch`, etc.) sees
@@ -339,7 +357,12 @@ def _build_code_prompt(
                 type_name = _type_name_from_value(slot.value, workflow)
                 if type_name:
                     type_obj = get_type(type_name)
-                    ctx = _ArtifactPromptCtx(var_name=slot_name, job_dir=job_dir)
+                    ctx = _ArtifactPromptCtx(
+                        var_name=slot_name,
+                        job_dir=job_dir,
+                        iter_path=iter_path,
+                        attempt_dir=attempt_dir,
+                    )
                     parts.append(type_obj.render_for_consumer(type_obj.Decl(), slot.value, ctx))
                     parts.append("")
                     continue
@@ -361,6 +384,8 @@ def _build_code_prompt(
                 actor_workdir=substrate.worktree,
                 stage_branch=substrate.stage_branch,
                 base_branch=substrate.base_branch,
+                iter_path=iter_path,
+                attempt_dir=attempt_dir,
             )
             parts.append(type_obj.render_for_producer(type_obj.Decl(), ctx))
             if slot.optional:
@@ -395,8 +420,8 @@ def _produce_code_outputs(
     job_slug: str,
     root: Path,
     substrate: CodeSubstrate,
-    loop_id: str | None = None,
-    iteration: int | None = None,
+    attempt_dir: Path,
+    iter_path: tuple[int, ...],
 ) -> None:
     job_dir = paths.job_dir(job_slug, root=root)
     paths.variables_dir(job_slug, root=root).mkdir(parents=True, exist_ok=True)
@@ -411,8 +436,8 @@ def _produce_code_outputs(
             base_branch=substrate.base_branch,
             repo_slug=substrate.repo_slug,
             repo_dir=substrate.repo_dir,
-            loop_id=loop_id,
-            iteration=iteration,
+            iter_path=iter_path,
+            attempt_dir=attempt_dir,
         )
         if slot.optional:
             from shared.v1.types.protocol import VariableTypeError as _VTErr
@@ -437,10 +462,5 @@ def _produce_code_outputs(
             value_payload=value.model_dump(mode="json"),
             repo=substrate.repo_slug,
         )
-        if loop_id is not None and iteration is not None:
-            target = paths.loop_variable_envelope_path(
-                job_slug, loop_id, slot.var_name, iteration, root=root
-            )
-        else:
-            target = paths.variable_envelope_path(job_slug, slot.var_name, root=root)
+        target = paths.variable_envelope_path(job_slug, slot.var_name, iter_path, root=root)
         atomic_write_text(target, env.model_dump_json())

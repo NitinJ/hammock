@@ -60,7 +60,7 @@ class ImplSpecType:
     Value: ClassVar[type[ImplSpecValue]] = ImplSpecValue
 
     def produce(self, decl: ImplSpecDecl, ctx: NodeContext) -> ImplSpecValue:
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(f"impl-spec not produced at {path}")
         raw = path.read_bytes()
@@ -78,7 +78,7 @@ class ImplSpecType:
     def render_for_producer(self, decl: ImplSpecDecl, ctx: PromptContext) -> str:
         return (
             f"### Output `{ctx.var_name}` (impl-spec)\n\n"
-            f"Write your output as JSON to: `{ctx.expected_path()}`.\n\n"
+            f"Write your output as JSON to: `{ctx.attempt_output_path()}`.\n\n"
             f"{_PROMPT_HINT}\n"
         )
 

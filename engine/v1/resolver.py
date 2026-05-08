@@ -10,6 +10,7 @@ design-patch §1.5.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,11 +73,41 @@ def _parse_ref(ref: str) -> tuple[str, list[str]]:
 
 
 def _read_envelope(path: Path) -> Envelope | None:
+    """Read an envelope at *path*, following one ``$ref`` indirection.
+
+    Loop output projections may write a tiny pointer file with the
+    shape ``{"$ref": "<source-stem>"}`` instead of duplicating the body
+    envelope. We follow such pointers exactly once: if the resolved
+    source is itself a $ref, that's a wiring bug and we raise.
+    """
     if not path.is_file():
         return None
     raw = path.read_bytes()
     if not raw.strip():
         return None
+    # Cheap pre-parse to detect $ref pointer files without doing two
+    # full Envelope validations on the happy path.
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
+        stem = parsed["$ref"]
+        if not isinstance(stem, str) or not stem:
+            raise ResolutionError(f"$ref pointer at {path} has invalid stem {stem!r}")
+        source = path.parent / f"{stem}.json"
+        if not source.is_file():
+            return None
+        source_raw = source.read_bytes()
+        if not source_raw.strip():
+            return None
+        source_parsed = json.loads(source_raw)
+        if isinstance(source_parsed, dict) and set(source_parsed.keys()) == {"$ref"}:
+            raise ResolutionError(
+                f"$ref pointer at {path} resolves to another $ref at {source}; "
+                "multi-hop chaining is not allowed"
+            )
+        return Envelope.model_validate_json(source_raw)
     return Envelope.model_validate_json(raw)
 
 
@@ -110,17 +141,36 @@ def _walk_field_path(value: object, fields: list[str], ref: str) -> object:
 
 
 def _highest_loop_iteration(
-    *, job_slug: str, loop_id: str, var_name: str, root: Path
+    *,
+    job_slug: str,
+    var_name: str,
+    enclosing_iter_path: tuple[int, ...],
+    root: Path,
 ) -> int | None:
-    """Find the highest iteration the loop body has produced for
-    *var_name*. Used for ``[last]`` resolution outside the loop."""
-    safe = paths._safe_loop_id(loop_id)
-    pattern = f"loop_{safe}_{var_name}_*.json"
-    matches = list(paths.variables_dir(job_slug, root=root).glob(pattern))
-    if not matches:
+    """Find the highest inner-loop iter index the body has produced for
+    *var_name* under *enclosing_iter_path*. Used for ``[last]`` resolution.
+
+    Walks ``variables/<var>__<token>.json`` looking for tokens whose
+    iter_path matches ``enclosing_iter_path`` extended by one int.
+    """
+    vd = paths.variables_dir(job_slug, root=root)
+    if not vd.is_dir():
         return None
-    suffix_re = re.compile(rf"loop_{re.escape(safe)}_{re.escape(var_name)}_(\d+)\.json")
-    indices = [int(m.group(1)) for f in matches if (m := suffix_re.match(f.name))]
+    prefix = f"{var_name}__"
+    indices: list[int] = []
+    for f in vd.iterdir():
+        if not f.name.startswith(prefix) or not f.name.endswith(".json"):
+            continue
+        token = f.name[len(prefix) : -len(".json")]
+        try:
+            ip = paths.parse_iter_token(token)
+        except ValueError:
+            continue
+        if len(ip) != len(enclosing_iter_path) + 1:
+            continue
+        if ip[: len(enclosing_iter_path)] != enclosing_iter_path:
+            continue
+        indices.append(ip[-1])
     return max(indices) if indices else None
 
 
@@ -130,15 +180,15 @@ def resolve_node_inputs(
     workflow: Workflow,
     job_slug: str,
     root: Path,
-    loop_id: str | None = None,
-    iteration: int | None = None,
+    iter_path: tuple[int, ...] = (),
 ) -> dict[str, ResolvedInput]:
     """Resolve every input slot on `node` against the engine's variable
     store on disk. Returns a dict keyed by input name (with `?` stripped).
 
-    When ``loop_id`` and ``iteration`` are set, references to ``[i]``
-    resolve to that iteration; ``[i-1]`` to the previous one (None on
-    iteration 0).
+    ``iter_path`` keys this execution. References like ``[i]`` resolve to
+    the innermost iter (last component of iter_path); ``[i-1]`` to the
+    previous one (None on iter 0); ``[last]`` finds the highest existing
+    inner index under the enclosing iter_path.
 
     Raises ``ResolutionError`` only when a *required* input cannot be
     resolved. Missing optional inputs land as ``ResolvedInput(present=False)``.
@@ -151,7 +201,7 @@ def resolve_node_inputs(
             ref=ref,
             job_slug=job_slug,
             root=root,
-            current_iteration=iteration,
+            iter_path=iter_path,
         )
         if envelope is None:
             if optional:
@@ -181,28 +231,52 @@ def _read_loop_or_plain_envelope(
     ref: str,
     job_slug: str,
     root: Path,
-    current_iteration: int | None,
-):
-    """Read the envelope a reference points at — loop-indexed or plain.
+    iter_path: tuple[int, ...],
+) -> Envelope | None:
+    """Read the envelope a reference points at, threading iter_path.
+
+    For ``$loop-id.var[idx]`` the loop-id segment names which loop the
+    body executed under; in v2's universal keying it's only used to
+    distinguish loop-scoped from plain refs (the loop's enclosing
+    iter_path is the caller's iter_path with the innermost component
+    treated as "this loop's iter").
 
     Returns the Envelope or None if the variable hasn't been produced.
     """
     text = ref.strip()
     m_loop = _LOOP_VAR_REF_RE.match(text)
     if m_loop is not None:
-        loop_id = m_loop.group("loop_id")
         var_name = m_loop.group("var")
         idx_form = m_loop.group("idx")
-        idx = _resolve_loop_index(idx_form, current_iteration, job_slug, loop_id, var_name, root)
+        # The loop's body executes under enclosing_iter_path =
+        # iter_path[:-1] (the loop itself is the innermost iter). For a
+        # body node looking at its own loop's `[i]`, that's iter_path[-1].
+        if not iter_path:
+            enclosing_iter_path: tuple[int, ...] = ()
+            current_iter: int | None = None
+        else:
+            enclosing_iter_path = iter_path[:-1]
+            current_iter = iter_path[-1]
+        idx = _resolve_loop_index(
+            idx_form,
+            current_iter=current_iter,
+            job_slug=job_slug,
+            var_name=var_name,
+            enclosing_iter_path=enclosing_iter_path,
+            root=root,
+        )
         if idx is None:
             return None
-        path = paths.loop_variable_envelope_path(job_slug, loop_id, var_name, idx, root=root)
+        full_iter_path = (*enclosing_iter_path, idx)
+        path = paths.variable_envelope_path(job_slug, var_name, full_iter_path, root=root)
         return _read_envelope(path)
 
     m_plain = _VAR_REF_RE.match(text)
     if m_plain is not None:
         var_name = m_plain.group(1)
-        return _read_envelope(paths.variable_envelope_path(job_slug, var_name, root=root))
+        # Plain refs read at top-level. Outer-scope projections from
+        # finished loops sit at the top-level path.
+        return _read_envelope(paths.variable_envelope_path(job_slug, var_name, (), root=root))
     raise ResolutionError(f"malformed variable reference {ref!r}")
 
 
@@ -219,20 +293,24 @@ def _field_path_for_ref(ref: str) -> list[str]:
 
 def _resolve_loop_index(
     idx_form: str,
-    current_iteration: int | None,
+    *,
+    current_iter: int | None,
     job_slug: str,
-    loop_id: str,
     var_name: str,
+    enclosing_iter_path: tuple[int, ...],
     root: Path,
 ) -> int | None:
     if idx_form == "i":
-        return current_iteration
+        return current_iter
     if idx_form == "i-1":
-        if current_iteration is None or current_iteration <= 0:
+        if current_iter is None or current_iter <= 0:
             return None
-        return current_iteration - 1
+        return current_iter - 1
     if idx_form == "last":
         return _highest_loop_iteration(
-            job_slug=job_slug, loop_id=loop_id, var_name=var_name, root=root
+            job_slug=job_slug,
+            var_name=var_name,
+            enclosing_iter_path=enclosing_iter_path,
+            root=root,
         )
     return int(idx_form)

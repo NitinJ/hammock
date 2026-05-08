@@ -69,7 +69,7 @@ class ReviewVerdictType:
     Value: ClassVar[type[ReviewVerdictValue]] = ReviewVerdictValue
 
     def produce(self, decl: ReviewVerdictDecl, ctx: NodeContext) -> ReviewVerdictValue:
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(f"review-verdict not produced at {path}")
         raw = path.read_bytes()
@@ -87,7 +87,7 @@ class ReviewVerdictType:
     def render_for_producer(self, decl: ReviewVerdictDecl, ctx: PromptContext) -> str:
         return (
             f"### Output `{ctx.var_name}` (review-verdict)\n\n"
-            f"Write your output as JSON to: `{ctx.expected_path()}`.\n\n"
+            f"Write your output as JSON to: `{ctx.attempt_output_path()}`.\n\n"
             f"{_PROMPT_HINT}\n"
         )
 

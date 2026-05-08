@@ -59,7 +59,7 @@ class DesignSpecType:
     Value: ClassVar[type[DesignSpecValue]] = DesignSpecValue
 
     def produce(self, decl: DesignSpecDecl, ctx: NodeContext) -> DesignSpecValue:
-        path = ctx.expected_path()
+        path = ctx.attempt_output_path()
         if not path.is_file():
             raise VariableTypeError(f"design-spec not produced at {path}")
         raw = path.read_bytes()
@@ -77,7 +77,7 @@ class DesignSpecType:
     def render_for_producer(self, decl: DesignSpecDecl, ctx: PromptContext) -> str:
         return (
             f"### Output `{ctx.var_name}` (design-spec)\n\n"
-            f"Write your output as JSON to: `{ctx.expected_path()}`.\n\n"
+            f"Write your output as JSON to: `{ctx.attempt_output_path()}`.\n\n"
             f"{_PROMPT_HINT}\n"
         )
 
