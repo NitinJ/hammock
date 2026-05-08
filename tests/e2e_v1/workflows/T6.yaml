@@ -61,12 +61,12 @@ nodes:
   - id: design-spec-loop
     kind: loop
     after: [write-bug-report]
-    until: $design-spec-loop.design_spec_review_human[i]
+    until: $design-spec-loop.design_spec_review_human[i].verdict == 'approved'
     max_iterations: 1
     body:
       - id: design-spec-agent-loop
         kind: loop
-        until: $design-spec-agent-loop.design_spec_review_agent[i]
+        until: $design-spec-agent-loop.design_spec_review_agent[i].verdict == 'approved'
         max_iterations: 1
         body:
           - id: write-design-spec
@@ -101,12 +101,12 @@ nodes:
   - id: impl-spec-loop
     kind: loop
     after: [design-spec-loop]
-    until: $impl-spec-loop.impl_spec_review_human[i]
+    until: $impl-spec-loop.impl_spec_review_human[i].verdict == 'approved'
     max_iterations: 1
     body:
       - id: impl-spec-agent-loop
         kind: loop
-        until: $impl-spec-agent-loop.impl_spec_review_agent[i]
+        until: $impl-spec-agent-loop.impl_spec_review_agent[i].verdict == 'approved'
         max_iterations: 1
         body:
           - id: write-impl-spec
@@ -142,12 +142,12 @@ nodes:
   - id: impl-plan-loop
     kind: loop
     after: [impl-spec-loop]
-    until: $impl-plan-loop.impl_plan_review_human[i]
+    until: $impl-plan-loop.impl_plan_review_human[i].verdict == 'approved'
     max_iterations: 1
     body:
       - id: impl-plan-agent-loop
         kind: loop
-        until: $impl-plan-agent-loop.impl_plan_review_agent[i]
+        until: $impl-plan-agent-loop.impl_plan_review_agent[i].verdict == 'approved'
         max_iterations: 1
         body:
           - id: write-impl-plan
