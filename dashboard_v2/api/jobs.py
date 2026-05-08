@@ -67,7 +67,7 @@ async def submit_job(
     request: Request,
     workflow: str | None = Form(default=None),
     request_text: str | None = Form(default=None, alias="request"),
-    artifacts: list[UploadFile] = File(default_factory=list),
+    artifacts: list[UploadFile] = File(default_factory=list),  # noqa: B008  fastapi default
 ) -> JobSubmitResponse:
     """Submit a job. Accepts either:
 

@@ -40,10 +40,13 @@ router = APIRouter()
 _COALESCE_S = 0.5
 
 
-def _classify(rel_path: str) -> tuple[str, str | None] | None:
+def classify(rel_path: str) -> tuple[str, str | None] | None:
     """Map a relative path under the job dir to an (event_type, node_id) tuple.
 
     Returns None if the path isn't one we surface as an event.
+
+    Public so tests and tooling can verify the mapping without going
+    through the streaming endpoint.
     """
     if rel_path == "job.md":
         return ("job_state_changed", None)
@@ -98,7 +101,7 @@ async def _watch(slug: str, request: Request) -> AsyncIterator[str]:
             now = time.monotonic()
             for path in changed:
                 rel = os.path.relpath(path, job_dir)
-                kind = _classify(rel)
+                kind = classify(rel)
                 if kind is None:
                     continue
                 event_type, node_id = kind
