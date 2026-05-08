@@ -40,16 +40,25 @@ export interface NodeDetail {
   human_decision: HumanDecision | null;
 }
 
+export interface WorkflowNode {
+  id: string;
+  prompt: string;
+  after: string[];
+  human_review: boolean;
+  description: string | null;
+  requires?: string[];
+}
+
 export interface WorkflowSummary {
   name: string;
   description: string | null;
-  nodes: Array<{
-    id: string;
-    prompt: string;
-    after: string[];
-    human_review: boolean;
-    description: string | null;
-  }>;
+  nodes: WorkflowNode[];
+  bundled?: boolean;
+}
+
+export interface WorkflowDetail extends WorkflowSummary {
+  yaml: string;
+  bundled: boolean;
 }
 
 export interface ChatTurn {

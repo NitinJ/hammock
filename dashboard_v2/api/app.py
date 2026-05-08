@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from dashboard_v2.api import jobs, sse
+from dashboard_v2.api import jobs, sse, workflows
 from dashboard_v2.settings import load_settings
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.include_router(workflows.router, prefix="/api")
     app.include_router(jobs.router, prefix="/api")
     app.include_router(sse.router, prefix="/sse")
 

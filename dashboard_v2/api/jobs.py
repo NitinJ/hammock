@@ -16,12 +16,10 @@ from dashboard_v2.api.artifacts import save_artifacts
 from dashboard_v2.api.projections import (
     job_summary,
     list_jobs,
-    list_workflows,
     load_workflow_or_none,
     node_chat,
     node_detail,
     orchestrator_chat,
-    workflow_detail,
     write_human_decision,
 )
 from dashboard_v2.runner.spawn import spawn_orchestrator
@@ -64,19 +62,6 @@ class HumanDecisionRequest(BaseModel):
 # -------------------- Endpoints --------------------
 
 
-@router.get("/workflows")
-def get_workflows() -> dict[str, Any]:
-    return {"workflows": list_workflows()}
-
-
-@router.get("/workflows/{name}")
-def get_workflow(name: str) -> dict[str, Any]:
-    wf = workflow_detail(name)
-    if wf is None:
-        raise HTTPException(status_code=404, detail=f"workflow {name!r} not found")
-    return wf
-
-
 @router.post("/jobs", response_model=JobSubmitResponse)
 async def submit_job(
     request: Request,
@@ -117,7 +102,7 @@ async def submit_job(
     if not body_request or not body_request.strip():
         raise HTTPException(status_code=400, detail="request is required")
     settings = load_settings()
-    wf = load_workflow_or_none(body_workflow)
+    wf = load_workflow_or_none(body_workflow, root=settings.root)
     if wf is None:
         raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} not found")
     slug = _derive_slug(body_workflow, body_request)

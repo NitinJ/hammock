@@ -56,9 +56,7 @@ def save_artifacts(
         return []
     total = sum(len(content) for _, content in files)
     if total > _MAX_TOTAL_BYTES:
-        raise ValueError(
-            f"total artifact size {total} bytes exceeds cap {_MAX_TOTAL_BYTES} bytes"
-        )
+        raise ValueError(f"total artifact size {total} bytes exceeds cap {_MAX_TOTAL_BYTES} bytes")
     target_dir = paths.ensure_inputs_dir(slug, root=root)
     saved: list[tuple[str, int]] = []
     used: set[str] = set()

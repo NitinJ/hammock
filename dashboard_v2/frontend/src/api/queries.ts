@@ -2,7 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, type Ref } from "vue";
 
 import { api } from "./client";
-import type { ChatResponse, JobSummary, NodeDetail, WorkflowSummary } from "./types";
+import type {
+  ChatResponse,
+  JobSummary,
+  NodeDetail,
+  WorkflowDetail,
+  WorkflowSummary,
+} from "./types";
 
 export const QUERY_KEYS = {
   workflows: () => ["workflows"] as const,
@@ -19,6 +25,60 @@ export function useWorkflows() {
     queryKey: QUERY_KEYS.workflows(),
     queryFn: () => api.get<{ workflows: WorkflowSummary[] }>("/api/workflows"),
   });
+}
+
+export function useWorkflow(name: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.workflow(name.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<WorkflowDetail>(`/api/workflows/${name.value}`),
+    enabled: computed(() => !!name.value),
+  });
+}
+
+export function useCreateWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; yaml: string }) =>
+      api.post<{ name: string }>("/api/workflows", body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useUpdateWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, yaml }: { name: string; yaml: string }) =>
+      api.put<{ name: string }>(`/api/workflows/${name}`, { yaml }),
+    onSuccess: (_, { name }) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflow(name) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useDeleteWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.del<{ name: string }>(`/api/workflows/${name}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export async function validateWorkflowYaml(
+  yaml: string,
+): Promise<{
+  valid: boolean;
+  error?: string;
+  name?: string;
+  description?: string | null;
+  nodes?: import("./types").WorkflowNode[];
+}> {
+  return api.post("/api/workflows/validate", { yaml });
 }
 
 export function useJobs() {

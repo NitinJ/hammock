@@ -96,6 +96,20 @@ def _default_runner(
         )
 
 
+def resolve_workflow_path(workflow_name: str, root: Path | None = None) -> Path:
+    """Return the yaml path for a workflow name.
+
+    User-defined workflows under ``<root>/workflows/<name>.yaml`` win
+    over bundled. Falls back to bundled. If neither exists, returns
+    the bundled path so the caller hits a clean WorkflowError.
+    """
+    if root is not None:
+        user = root / "workflows" / f"{workflow_name}.yaml"
+        if user.is_file():
+            return user
+    return WORKFLOWS_DIR / f"{workflow_name}.yaml"
+
+
 def submit_job(
     *,
     job: JobConfig,
@@ -108,7 +122,7 @@ def submit_job(
     workflow.yaml into the job dir. Copies the project repo into
     ``<job_dir>/repo`` if a project_repo_path is supplied.
     """
-    wf_path = workflow_path or (WORKFLOWS_DIR / f"{job.workflow_name}.yaml")
+    wf_path = workflow_path or resolve_workflow_path(job.workflow_name, root=root)
     workflow = load_workflow(wf_path)
     assert workflow.name, "workflow must declare a name"
 
@@ -156,7 +170,7 @@ def run_job(
     snapshot, we reuse it. The orchestrator is itself idempotent
     (per-node state.md guards), so re-spawning it is safe.
     """
-    wf_path = workflow_path or (WORKFLOWS_DIR / f"{job.workflow_name}.yaml")
+    wf_path = workflow_path or resolve_workflow_path(job.workflow_name, root=root)
     job_dir = paths.job_dir(job.slug, root=root)
     if not job_dir.is_dir():
         submit_job(job=job, workflow_path=wf_path, root=root)
@@ -217,14 +231,26 @@ def run_job(
     return completed.returncode
 
 
-def discover_workflows(workflows_dir: Path = WORKFLOWS_DIR) -> list[Workflow]:
-    """List bundled workflows. Used by the dashboard for the dropdown."""
-    out: list[Workflow] = []
-    if not workflows_dir.is_dir():
-        return out
-    for path in sorted(workflows_dir.glob("*.yaml")):
-        try:
-            out.append(load_workflow(path))
-        except Exception as exc:
-            log.warning("workflow %s failed to load: %s", path, exc)
-    return out
+def discover_workflows(
+    workflows_dir: Path = WORKFLOWS_DIR,
+    *,
+    user_workflows_dir: Path | None = None,
+) -> list[Workflow]:
+    """List bundled + user-defined workflows. User-defined wins on
+    name collision (loaded second, overwrites in ``by_name`` map)."""
+    by_name: dict[str, Workflow] = {}
+    if workflows_dir.is_dir():
+        for path in sorted(workflows_dir.glob("*.yaml")):
+            try:
+                wf = load_workflow(path)
+                by_name[wf.name] = wf
+            except Exception as exc:
+                log.warning("workflow %s failed to load: %s", path, exc)
+    if user_workflows_dir and user_workflows_dir.is_dir():
+        for path in sorted(user_workflows_dir.glob("*.yaml")):
+            try:
+                wf = load_workflow(path)
+                by_name[wf.name] = wf
+            except Exception as exc:
+                log.warning("user workflow %s failed to load: %s", path, exc)
+    return list(by_name.values())

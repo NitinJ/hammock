@@ -192,21 +192,37 @@ def write_human_decision(
     return target
 
 
-def workflow_yaml_path_for_name(name: str) -> Path | None:
-    """Resolve a workflow name to the bundled file path."""
-    for wf in discover_workflows():
-        if wf.name == name:
-            from hammock_v2.engine.runner import WORKFLOWS_DIR
+def workflow_yaml_path_for_name(name: str, root: Path | None = None) -> Path | None:
+    """Resolve a workflow name to a yaml path.
 
-            return WORKFLOWS_DIR / f"{name}.yaml"
+    User-defined workflows under ``<root>/workflows/`` win over bundled
+    ones with the same name. ``root`` defaults to the configured
+    HAMMOCK_V2_ROOT.
+    """
+    from hammock_v2.engine.runner import WORKFLOWS_DIR
+
+    if root is not None:
+        user_path = root / "workflows" / f"{name}.yaml"
+        if user_path.is_file():
+            return user_path
+    bundled = WORKFLOWS_DIR / f"{name}.yaml"
+    if bundled.is_file():
+        return bundled
     return None
 
 
-def load_workflow_or_none(name: str) -> Workflow | None:
+def load_workflow_or_none(name: str, root: Path | None = None) -> Workflow | None:
     try:
-        path = workflow_yaml_path_for_name(name)
+        path = workflow_yaml_path_for_name(name, root=root)
         if path is None:
             return None
         return load_workflow(path)
     except WorkflowError:
         return None
+
+
+def list_user_workflow_paths(root: Path) -> list[Path]:
+    user_dir = root / "workflows"
+    if not user_dir.is_dir():
+        return []
+    return sorted(user_dir.glob("*.yaml"))
