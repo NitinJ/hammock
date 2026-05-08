@@ -9,9 +9,17 @@ workflow: t6-fix-bug-full
 #   - optional output (tests_pr?) with conditional runs_if downstream
 #   - summary referencing pr_list aggregate
 #
+# Review loop iteration caps:
+#   - Agent review loops:  max_iterations: 3  (one initial + up to two
+#     agent-suggested revisions before giving up)
+#   - Human review loops:  max_iterations: 5  (humans may bounce a
+#     draft a few times)
+# These caps were 1 in the v1 dogfood era when the stitcher always
+# approved. Once dogfood-fixes-2 wired predicate equality on verdict
+# correctly, real `needs-revision` paths started actually re-iterating
+# and immediately wedged at cap=1.
+#
 # KISS reductions (vs design §6.2):
-#   - All review loops capped at max_iterations: 1 (stitcher always
-#     approves; no rework cycle).
 #   - impl_plan.count is asked to be 1 in the request, so implement-loop
 #     runs once. Saves real-claude tokens; the count-from-typed-field
 #     code path is still exercised.
@@ -64,13 +72,13 @@ nodes:
     kind: loop
     after: [write-bug-report]
     until: $design-spec-loop.design_spec_review_human[i].verdict == 'approved'
-    max_iterations: 1
+    max_iterations: 5
     body:
       - id: design-spec-agent-loop
         name: "Design spec — agent draft + review"
         kind: loop
         until: $design-spec-agent-loop.design_spec_review_agent[i].verdict == 'approved'
-        max_iterations: 1
+        max_iterations: 3
         body:
           - id: write-design-spec
             name: "Write design spec"
@@ -109,13 +117,13 @@ nodes:
     kind: loop
     after: [design-spec-loop]
     until: $impl-spec-loop.impl_spec_review_human[i].verdict == 'approved'
-    max_iterations: 1
+    max_iterations: 5
     body:
       - id: impl-spec-agent-loop
         name: "Impl spec — agent draft + review"
         kind: loop
         until: $impl-spec-agent-loop.impl_spec_review_agent[i].verdict == 'approved'
-        max_iterations: 1
+        max_iterations: 3
         body:
           - id: write-impl-spec
             name: "Write impl spec"
@@ -155,13 +163,13 @@ nodes:
     kind: loop
     after: [impl-spec-loop]
     until: $impl-plan-loop.impl_plan_review_human[i].verdict == 'approved'
-    max_iterations: 1
+    max_iterations: 5
     body:
       - id: impl-plan-agent-loop
         name: "Impl plan — agent draft + review"
         kind: loop
         until: $impl-plan-agent-loop.impl_plan_review_agent[i].verdict == 'approved'
-        max_iterations: 1
+        max_iterations: 3
         body:
           - id: write-impl-plan
             name: "Write impl plan"

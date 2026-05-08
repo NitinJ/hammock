@@ -89,6 +89,40 @@ def test_bundled_workflow_loads(workflow_dir: Path) -> None:
     assert wf.nodes, "loaded workflow has no nodes"
 
 
+def test_fix_bug_review_loops_allow_revision_rounds() -> None:
+    """Bundled ``fix-bug`` review loops must allow at least one revision
+    round — i.e. ``max_iterations >= 2``. Regression guard for the
+    `black-color-missing` dogfood: agent reviews ran with
+    ``max_iterations: 1``, which meant a single ``needs-revision``
+    verdict immediately failed the loop with no chance to re-draft.
+    """
+    wf = load_workflow(BUNDLED_WORKFLOWS_DIR / "fix-bug" / "workflow.yaml")
+
+    review_loops: list[LoopNode] = []
+
+    def visit(nodes: list) -> None:
+        for n in nodes:
+            if isinstance(n, LoopNode):
+                # Heuristic: any until-loop whose predicate references a
+                # ``review-verdict``-typed variable is a review loop.
+                until = n.until or ""
+                if "review_human" in until or "review_agent" in until:
+                    review_loops.append(n)
+                visit(n.body)
+
+    visit(wf.nodes)
+    assert review_loops, "fix-bug should declare review loops; none found"
+
+    bad = [
+        (loop.id, loop.max_iterations) for loop in review_loops if (loop.max_iterations or 0) < 2
+    ]
+    assert not bad, (
+        "review loops with max_iterations < 2 in bundled fix-bug — "
+        "needs-revision verdicts will fail immediately with no "
+        f"revision round: {bad}"
+    )
+
+
 @pytest.mark.parametrize("workflow_dir", _bundled_workflow_dirs(), ids=lambda p: p.name)
 def test_bundled_workflow_has_prompt_per_agent_node(workflow_dir: Path) -> None:
     """For every agent-actor node — in artifact, code, and loop-body
