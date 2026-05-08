@@ -1,0 +1,150 @@
+"""Job + node + chat + HIL endpoints for v2 dashboard."""
+
+from __future__ import annotations
+
+import datetime as _dt
+import re
+import secrets
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from dashboard_v2.api.projections import (
+    job_summary,
+    list_jobs,
+    list_workflows,
+    load_workflow_or_none,
+    node_chat,
+    node_detail,
+    orchestrator_chat,
+    workflow_detail,
+    write_human_decision,
+)
+from dashboard_v2.runner.spawn import spawn_orchestrator
+from dashboard_v2.settings import load_settings
+from hammock_v2.engine import paths
+
+router = APIRouter()
+
+_SLUG_SAFE_RE = re.compile(r"[^a-z0-9-]+")
+
+
+def _derive_slug(workflow_name: str, request_text: str) -> str:
+    stamp = _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%d")
+    head = request_text.strip().lower()[:60]
+    head_slug = _SLUG_SAFE_RE.sub("-", head).strip("-") or "job"
+    suffix = secrets.token_hex(3)
+    return f"{stamp}-{workflow_name}-{head_slug}-{suffix}"
+
+
+# -------------------- Models --------------------
+
+
+class JobSubmitRequest(BaseModel):
+    workflow: str = Field(..., min_length=1)
+    request: str = Field(..., min_length=1)
+
+
+class JobSubmitResponse(BaseModel):
+    slug: str
+    pid: int
+
+
+class HumanDecisionRequest(BaseModel):
+    decision: str
+    comment: str | None = None
+
+
+# -------------------- Endpoints --------------------
+
+
+@router.get("/workflows")
+def get_workflows() -> dict[str, Any]:
+    return {"workflows": list_workflows()}
+
+
+@router.get("/workflows/{name}")
+def get_workflow(name: str) -> dict[str, Any]:
+    wf = workflow_detail(name)
+    if wf is None:
+        raise HTTPException(status_code=404, detail=f"workflow {name!r} not found")
+    return wf
+
+
+@router.post("/jobs", response_model=JobSubmitResponse)
+def submit_job(body: JobSubmitRequest) -> JobSubmitResponse:
+    settings = load_settings()
+    wf = load_workflow_or_none(body.workflow)
+    if wf is None:
+        raise HTTPException(status_code=400, detail=f"workflow {body.workflow!r} not found")
+    slug = _derive_slug(body.workflow, body.request)
+    pid = spawn_orchestrator(
+        slug=slug,
+        workflow_name=body.workflow,
+        request_text=body.request,
+        root=settings.root,
+        project_repo_path=settings.project_repo_path,
+        claude_binary=settings.claude_binary,
+        runner_mode=settings.runner_mode,
+    )
+    return JobSubmitResponse(slug=slug, pid=pid)
+
+
+@router.get("/jobs")
+def get_jobs() -> dict[str, Any]:
+    settings = load_settings()
+    return {"jobs": list_jobs(settings.root)}
+
+
+@router.get("/jobs/{slug}")
+def get_job(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    summary = job_summary(slug, root=settings.root)
+    if summary is None:
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    return summary
+
+
+@router.get("/jobs/{slug}/nodes/{node_id}")
+def get_node(slug: str, node_id: str) -> dict[str, Any]:
+    settings = load_settings()
+    detail = node_detail(slug, node_id, root=settings.root)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"node {node_id!r} of job {slug!r} not found")
+    return detail
+
+
+@router.get("/jobs/{slug}/nodes/{node_id}/chat")
+def get_node_chat(slug: str, node_id: str) -> dict[str, Any]:
+    settings = load_settings()
+    turns = node_chat(slug, node_id, root=settings.root)
+    return {"turns": turns, "has_chat": bool(turns)}
+
+
+@router.get("/jobs/{slug}/orchestrator/chat")
+def get_orchestrator_chat(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    turns = orchestrator_chat(slug, root=settings.root)
+    return {"turns": turns, "has_chat": bool(turns)}
+
+
+@router.post("/jobs/{slug}/nodes/{node_id}/human_decision")
+def post_human_decision(
+    slug: str, node_id: str, body: HumanDecisionRequest
+) -> dict[str, str]:
+    settings = load_settings()
+    if not paths.node_dir(slug, node_id, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail="node not found")
+    try:
+        target = write_human_decision(
+            slug=slug,
+            node_id=node_id,
+            decision=body.decision,
+            comment=body.comment,
+            root=settings.root,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"path": str(target), "ok": "true"}
