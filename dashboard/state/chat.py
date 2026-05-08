@@ -1,7 +1,7 @@
 """Read claude's stream-json transcript for a node's run.
 
 Each agent-actor node writes one JSON object per line to
-``<job_dir>/nodes/<node_id>/runs/<n>/chat.jsonl`` (claude's
+``<job_dir>/nodes/<node_id>/<iter_token>/runs/<n>/chat.jsonl`` (claude's
 ``--output-format stream-json``). This module is a pure-function read
 of that file, used by the dashboard's chat endpoint.
 
@@ -26,16 +26,24 @@ def read_agent_chat(
     root: Path,
     job_slug: str,
     node_id: str,
+    iter_path: tuple[int, ...] = (),
     attempt: int = 1,
 ) -> list[dict[str, Any]]:
     """Parse ``chat.jsonl`` into a list of turn dicts.
+
+    Looks up the file at
+    ``<job_dir>/nodes/<node_id>/<iter_token>/runs/<attempt>/chat.jsonl``
+    via ``paths.node_attempt_dir``. Top-level executions use
+    ``iter_path=()``.
 
     Returns ``[]`` when the file doesn't exist (old jobs, not-yet-run
     nodes, or the node isn't an agent node so no claude was spawned).
     Skips malformed lines with a warning — claude can be killed
     mid-turn and write a partial JSON line.
     """
-    chat_path = paths.node_attempt_dir(job_slug, node_id, attempt, root=root) / "chat.jsonl"
+    chat_path = (
+        paths.node_attempt_dir(job_slug, node_id, attempt, iter_path, root=root) / "chat.jsonl"
+    )
     if not chat_path.is_file():
         return []
     out: list[dict[str, Any]] = []

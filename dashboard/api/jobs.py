@@ -97,6 +97,41 @@ async def get_job(request: Request, job_slug: str) -> JobDetail:
     return detail
 
 
+@router.get(
+    "/{job_slug}/nodes/{node_id}/iter/{iter_token}/chat",
+    response_model=AgentChatResponse,
+)
+async def get_node_chat_at_iter(
+    request: Request,
+    job_slug: str,
+    node_id: str,
+    iter_token: str,
+    attempt: Annotated[int, Query(ge=1, description="attempt number (default 1)")] = 1,
+) -> AgentChatResponse:
+    """Per-(node, iter_path, attempt) chat transcript.
+
+    With v2 keying, every (node_id, iter_path) execution has its own
+    chat.jsonl under ``nodes/<id>/<iter_token>/runs/<attempt>/``.
+    Top-level executions use ``iter_token='top'``; loop body executions
+    use ``i<...>``. Bad token -> 400.
+
+    Always 200; the file's absence is signalled via ``has_chat=False``
+    so the frontend distinguishes 'no transcript yet' from 'job/node
+    not found'.
+    """
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    try:
+        iter_path = v1_paths.parse_iter_token(iter_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"bad iter_token: {exc}") from exc
+    turns = read_agent_chat(settings.root, job_slug, node_id, iter_path, attempt=attempt)
+    has_chat = (
+        v1_paths.node_attempt_dir(job_slug, node_id, attempt, iter_path, root=settings.root)
+        / "chat.jsonl"
+    ).is_file()
+    return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
+
+
 @router.get("/{job_slug}/nodes/{node_id}/chat", response_model=AgentChatResponse)
 async def get_node_chat(
     request: Request,
@@ -104,14 +139,14 @@ async def get_node_chat(
     node_id: str,
     attempt: Annotated[int, Query(ge=1, description="attempt number (default 1)")] = 1,
 ) -> AgentChatResponse:
-    """Per-node chat transcript: parse the agent's stream-json output.
+    """Top-level (iter_path=()) chat transcript shorthand.
 
-    Always 200; the file's absence is signalled via ``has_chat=False``
-    in the response body so the frontend distinguishes 'no transcript
-    yet' from 'job/node not found'.
+    Kept as a thin alias for the iter-keyed route while Stage D migrates
+    the frontend to always send an iter_token. Equivalent to
+    ``/iter/top/chat``.
     """
     settings = request.app.state.settings  # type: ignore[attr-defined]
-    turns = read_agent_chat(settings.root, job_slug, node_id, attempt=attempt)
+    turns = read_agent_chat(settings.root, job_slug, node_id, (), attempt=attempt)
     has_chat = (
         v1_paths.node_attempt_dir(job_slug, node_id, attempt, root=settings.root) / "chat.jsonl"
     ).is_file()
