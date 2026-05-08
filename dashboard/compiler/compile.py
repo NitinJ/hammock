@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,14 +50,24 @@ CompileResult = CompileSuccess | list[CompileFailure]
 _SLUG_SAFE_RE = re.compile(r"[^a-z0-9-]+")
 
 
-def _derive_slug(job_type: str, title: str, *, now: datetime | None = None) -> str:
-    """v1 slug: ``<YYYY-MM-DD>-<job_type>-<title-slug>``. Lowercase,
-    hyphenated, ASCII only."""
+def _derive_slug(
+    job_type: str, title: str, *, now: datetime | None = None, suffix: str | None = None
+) -> str:
+    """v1 slug: ``<YYYY-MM-DD>-<job_type>-<title-slug>-<suffix>``. Lowercase,
+    hyphenated, ASCII only.
+
+    The ``suffix`` is a short random hex tag (6 chars by default —
+    16M values, collision-free for our scale) appended so two jobs
+    submitted with the same title on the same day don't clash on the
+    job_dir filesystem path. Pass ``suffix`` explicitly in tests for
+    determinism.
+    """
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%d")
     title_slug = _SLUG_SAFE_RE.sub("-", title.lower()).strip("-")
     if not title_slug:
         title_slug = "untitled"
-    return f"{stamp}-{job_type}-{title_slug}"
+    tag = suffix if suffix is not None else secrets.token_hex(3)
+    return f"{stamp}-{job_type}-{title_slug}-{tag}"
 
 
 def compile_job(
