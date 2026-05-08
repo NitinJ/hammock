@@ -98,16 +98,19 @@ const props = withDefaults(
   defineProps<{
     jobSlug: string;
     nodeId: string;
+    /** Iteration coordinates; empty array = top-level execution. */
+    iterPath?: readonly number[];
     attempt?: number;
   }>(),
-  { attempt: 1 },
+  { attempt: 1, iterPath: () => [] },
 );
 
 const jobSlugRef = computed(() => props.jobSlug);
 const nodeIdRef = computed(() => props.nodeId);
+const iterPathRef = computed<readonly number[]>(() => props.iterPath ?? []);
 const attemptRef = computed(() => props.attempt);
 
-const chat = useAgentChat(jobSlugRef, nodeIdRef, attemptRef);
+const chat = useAgentChat(jobSlugRef, nodeIdRef, iterPathRef, attemptRef);
 
 const scrollerRef = ref<HTMLElement | null>(null);
 

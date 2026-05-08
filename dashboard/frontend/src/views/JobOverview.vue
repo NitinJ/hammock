@@ -212,6 +212,7 @@
               <AgentChatTail
                 :job-slug="jobSlug"
                 :node-id="selectedNodeId!"
+                :iter-path="iterParam"
                 :attempt="Math.max(1, nodeDetail.data.value.attempts || 1)"
               />
             </div>
@@ -293,7 +294,7 @@ const iterParam = computed<number[]>(() => {
     .filter((n) => !Number.isNaN(n));
 });
 
-const nodeDetail = useNodeDetail(jobSlug, selectedNodeId);
+const nodeDetail = useNodeDetail(jobSlug, selectedNodeId, iterParam);
 
 const renderedRows = computed(() =>
   buildRenderedRows(job.data.value?.nodes ?? [], job.data.value?.loop_names ?? {}),

@@ -21,6 +21,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/vue-query";
 import { computed, toValue } from "vue";
 import type { MaybeRefOrGetter } from "vue";
 import { api } from "./client";
+import { iterToken } from "./paths";
 import type {
   AgentChatResponse,
   AskAnswerRequest,
@@ -52,9 +53,19 @@ export const QUERY_KEYS = {
   jobs: (repoSlug?: string | null, state?: JobState | null) =>
     ["jobs", "list", repoSlug ?? null, state ?? null] as const,
   job: (jobSlug: string) => ["jobs", "detail", jobSlug] as const,
-  node: (jobSlug: string, nodeId: string) => ["jobs", jobSlug, "nodes", nodeId] as const,
-  agentChat: (jobSlug: string, nodeId: string, attempt: number) =>
-    ["jobs", jobSlug, "nodes", nodeId, "chat", attempt] as const,
+  /** Per-(node, iter_path) detail key. iterToken is folded into the
+   *  key so vue-query refetches automatically when the iter changes. */
+  node: (jobSlug: string, nodeId: string, iterPath: readonly number[] = []) =>
+    ["jobs", jobSlug, "nodes", nodeId, "iter", iterToken(iterPath)] as const,
+  /** Per-(node, iter_path, attempt) chat tail key. Mirrors the chat
+   *  endpoint URL — same axes carried in the key so subscribing to
+   *  `chat_jsonl` SSE events can target a single chat-tail cache. */
+  agentChat: (
+    jobSlug: string,
+    nodeId: string,
+    iterPath: readonly number[] = [],
+    attempt: number = 1,
+  ) => ["jobs", jobSlug, "nodes", nodeId, "iter", iterToken(iterPath), "chat", attempt] as const,
   hil: (jobSlug?: string | null) => ["hil", jobSlug ?? "all"] as const,
   settings: ["settings"] as const,
 };
@@ -170,10 +181,19 @@ export function useJob(jobSlug: MaybeRefOrGetter<string>) {
 export function useNodeDetail(
   jobSlug: MaybeRefOrGetter<string>,
   nodeId: MaybeRefOrGetter<string | null | undefined>,
+  iterPath?: MaybeRefOrGetter<readonly number[] | null | undefined>,
 ) {
+  const iterArr = computed<readonly number[]>(() => toValue(iterPath) ?? []);
   return useQuery({
-    queryKey: computed(() => QUERY_KEYS.node(toValue(jobSlug), toValue(nodeId) ?? "")),
-    queryFn: () => api.get<NodeDetail>(`/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}`),
+    queryKey: computed(() =>
+      QUERY_KEYS.node(toValue(jobSlug), toValue(nodeId) ?? "", iterArr.value),
+    ),
+    queryFn: () => {
+      const token = iterToken(iterArr.value);
+      return api.get<NodeDetail>(
+        `/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}?iter=${token}`,
+      );
+    },
     enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
     // 404 is the common failure mode (node not dispatched yet). Don't
     // retry — the JobOverview surface treats 404 as "not started".
@@ -184,16 +204,24 @@ export function useNodeDetail(
 export function useAgentChat(
   jobSlug: MaybeRefOrGetter<string>,
   nodeId: MaybeRefOrGetter<string | null | undefined>,
+  iterPath?: MaybeRefOrGetter<readonly number[] | null | undefined>,
   attempt?: MaybeRefOrGetter<number | null | undefined>,
 ) {
+  const iterArr = computed<readonly number[]>(() => toValue(iterPath) ?? []);
   return useQuery({
     queryKey: computed(() =>
-      QUERY_KEYS.agentChat(toValue(jobSlug), toValue(nodeId) ?? "", toValue(attempt) ?? 1),
+      QUERY_KEYS.agentChat(
+        toValue(jobSlug),
+        toValue(nodeId) ?? "",
+        iterArr.value,
+        toValue(attempt) ?? 1,
+      ),
     ),
     queryFn: () => {
       const a = toValue(attempt) ?? 1;
+      const token = iterToken(iterArr.value);
       return api.get<AgentChatResponse>(
-        `/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}/chat?attempt=${a}`,
+        `/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}/iter/${token}/chat?attempt=${a}`,
       );
     },
     enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
