@@ -88,11 +88,13 @@
       </aside>
 
       <!-- Right pane: node detail or HIL form -->
-      <main class="col-span-8 overflow-auto rounded-md border border-border bg-surface-raised p-4">
+      <main
+        class="col-span-8 flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-surface-raised p-4"
+      >
         <JobStreamPane v-if="!selectedNodeId" :job-slug="jobSlug" />
 
         <!-- HIL form for explicit pending nodes -->
-        <div v-else-if="explicitHilForSelected" class="space-y-4">
+        <div v-else-if="explicitHilForSelected" class="flex-1 space-y-4 overflow-auto">
           <div>
             <h2 class="text-sm font-semibold text-text-primary">
               {{ selectedNodeName }}
@@ -131,7 +133,13 @@
         </div>
 
         <!-- Default node detail -->
-        <div v-else-if="nodeDetail.data.value" class="space-y-4">
+        <div
+          v-else-if="nodeDetail.data.value"
+          :class="[
+            'flex-1 min-h-0',
+            isAgentNode ? 'flex flex-col gap-4' : 'space-y-4 overflow-auto',
+          ]"
+        >
           <div>
             <h2 class="text-sm font-semibold text-text-primary">
               {{ selectedNodeName }}
@@ -165,25 +173,72 @@
             </p>
           </div>
 
-          <div v-if="hasOutputs">
-            <div class="text-xs uppercase text-text-secondary">Outputs</div>
-            <div v-for="(env, name) in nodeDetail.data.value.outputs" :key="name" class="mt-2">
-              <div class="mb-1 font-mono text-xs text-text-secondary">{{ name }}</div>
-              <EnvelopeView :name="String(name)" :envelope="env" />
+          <!-- Agent nodes: outputs collapsed above, chat tail fills remainder -->
+          <template v-if="isAgentNode">
+            <details
+              data-testid="outputs-collapsible"
+              class="rounded-md border border-border bg-surface px-3 py-2"
+            >
+              <summary class="cursor-pointer text-xs uppercase text-text-secondary">
+                Outputs ({{ outputCount }})
+              </summary>
+              <div class="mt-2 space-y-3">
+                <div v-if="hasOutputs">
+                  <div
+                    v-for="(env, name) in nodeDetail.data.value.outputs"
+                    :key="name"
+                    class="mt-2"
+                  >
+                    <div class="mb-1 font-mono text-xs text-text-secondary">{{ name }}</div>
+                    <EnvelopeView :name="String(name)" :envelope="env" />
+                  </div>
+                </div>
+                <div
+                  v-else-if="isSucceededWithoutOutput"
+                  data-testid="empty-output-panel"
+                  class="rounded-md border border-border bg-surface-raised px-4 py-3"
+                >
+                  <div class="text-sm text-text-primary">Node completed — no output produced.</div>
+                  <div class="mt-1 text-xs text-text-secondary">
+                    This node didn't write any envelopes. If logs are useful, they're under the
+                    node's attempt directory on disk.
+                  </div>
+                </div>
+                <div v-else class="text-xs text-text-secondary">No outputs produced yet.</div>
+              </div>
+            </details>
+
+            <div class="min-h-[16rem] flex-1">
+              <AgentChatTail
+                :job-slug="jobSlug"
+                :node-id="selectedNodeId!"
+                :attempt="Math.max(1, nodeDetail.data.value.attempts || 1)"
+              />
             </div>
-          </div>
-          <div
-            v-else-if="isSucceededWithoutOutput"
-            data-testid="empty-output-panel"
-            class="rounded-md border border-border bg-surface px-4 py-3"
-          >
-            <div class="text-sm text-text-primary">Node completed — no output produced.</div>
-            <div class="mt-1 text-xs text-text-secondary">
-              This node didn't write any envelopes. If logs are useful, they're under the node's
-              attempt directory on disk.
+          </template>
+
+          <!-- Non-agent nodes (human HIL completed, engine): legacy layout -->
+          <template v-else>
+            <div v-if="hasOutputs">
+              <div class="text-xs uppercase text-text-secondary">Outputs</div>
+              <div v-for="(env, name) in nodeDetail.data.value.outputs" :key="name" class="mt-2">
+                <div class="mb-1 font-mono text-xs text-text-secondary">{{ name }}</div>
+                <EnvelopeView :name="String(name)" :envelope="env" />
+              </div>
             </div>
-          </div>
-          <div v-else class="text-xs text-text-secondary">No outputs produced yet.</div>
+            <div
+              v-else-if="isSucceededWithoutOutput"
+              data-testid="empty-output-panel"
+              class="rounded-md border border-border bg-surface px-4 py-3"
+            >
+              <div class="text-sm text-text-primary">Node completed — no output produced.</div>
+              <div class="mt-1 text-xs text-text-secondary">
+                This node didn't write any envelopes. If logs are useful, they're under the node's
+                attempt directory on disk.
+              </div>
+            </div>
+            <div v-else class="text-xs text-text-secondary">No outputs produced yet.</div>
+          </template>
         </div>
         <div v-else-if="nodeDetail.isPending.value" class="text-text-secondary">Loading…</div>
         <div v-else-if="isNodeNotStartedError" class="space-y-2">
@@ -215,6 +270,7 @@ import { useAnswerExplicitHil, useHilQueue, useJob, useNodeDetail } from "@/api/
 import type { HilQueueItem, NodeListEntry } from "@/api/schema.d";
 import StateBadge from "@/components/shared/StateBadge.vue";
 import FormRenderer from "@/components/hil/FormRenderer.vue";
+import AgentChatTail from "@/components/jobs/AgentChatTail.vue";
 import EnvelopeView from "@/components/jobs/EnvelopeView.vue";
 import JobStreamPane from "@/components/jobs/JobStreamPane.vue";
 import { buildRenderedRows } from "@/components/jobs/renderRows.ts";
@@ -263,6 +319,18 @@ const selectedNodeName = computed(() => {
   return match?.name ?? id;
 });
 
+/** True iff the selected node was driven by an agent (artifact or code).
+ *  Human HIL nodes and engine-actor nodes had no claude run, so there's
+ *  no chat to render. Loop nodes are containers — body rows are emitted,
+ *  not the loop itself. */
+const isAgentNode = computed<boolean>(() => {
+  const id = selectedNodeId.value;
+  if (!id) return false;
+  const entry = (job.data.value?.nodes ?? []).find((n) => n.node_id === id);
+  if (!entry) return false;
+  return entry.actor === "agent" && (entry.kind === "artifact" || entry.kind === "code");
+});
+
 function isSelected(entry: NodeListEntry): boolean {
   if (entry.node_id !== selectedNodeId.value) return false;
   if (entry.iter.length !== iterParam.value.length) return false;
@@ -309,6 +377,12 @@ async function submitExplicit(varName: string, value: Record<string, string>): P
 const hasOutputs = computed(() => {
   const d = nodeDetail.data.value;
   return !!d && Object.keys(d.outputs ?? {}).length > 0;
+});
+
+const outputCount = computed(() => {
+  const d = nodeDetail.data.value;
+  if (!d) return 0;
+  return Object.keys(d.outputs ?? {}).length;
 });
 
 /** A node that completed but produced no envelopes — e.g. tests-and-fix

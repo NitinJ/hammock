@@ -245,10 +245,10 @@ def test_emit_log_appends_to_per_attempt_stdout(
     attempt_dir = v1_paths.node_attempt_dir(
         fake_engine_offline.job_slug, "a-node", 1, root=fake_engine_offline.root
     )
-    stdout = attempt_dir / "stdout.log"
-    assert stdout.exists()
-    assert "first line" in stdout.read_text()
-    assert "second line" in stdout.read_text()
+    chat = attempt_dir / "chat.jsonl"
+    assert chat.exists()
+    assert "first line" in chat.read_text()
+    assert "second line" in chat.read_text()
 
 
 def test_request_hil_writes_pending_marker(

@@ -80,6 +80,17 @@ export interface NodeDetail {
   outputs: Record<string, EnvelopePayload>;
 }
 
+/** Response from `GET /api/jobs/{slug}/nodes/{id}/chat`. `turns` is the
+ *  raw stream-json output emitted by claude (`type: system|assistant|
+ *  user|result`). `has_chat=false` means no `chat.jsonl` on disk — old
+ *  jobs and not-yet-run nodes both surface this way; the frontend
+ *  renders "no transcript" in either case. */
+export interface AgentChatResponse {
+  turns: Record<string, unknown>[];
+  attempt: number;
+  has_chat: boolean;
+}
+
 export interface EnvelopePayload {
   type: string;
   version: string;

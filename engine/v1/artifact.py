@@ -86,16 +86,19 @@ def _default_claude_runner(
 
     We pass the prompt as a CLI argument (not stdin) and run with
     --permission-mode bypassPermissions so the agent can write files
-    without prompting. Output streams are redirected to attempt_dir/
-    stdout.log and stderr.log.
+    without prompting. Output is captured as JSONL via
+    --output-format stream-json (one JSON object per line: system /
+    assistant / user / result), so the dashboard can render the
+    turn-by-turn transcript. ``--verbose`` is required by claude when
+    pairing stream-json with ``-p``.
 
     When ``cwd`` is supplied, the subprocess runs there — this is the
     project repo clone for any job whose workflow has a repo, giving
     the agent free access to ``CLAUDE.md`` and project files.
     """
-    stdout_path = attempt_dir / "stdout.log"
+    chat_path = attempt_dir / "chat.jsonl"
     stderr_path = attempt_dir / "stderr.log"
-    with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
+    with chat_path.open("wb") as out, stderr_path.open("wb") as err:
         return subprocess.run(
             [
                 "claude",
@@ -103,6 +106,9 @@ def _default_claude_runner(
                 prompt,
                 "--permission-mode",
                 "bypassPermissions",
+                "--output-format",
+                "stream-json",
+                "--verbose",
             ],
             cwd=str(cwd) if cwd is not None else None,
             stdout=out,

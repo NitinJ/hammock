@@ -83,7 +83,7 @@ def _make_writer_fake(
         variables_dir.mkdir(parents=True, exist_ok=True)
         for var_name, payload in payloads_per_node.get(node_id, {}).items():
             (variables_dir / f"{var_name}.json").write_text(json.dumps(payload))
-        (attempt_dir / "stdout.log").write_text(f"(fake) {node_id} succeeded\n")
+        (attempt_dir / "chat.jsonl").write_text(f"(fake) {node_id} succeeded\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -336,7 +336,7 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
                 json.dumps({"summary": "x", "document": "## Bug\n\n."})
             )
         # write-design-spec writes nothing → fails
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -376,7 +376,7 @@ def test_run_job_resumes_skipping_already_succeeded_nodes(tmp_path: Path) -> Non
             (variables_dir / "design_spec.json").write_text(
                 json.dumps({"title": "t", "overview": "o", "document": "## D\n\n."})
             )
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 

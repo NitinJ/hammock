@@ -18,9 +18,11 @@ from dashboard.code.branches import create_job_branch
 from dashboard.compiler.compile import compile_job
 from dashboard.driver.lifecycle import spawn_driver
 from dashboard.state import projections
+from dashboard.state.chat import read_agent_chat
 from dashboard.state.projections import JobDetail, JobListItem, NodeDetail
 from shared import paths
 from shared.models import ProjectConfig
+from shared.v1 import paths as v1_paths
 from shared.v1.job import JobState
 
 log = logging.getLogger(__name__)
@@ -60,6 +62,22 @@ class JobSubmitResponse(BaseModel):
     stages: list[dict[str, Any]] | None = None
 
 
+class AgentChatResponse(BaseModel):
+    """Per-node chat transcript response.
+
+    ``turns`` is the raw list of stream-json objects (system / assistant
+    / user / result) the agent emitted on this attempt. ``has_chat`` is
+    False when ``chat.jsonl`` doesn't exist on disk — old jobs (with
+    plain-text ``stdout.log``) and not-yet-run nodes both look the same
+    to the frontend, which surfaces "no transcript" in either case.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    turns: list[dict[str, Any]] = Field(default_factory=list)
+    attempt: int
+    has_chat: bool
+
+
 @router.get("", response_model=list[JobListItem])
 async def list_jobs(
     request: Request,
@@ -77,6 +95,27 @@ async def get_job(request: Request, job_slug: str) -> JobDetail:
     if detail is None:
         raise HTTPException(status_code=404, detail=f"job {job_slug!r} not found")
     return detail
+
+
+@router.get("/{job_slug}/nodes/{node_id}/chat", response_model=AgentChatResponse)
+async def get_node_chat(
+    request: Request,
+    job_slug: str,
+    node_id: str,
+    attempt: Annotated[int, Query(ge=1, description="attempt number (default 1)")] = 1,
+) -> AgentChatResponse:
+    """Per-node chat transcript: parse the agent's stream-json output.
+
+    Always 200; the file's absence is signalled via ``has_chat=False``
+    in the response body so the frontend distinguishes 'no transcript
+    yet' from 'job/node not found'.
+    """
+    settings = request.app.state.settings  # type: ignore[attr-defined]
+    turns = read_agent_chat(settings.root, job_slug, node_id, attempt=attempt)
+    has_chat = (
+        v1_paths.node_attempt_dir(job_slug, node_id, attempt, root=settings.root) / "chat.jsonl"
+    ).is_file()
+    return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
 
 
 @router.get("/{job_slug}/nodes/{node_id}", response_model=NodeDetail)

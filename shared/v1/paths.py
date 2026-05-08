@@ -12,7 +12,7 @@ Layout (under ``<root>``):
         nodes/<node_id>/state.json     NodeRun
         nodes/<node_id>/runs/<n>/      per-attempt agent artefacts
             prompt.md
-            stdout.log
+            chat.jsonl
             stderr.log
             result.json
 """

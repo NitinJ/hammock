@@ -80,7 +80,7 @@ def test_dispatch_code_happy_path(tmp_path: Path) -> None:
         prompt: str, attempt_dir: Path, worktree: Path
     ) -> subprocess.CompletedProcess[str]:
         # Simulate agent committing.
-        (attempt_dir / "stdout.log").write_text("(fake) edited + committed\n")
+        (attempt_dir / "chat.jsonl").write_text("(fake) edited + committed\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -145,7 +145,7 @@ def test_dispatch_writes_prompt_with_substrate_context(tmp_path: Path) -> None:
     substrate = _make_substrate(tmp_path)
 
     def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -199,7 +199,7 @@ def test_dispatch_fails_when_subprocess_nonzero(tmp_path: Path) -> None:
     substrate = _make_substrate(tmp_path)
 
     def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("(fake) crashed\n")
         return subprocess.CompletedProcess(args=["c"], returncode=2, stdout=b"", stderr=b"")
 
@@ -230,7 +230,7 @@ def test_dispatch_fails_when_branch_has_no_commits(tmp_path: Path) -> None:
     substrate = _make_substrate(tmp_path)
 
     def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -260,7 +260,7 @@ def test_dispatch_fails_on_gh_error(tmp_path: Path) -> None:
     substrate = _make_substrate(tmp_path)
 
     def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -312,7 +312,7 @@ def test_dispatch_code_inlines_middle_from_workflow_dir(tmp_path: Path) -> None:
     (wf_dir / "prompts" / "implement.md").write_text("CODE-MIDDLE-SENTINEL-ABC-7777\n")
 
     def fake(prompt: str, attempt_dir: Path, worktree: Path) -> subprocess.CompletedProcess[str]:
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 

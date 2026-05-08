@@ -101,7 +101,7 @@ def _seed_node_run(
     attempt_dir = paths.node_attempt_dir(job_slug, node_id, attempt, root=root)
     attempt_dir.mkdir(parents=True, exist_ok=True)
     (attempt_dir / "prompt.md").write_text("(prompt)")
-    (attempt_dir / "stdout.log").write_text("ok")
+    (attempt_dir / "chat.jsonl").write_text("ok")
     (attempt_dir / "stderr.log").write_text("")
 
 

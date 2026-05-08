@@ -185,13 +185,13 @@ def assert_all_nodes_succeeded_or_skipped(root: Path, job_slug: str, workflow: W
 # ---------------------------------------------------------------------------
 
 
-_REQUIRED_ARTEFACTS = ("prompt.md", "stdout.log", "stderr.log")
+_REQUIRED_ARTEFACTS = ("prompt.md", "chat.jsonl", "stderr.log")
 
 
 def assert_node_artefacts_present(root: Path, job_slug: str, workflow: Workflow) -> None:
     """For every *agent-actor* node that ran (state.json exists), check
     that the attempt directory has the conventional files (prompt.md,
-    stdout.log, stderr.log).
+    chat.jsonl, stderr.log).
 
     Human-actor and engine-actor nodes don't spawn `claude -p`, so they
     have no attempt-dir artefacts. They're exempt from this check."""

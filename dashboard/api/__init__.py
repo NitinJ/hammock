@@ -8,6 +8,7 @@ v1 surface:
   - GET  /api/jobs                                       (jobs.py)
   - GET  /api/jobs/{slug}                                (jobs.py)
   - GET  /api/jobs/{slug}/nodes/{node_id}                (jobs.py)
+  - GET  /api/jobs/{slug}/nodes/{node_id}/chat           (jobs.py)
   - POST /api/jobs                                       (jobs.py)
   - GET  /api/hil                                        (hil.py)
   - GET  /api/hil/{slug}                                 (hil.py)

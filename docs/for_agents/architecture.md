@@ -176,7 +176,7 @@ Each running job has its own MCP server spawned by the dashboard so the agent ca
     │   ├── state.json                    # NodeRun (state, attempts, last_error)
     │   └── runs/<n>/
     │       ├── prompt.md                 # exact prompt sent to claude
-    │       ├── stdout.log
+    │       ├── chat.jsonl
     │       └── stderr.log
     ├── pending/<node_id>.json            # HIL markers
     ├── repo/                             # project clone, on hammock/jobs/<slug>
@@ -189,5 +189,5 @@ This layout is the contract. The dashboard's projections read this tree directly
 
 - Job stuck in `RUNNING`: `~/.hammock/jobs/<slug>/driver.log` and the most recent `nodes/<id>/runs/<n>/stderr.log`.
 - HIL gate not advancing: `~/.hammock/jobs/<slug>/pending/<id>.json` exists? `cfg.state` is `BLOCKED_ON_HUMAN`?
-- Node failed silently with no output: see `gotchas.md` "empty stdout from claude".
+- Node failed silently with no output: see `gotchas.md` "Empty chat.jsonl from claude".
 - Workflow won't load: `engine/v1/loader.py` rejects with file path + reason. Check `schema_version: 1` is present and `prompts/<id>.md` exists for every agent-actor node.
