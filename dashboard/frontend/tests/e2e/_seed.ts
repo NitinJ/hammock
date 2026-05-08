@@ -94,6 +94,22 @@ export function seedNode(opts: SeededNodeOptions): void {
   );
 }
 
+/** Lay down a chat.jsonl at the v1 attempt-dir path. Each entry in
+ *  ``lines`` is serialised to a separate JSONL line (claude's
+ *  stream-json output: type=system|assistant|user|result).
+ *  The dashboard's chat endpoint reads this file. */
+export function seedChat(
+  slug: string,
+  nodeId: string,
+  attempt: number,
+  lines: Record<string, unknown>[],
+): void {
+  const dir = join(jobDir(slug), "nodes", nodeId, "runs", String(attempt));
+  mkdirSync(dir, { recursive: true });
+  const text = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+  writeFileSync(join(dir, "chat.jsonl"), text);
+}
+
 export interface SeededPendingHilOptions {
   slug: string;
   nodeId: string;

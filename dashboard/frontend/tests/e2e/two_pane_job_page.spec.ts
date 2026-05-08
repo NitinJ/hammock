@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { nuke, seedJob, seedNode } from "./_seed";
+import { nuke, seedChat, seedJob, seedNode } from "./_seed";
 
 const SLUG = "twopane-2026-01-01";
 
@@ -46,9 +46,70 @@ test("succeeded node with no outputs renders the empty-output panel", async ({
   // completed — no output produced." rather than the in-progress
   // "no outputs produced yet" placeholder.
   await page.goto(`/jobs/${SLUG}?node=write-bug-report`);
+  // Outputs collapsible exists and is collapsed by default for agent
+  // nodes. Open it to see the empty-output panel.
+  const outputs = page.getByTestId("outputs-collapsible");
+  await expect(outputs).toBeVisible();
+  await expect(outputs).toHaveJSProperty("open", false);
+  await outputs.locator("summary").click();
   const panel = page.getByTestId("empty-output-panel");
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("Node completed — no output produced.");
+});
+
+test("agent node renders chat tail from seeded chat.jsonl", async ({
+  page,
+}) => {
+  const chatSlug = "twopane-chat-2026-01-01";
+  seedJob({
+    slug: chatSlug,
+    workflowName: "t-test",
+    state: "running",
+    workflowYaml: `schema_version: 1
+workflow: t-test
+variables:
+  request: { type: job-request }
+nodes:
+  - id: write-bug-report
+    kind: artifact
+    actor: agent
+`,
+  });
+  seedNode({ slug: chatSlug, nodeId: "write-bug-report", state: "succeeded" });
+  seedChat(chatSlug, "write-bug-report", 1, [
+    { type: "system", subtype: "init", session_id: "abcd1234", cwd: "/repo" },
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "## Plan\n\nReading the file." },
+          { type: "tool_use", name: "Read", input: { file_path: "src/foo.py" } },
+        ],
+      },
+    },
+    {
+      type: "result",
+      is_error: false,
+      num_turns: 3,
+      total_cost_usd: 0.0042,
+    },
+  ]);
+
+  await page.goto(`/jobs/${chatSlug}?node=write-bug-report`);
+
+  // Outputs collapsible visible AND collapsed by default.
+  const outputs = page.getByTestId("outputs-collapsible");
+  await expect(outputs).toBeVisible();
+  await expect(outputs).toHaveJSProperty("open", false);
+
+  // Chat tail visible with the seeded turns.
+  const chat = page.getByTestId("agent-chat-tail");
+  await expect(chat).toBeVisible();
+  await expect(chat.getByTestId("chat-block-text")).toContainText("Plan");
+  await expect(chat.getByTestId("chat-block-tool-use")).toContainText("Read");
+  await expect(chat.getByTestId("chat-block-tool-use")).toContainText("src/foo.py");
+  await expect(chat.getByTestId("chat-turn-result")).toContainText("3 turns");
 });
 
 test("failed job surfaces a banner with the failed node's last_error", async ({

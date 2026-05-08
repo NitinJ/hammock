@@ -155,12 +155,8 @@ async def test_chat_endpoint_respects_attempt_query(dashboard: DashboardHandle) 
         lines=[{"type": "system", "second_attempt": True}],
     )
 
-    resp1 = await dashboard.client.get(
-        f"/api/jobs/{job_slug}/nodes/{node_id}/chat?attempt=1"
-    )
+    resp1 = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/chat?attempt=1")
     assert resp1.json()["turns"][0].get("first_attempt") is True
-    resp2 = await dashboard.client.get(
-        f"/api/jobs/{job_slug}/nodes/{node_id}/chat?attempt=2"
-    )
+    resp2 = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/chat?attempt=2")
     assert resp2.json()["turns"][0].get("second_attempt") is True
     assert resp2.json()["attempt"] == 2

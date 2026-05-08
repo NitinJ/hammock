@@ -113,8 +113,7 @@ async def get_node_chat(
     settings = request.app.state.settings  # type: ignore[attr-defined]
     turns = read_agent_chat(settings.root, job_slug, node_id, attempt=attempt)
     has_chat = (
-        v1_paths.node_attempt_dir(job_slug, node_id, attempt, root=settings.root)
-        / "chat.jsonl"
+        v1_paths.node_attempt_dir(job_slug, node_id, attempt, root=settings.root) / "chat.jsonl"
     ).is_file()
     return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
 

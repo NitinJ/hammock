@@ -22,6 +22,7 @@ import { computed, toValue } from "vue";
 import type { MaybeRefOrGetter } from "vue";
 import { api } from "./client";
 import type {
+  AgentChatResponse,
   AskAnswerRequest,
   HealthResponse,
   HilAnswerRequest,
@@ -52,6 +53,8 @@ export const QUERY_KEYS = {
     ["jobs", "list", repoSlug ?? null, state ?? null] as const,
   job: (jobSlug: string) => ["jobs", "detail", jobSlug] as const,
   node: (jobSlug: string, nodeId: string) => ["jobs", jobSlug, "nodes", nodeId] as const,
+  agentChat: (jobSlug: string, nodeId: string, attempt: number) =>
+    ["jobs", jobSlug, "nodes", nodeId, "chat", attempt] as const,
   hil: (jobSlug?: string | null) => ["hil", jobSlug ?? "all"] as const,
   settings: ["settings"] as const,
 };
@@ -174,6 +177,26 @@ export function useNodeDetail(
     enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
     // 404 is the common failure mode (node not dispatched yet). Don't
     // retry — the JobOverview surface treats 404 as "not started".
+    retry: false,
+  });
+}
+
+export function useAgentChat(
+  jobSlug: MaybeRefOrGetter<string>,
+  nodeId: MaybeRefOrGetter<string | null | undefined>,
+  attempt?: MaybeRefOrGetter<number | null | undefined>,
+) {
+  return useQuery({
+    queryKey: computed(() =>
+      QUERY_KEYS.agentChat(toValue(jobSlug), toValue(nodeId) ?? "", toValue(attempt) ?? 1),
+    ),
+    queryFn: () => {
+      const a = toValue(attempt) ?? 1;
+      return api.get<AgentChatResponse>(
+        `/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}/chat?attempt=${a}`,
+      );
+    },
+    enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
     retry: false,
   });
 }
