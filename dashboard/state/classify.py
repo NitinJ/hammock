@@ -88,7 +88,7 @@ def classify_path(path: Path, root: Path) -> ClassifiedPath:
             # Iteration is the last underscore-separated chunk; var is the
             # one before. Loop id is everything between "loop_" and the
             # second-to-last underscore. (Loop ids may contain underscores
-            # via _safe_loop_id replacement.)
+            # via the v1.0 path-safety replacement.)
             inner = stem[len("loop_") :]
             try:
                 head, iter_str = inner.rsplit("_", 1)

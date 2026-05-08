@@ -54,6 +54,13 @@ class FakeNodeCtx:
     def expected_path(self) -> Path:
         return self.job_dir / f"{self.var_name}.json"
 
+    def attempt_output_path(self) -> Path:
+        # Tests stage the agent's raw value-JSON at <tmp_path>/<var>.json
+        # via the test fixtures; in v2 the agent writes output.json under
+        # the attempt dir but the tests don't care about that — they just
+        # need produce() to read from the same place the test wrote.
+        return self.job_dir / f"{self.var_name}.json"
+
 
 @dataclass
 class FakePromptCtx:
@@ -62,6 +69,9 @@ class FakePromptCtx:
 
     def expected_path(self) -> Path:
         return self.job_dir / "variables" / f"{self.var_name}.json"
+
+    def attempt_output_path(self) -> Path:
+        return self.job_dir / "nodes" / f"{self.var_name}__top" / "runs" / "1" / "output.json"
 
 
 # ---------------------------------------------------------------------------

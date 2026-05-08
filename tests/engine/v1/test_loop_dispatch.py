@@ -768,3 +768,92 @@ def test_until_loop_reenters_on_needs_revision_then_exits_on_approved(
         paths.variable_envelope_path(job_slug, "verdict", (1,), root=tmp_path).read_text()
     )
     assert body.value["verdict"] == "approved"
+
+
+# ---------------------------------------------------------------------------
+# v2 on-disk shape regression — Stage B smoke test
+# ---------------------------------------------------------------------------
+
+
+def test_v2_path_layout_after_nested_loop(tmp_path: Path) -> None:
+    """Drive a 2-deep nested fake-engine workflow and assert v2's
+    on-disk shape:
+
+    - ``nodes/<id>/i0_1/state.json`` exists; ``nodes/<id>/state.json`` does not
+    - ``variables/<var>__i0_1.json`` exists; the v1.0
+      ``loop_<id>_<var>_<iter>.json`` shape does not
+    - Outer projection at ``variables/<var>__i0.json`` is exactly
+      ``{"$ref": "<stem>"}`` (text match), not a copy of the source
+      envelope
+
+    Regression for the loops-v2 keying — guards against any
+    re-introduction of the old flat layout.
+    """
+    job_slug = "j"
+    paths.ensure_job_layout(job_slug, root=tmp_path)
+    workflow = _nested_workflow()
+
+    def fake(prompt, attempt_dir, cwd=None):
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (attempt_dir / "chat.jsonl").write_text("")
+        (attempt_dir / "stderr.log").write_text("")
+        # Approve immediately so the inner until-loop exits at iter 0.
+        (attempt_dir / "output.json").write_text(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "summary": "lgtm",
+                    "document": "## Review\n\nlgtm",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
+
+    _seed_envelope(
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="design-spec",
+        value={"title": "x", "overview": "y", "document": "## D\n\nx"},
+    )
+    result = dispatch_loop(
+        node=workflow.nodes[0],
+        workflow=workflow,
+        job_slug=job_slug,
+        root=tmp_path,
+        job_repo=None,
+        artifact_claude_runner=fake,
+    )
+    assert result.succeeded, result.error
+    assert result.iterations_run == 2
+
+    # 1. Iter-keyed state file exists; flat top-level state does not.
+    inner_state = paths.node_state_path(job_slug, "reviewer", (0, 0), root=tmp_path)
+    assert inner_state.is_file(), f"expected iter-keyed state at {inner_state}"
+    inner_state_2 = paths.node_state_path(job_slug, "reviewer", (1, 0), root=tmp_path)
+    assert inner_state_2.is_file()
+    flat_state = paths.node_state_path(job_slug, "reviewer", (), root=tmp_path)
+    assert not flat_state.is_file(), (
+        f"v1.0-shaped flat state file leaked at {flat_state} — body nodes must "
+        "only have iter-keyed state"
+    )
+
+    # 2. Iter-keyed variable envelope exists; v1.0 loop_<id>_<var>_<iter>
+    #    shape does not.
+    inner_env_0 = paths.variable_envelope_path(job_slug, "verdict", (0, 0), root=tmp_path)
+    assert inner_env_0.is_file()
+    inner_env_1 = paths.variable_envelope_path(job_slug, "verdict", (1, 0), root=tmp_path)
+    assert inner_env_1.is_file()
+    legacy_pattern = list(paths.variables_dir(job_slug, root=tmp_path).glob("loop_*_*.json"))
+    assert legacy_pattern == [], (
+        f"v1.0-shaped loop_<id>_<var>_<iter>.json files leaked: {legacy_pattern}"
+    )
+
+    # 3. Outer projection at variables/verdict__i0.json is a $ref pointer
+    #    (text match), not a copy of the body envelope.
+    outer_proj = paths.variable_envelope_path(job_slug, "verdict", (0,), root=tmp_path)
+    assert outer_proj.is_file()
+    proj = json.loads(outer_proj.read_text())
+    assert proj == {"$ref": "verdict__i0_0"}, (
+        f"expected exact $ref pointer at outer scope, got {proj}"
+    )

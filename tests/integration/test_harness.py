@@ -176,12 +176,12 @@ def test_complete_node_with_iter_writes_loop_indexed_envelope(
         loop_id="impl-loop",
     )
 
-    # Loop-indexed envelope path: variables/loop_<loop_id>_<var>_<i>.json.
-    indexed_path = v1_paths.loop_variable_envelope_path(
+    # v2 path: variables/<var>__<iter_token>.json (loop_id is no longer
+    # part of the layout — iter_path is the address).
+    indexed_path = v1_paths.variable_envelope_path(
         fake_engine_offline.job_slug,
-        "impl-loop",
         "body-node",
-        0,
+        (0,),
         root=fake_engine_offline.root,
     )
     assert indexed_path.exists(), f"expected envelope at {indexed_path}"

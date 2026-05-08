@@ -77,21 +77,14 @@ def _resolve_envelope_path(
 ) -> Path:
     """Return the path the variable envelope should land at.
 
-    Top-level (iter=()): variables/<var>.json
-    Loop-indexed:        variables/loop_<loop_id>_<var>_<i>.json — only
-                          single-level supported in Stage 1; nested loop
-                          coordinates raise.
+    v2 keying: ``variables/<var>__<iter_token>.json``. Top-level uses
+    iter=() → token "top"; loop-body executions use one int per
+    enclosing loop. ``loop_id`` is no longer part of the path (legacy
+    parameter retained so existing call sites read naturally — the
+    iter_path itself addresses the body envelope).
     """
-    if not iter:
-        return v1_paths.variable_envelope_path(job_slug, var_name, root=root)
-    if loop_id is None:
-        raise ValueError("iter is non-empty but loop_id was not provided")
-    if len(iter) > 1:
-        raise NotImplementedError(
-            "FakeEngine v1 supports single-level loop iteration only; "
-            "nested coordinates require multi-level loop_id encoding."
-        )
-    return v1_paths.loop_variable_envelope_path(job_slug, loop_id, var_name, iter[0], root=root)
+    del loop_id
+    return v1_paths.variable_envelope_path(job_slug, var_name, iter, root=root)
 
 
 class FakeEngine:

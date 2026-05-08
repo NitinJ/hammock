@@ -219,36 +219,3 @@ def job_branch_name(job_slug: str) -> str:
 
 def stage_branch_name(job_slug: str, node_id: str) -> str:
     return f"hammock/stages/{job_slug}/{node_id}"
-
-
-# ---------------------------------------------------------------------------
-# Deprecated v1.0 helpers — retained as compat shims during the loops-v2
-# migration. Callers are being moved to the iter_path-keyed helpers above
-# step by step; once every caller threads ``iter_path``, these shims are
-# deleted. Do not introduce new uses.
-# ---------------------------------------------------------------------------
-
-
-def _safe_loop_id(loop_id: str) -> str:
-    """DEPRECATED. Replace path-unsafe characters in a legacy loop id."""
-    return loop_id.replace("/", "_").replace(" ", "_")
-
-
-def loop_variable_envelope_path(
-    job_slug: str,
-    loop_id: str,
-    var_name: str,
-    iteration: int,
-    *,
-    root: Path,
-) -> Path:
-    """DEPRECATED v1.0 indexed envelope path.
-
-    Pre-loops-v2 layout: ``loop_<loop-id>_<var>_<i>.json``. Retained
-    until every caller migrates to the iter_path-keyed
-    :func:`variable_envelope_path`.
-    """
-    return (
-        variables_dir(job_slug, root=root)
-        / f"loop_{_safe_loop_id(loop_id)}_{var_name}_{iteration}.json"
-    )

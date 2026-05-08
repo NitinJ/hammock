@@ -515,14 +515,17 @@ def _node_iter_has_envelope(
     root: Path,
 ) -> bool:
     """True iff a loop-indexed output envelope for *node* at *iteration*
-    is present on disk for any of the node's declared output var names."""
+    is present on disk for any of the node's declared output var names.
+
+    v2: variables are keyed by iter_path, not loop_id+iter. Stage C
+    will rewrite this projection wholesale; for now we ignore loop_id
+    and trust iter_path."""
+    _ = loop_id
     for output_ref in (node.outputs or {}).values():
         var_name = output_ref.lstrip("$").split(".", 1)[0].rstrip("?")
         if not var_name:
             continue
-        env = v1_paths.loop_variable_envelope_path(
-            job_slug, loop_id, var_name, iteration, root=root
-        )
+        env = v1_paths.variable_envelope_path(job_slug, var_name, (iteration,), root=root)
         if env.is_file():
             return True
     return False

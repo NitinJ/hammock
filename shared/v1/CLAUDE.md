@@ -85,10 +85,10 @@ Single source of truth for `~/.hammock/` layout. Helpers:
 
 - `job_dir(slug, root=)` → `<root>/jobs/<slug>/`.
 - `variables_dir(slug, root=)` → `<root>/jobs/<slug>/variables/`.
-- `variable_envelope_path(slug, var_name, root=)` → `<root>/jobs/<slug>/variables/<var_name>.json`.
-- `loop_variable_envelope_path(slug, loop_id, var_name, iter, root=)` → `<root>/jobs/<slug>/variables/loop_<loop_id>_<var_name>_<iter>.json`.
-- `node_state_path(slug, node_id, root=)` → `.../nodes/<node_id>/state.json`.
-- `node_attempt_dir(slug, node_id, attempt, root=)` → `.../nodes/<node_id>/runs/<attempt>/`.
+- `variable_envelope_path(slug, var_name, iter_path=(), root=)` → `<root>/jobs/<slug>/variables/<var_name>__<iter_token>.json` (top-level: `<var>__top.json`; loop body: `<var>__i<...>.json`).
+- `node_state_path(slug, node_id, iter_path=(), root=)` → `.../nodes/<node_id>/<iter_token>/state.json`.
+- `node_attempt_dir(slug, node_id, attempt, iter_path=(), root=)` → `.../nodes/<node_id>/<iter_token>/runs/<attempt>/`.
+- `pending_marker_path(slug, node_id, iter_path=(), root=)` → `.../pending/<node_id>__<iter_token>.json`.
 - `repo_clone_dir(slug, root=)` → `.../repo/`.
 - `job_branch_name(slug)` → `hammock/jobs/<slug>`.
 - `stage_branch_name(slug, node_id)` → `hammock/stages/<slug>/<node_id>`.

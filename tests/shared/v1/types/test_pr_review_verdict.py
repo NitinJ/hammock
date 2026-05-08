@@ -41,6 +41,9 @@ class FakeNodeCtx:
     def expected_path(self) -> Path:
         return self.job_dir / f"{self.var_name}.json"
 
+    def attempt_output_path(self) -> Path:
+        return self.job_dir / f"{self.var_name}.json"
+
 
 @dataclass
 class FakePromptCtx:
@@ -48,6 +51,9 @@ class FakePromptCtx:
     job_dir: Path
 
     def expected_path(self) -> Path:
+        return self.job_dir / f"{self.var_name}.json"
+
+    def attempt_output_path(self) -> Path:
         return self.job_dir / f"{self.var_name}.json"
 
 
