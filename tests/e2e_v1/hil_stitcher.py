@@ -77,8 +77,7 @@ def merge_pr_then_submit_review(
     if pr_url is None:
         raise RuntimeError(
             f"merge_pr_then_submit_review: no `pr`-typed input envelope "
-            f"found for node {pending.node_id!r} (loop_id={pending.loop_id!r}, "
-            f"iteration={pending.iteration!r})"
+            f"found for node {pending.node_id!r} (iter_path={pending.iter_path!r})"
         )
 
     # Idempotent merge: check current state first; skip if already MERGED.
@@ -136,17 +135,19 @@ def _find_pr_url_for_node(
         if workflow.variables.get(var_name, _Sentinel()).type != "pr":
             continue
         # Loop-indexed reference like ``$loop-id.pr[i]`` resolves
-        # against the pending marker's iteration.
+        # against the pending marker's iter_path. ``[i]`` reads the
+        # current iteration; ``[i-1]`` the previous one.
         if idx_form is not None:
-            loop_id = ref.lstrip("$").split(".", 1)[0]
-            if pending.iteration is None:
+            iter_path = pending.iter_path
+            if not iter_path:
                 continue
-            iter_idx = pending.iteration if idx_form == "i" else pending.iteration - 1
-            if iter_idx < 0:
-                continue
-            env_path = paths.loop_variable_envelope_path(
-                job_slug, loop_id, var_name, iter_idx, root=root
-            )
+            if idx_form == "i-1":
+                if iter_path[-1] <= 0:
+                    continue
+                resolved = (*iter_path[:-1], iter_path[-1] - 1)
+            else:
+                resolved = iter_path
+            env_path = paths.variable_envelope_path(job_slug, var_name, resolved, root=root)
         else:
             env_path = paths.variable_envelope_path(job_slug, var_name, root=root)
         if env_path.is_file():
@@ -231,7 +232,7 @@ class HilStitcher:
         self.poll_interval = poll_interval_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._answered: set[tuple[str, str | None, int | None]] = set()
+        self._answered: set[tuple[str, tuple[int, ...], str | None]] = set()
         self.errors: list[str] = []
 
     def start(self) -> None:
@@ -256,15 +257,14 @@ class HilStitcher:
                 continue
 
             for item in pending:
-                # Use a key that includes loop iteration AND the marker's
+                # Use a key that includes the full iter_path AND the marker's
                 # created_at timestamp. The timestamp distinguishes
-                # successive instances of the same (node_id, loop_id, iter)
+                # successive instances of the same (node_id, iter_path)
                 # gate — an outer count loop re-enters its inner loop and
                 # re-creates the marker with a fresh created_at.
                 answer_key = (
                     item.node_id,
-                    item.loop_id,
-                    item.iteration,
+                    item.iter_path,
                     item.created_at,
                 )
                 if answer_key in self._answered:
@@ -300,6 +300,7 @@ class HilStitcher:
                             value_payload=payload,
                             root=self.root,
                             workflow=self.workflow,
+                            iter_path=item.iter_path,
                         )
                     except HilSubmissionError as exc:
                         self.errors.append(
@@ -311,16 +312,14 @@ class HilStitcher:
                 if gate_succeeded:
                     self._answered.add(answer_key)
                     log.info(
-                        "stitcher: answered HIL gate %s (loop=%s iter=%s)",
+                        "stitcher: answered HIL gate %s (iter_path=%s)",
                         item.node_id,
-                        item.loop_id,
-                        item.iteration,
+                        item.iter_path,
                     )
                 else:
                     log.warning(
-                        "stitcher: gate %s (loop=%s iter=%s) had errors; will retry on next poll",
+                        "stitcher: gate %s (iter_path=%s) had errors; will retry on next poll",
                         item.node_id,
-                        item.loop_id,
-                        item.iteration,
+                        item.iter_path,
                     )
             time.sleep(self.poll_interval)
