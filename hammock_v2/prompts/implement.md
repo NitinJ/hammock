@@ -45,9 +45,23 @@ If the impl spec mentions tests:
 
   Use `git commit -F <tempfile>` (write the message to `/tmp/commit-msg-<slug>.txt` first).
 
-## Phase 4 — Write the output
+## Phase 4 — Write the outputs
 
-Write your output to `output.md`. Use this structure:
+You MUST write TWO files in this stage. Both are validated by the orchestrator (file existence + non-empty); the job fails if either is missing.
+
+### 4a. `branch.txt`
+
+Write the branch name (just the bare branch name, no quotes, no markdown) to `<your node folder>/branch.txt`. The next node (`pr-create`) reads this verbatim. Example content:
+
+```
+hammock/v2/fix-add-integers-empty-call
+```
+
+If you could not create a branch (e.g. the task is a no-op), write `branch.txt` containing the literal word `none` and explain in `output.md` why no branch was created.
+
+### 4b. `output.md`
+
+Use this structure:
 
 ```markdown
 # Implementation: <short title>
@@ -85,4 +99,4 @@ Write your output to `output.md`. Use this structure:
 
 ## Imperative reminder
 
-Use the `Write` tool to write `output.md`. Do not end the turn until the commit lands AND `output.md` is written. The job will fail otherwise.
+Use the `Write` tool to write BOTH `branch.txt` AND `output.md`. Do not end the turn until the commit lands AND both files are written. The job will fail otherwise (strict file-existence check by the orchestrator).

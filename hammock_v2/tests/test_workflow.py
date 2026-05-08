@@ -206,3 +206,91 @@ nodes:
     assert order.index("a") < order.index("c")
     assert order.index("b") < order.index("d")
     assert order.index("c") < order.index("d")
+
+
+def test_requires_default_is_output_md(tmp_path: Path) -> None:
+    """If a node doesn't declare `requires:`, default is ['output.md']."""
+    p = _write(
+        tmp_path / "wf.yaml",
+        """
+name: t
+nodes:
+  - id: a
+    prompt: foo
+""",
+    )
+    wf = load_workflow(p)
+    assert wf.nodes[0].requires == ["output.md"]
+
+
+def test_requires_explicit_list(tmp_path: Path) -> None:
+    """A node may declare additional required outputs."""
+    p = _write(
+        tmp_path / "wf.yaml",
+        """
+name: t
+nodes:
+  - id: a
+    prompt: foo
+    requires: [output.md, branch.txt, summary.json]
+""",
+    )
+    wf = load_workflow(p)
+    assert wf.nodes[0].requires == ["output.md", "branch.txt", "summary.json"]
+
+
+def test_requires_rejects_absolute_paths(tmp_path: Path) -> None:
+    """Absolute paths in `requires:` are a security smell — refuse."""
+    p = _write(
+        tmp_path / "wf.yaml",
+        """
+name: t
+nodes:
+  - id: a
+    prompt: foo
+    requires: [/etc/passwd]
+""",
+    )
+    with pytest.raises(WorkflowError, match="must be a non-empty relative path"):
+        load_workflow(p)
+
+
+def test_requires_rejects_parent_dir_traversal(tmp_path: Path) -> None:
+    """`..` in `requires:` is also rejected."""
+    p = _write(
+        tmp_path / "wf.yaml",
+        """
+name: t
+nodes:
+  - id: a
+    prompt: foo
+    requires: [../../../etc/passwd]
+""",
+    )
+    with pytest.raises(WorkflowError, match="must be a non-empty relative path"):
+        load_workflow(p)
+
+
+def test_requires_in_workflow_summary(tmp_path: Path) -> None:
+    """workflow_summary surfaces the requires list to the dashboard."""
+    p = _write(
+        tmp_path / "wf.yaml",
+        """
+name: t
+nodes:
+  - id: a
+    prompt: foo
+    requires: [output.md, branch.txt]
+""",
+    )
+    wf = load_workflow(p)
+    summary = workflow_summary(wf)
+    assert summary["nodes"][0]["requires"] == ["output.md", "branch.txt"]
+
+
+def test_bundled_fix_bug_implement_node_requires_branch_txt() -> None:
+    """The bundled fix-bug workflow declares branch.txt for implement."""
+    here = Path(__file__).resolve().parent.parent / "workflows" / "fix-bug.yaml"
+    wf = load_workflow(here)
+    impl = next(n for n in wf.nodes if n.id == "implement")
+    assert "branch.txt" in impl.requires

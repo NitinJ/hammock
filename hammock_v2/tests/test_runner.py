@@ -130,3 +130,49 @@ def test_resume_run_is_idempotent(tmp_path: Path) -> None:
     run_job(job=job, root=tmp_path, runner=_fake_runner_factory())
     # The pre-existing per-node state was preserved (submit doesn't overwrite).
     assert "succeeded" in state.read_text()
+
+
+def test_orchestrator_prompt_contains_strict_validation_instructions() -> None:
+    """The orchestrator prompt must instruct the agent to validate every
+    `requires:` path strictly (file existence + non-empty), retry once
+    on failure, and hard-fail after a single retry."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    # Strict validation language present
+    assert "strict file-existence check" in prompt.lower()
+    assert "non-empty" in prompt.lower() or "size > 0" in prompt.lower()
+    # Single retry policy present
+    assert "ONCE" in prompt or "once" in prompt.lower()
+    # No semantic check claim
+    assert "no semantic check" in prompt.lower()
+    # Validation.md path is described
+    assert "validation.md" in prompt
+
+
+def test_orchestrator_prompt_contains_artifact_handling() -> None:
+    """Orchestrator must build an `# Attached artifacts` section for
+    the first node when `inputs/` contains files."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    assert "attached artifacts" in prompt.lower()
+    assert "inputs/" in prompt
+    assert "first 40 lines" in prompt.lower()
+    # Threshold rules present
+    assert "2KB" in prompt or "2kb" in prompt.lower()
+    assert "40KB" in prompt or "40kb" in prompt.lower()
+
+
+def test_orchestrator_prompt_contains_revision_loop() -> None:
+    """Orchestrator must cap revisions at 3 cycles."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    assert "3 revision" in prompt.lower() or "max revisions" in prompt.lower()

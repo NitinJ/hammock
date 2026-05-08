@@ -6,12 +6,15 @@ You are an agent in a multi-stage workflow. Your role is to push the implementat
 
 Read your `input.md`. The implementation node's `output.md` lists the branch name and commit. The design + impl specs give you the PR body material.
 
+The implementation node also wrote `branch.txt` next to its `output.md`. **Read `branch.txt` first** — that is the canonical branch name; do not infer it from `output.md` markdown. Path: `<workflow nodes path>/implement/branch.txt`. If `branch.txt` contains the literal word `none`, the implement stage produced no branch — skip pushing and document the no-op in `output.md`.
+
 You operate inside `$JOB_DIR/repo`.
 
 ## Phase 1 — Push the branch
 
 1. `Bash` — `git status -sb` to confirm you're on the implementation branch.
-2. `Bash` — `git push -u origin <branch-name>`. If push fails, surface the error in `output.md` and stop — don't try to force-push or rewrite history.
+2. Read `branch.txt` from the implement node's folder. If `none`, skip to Phase 4 and document.
+3. `Bash` — `git push -u origin <branch-name>`. If push fails, surface the error in `output.md` and stop — don't try to force-push or rewrite history.
 
 ## Phase 2 — Compose the PR body
 

@@ -25,6 +25,7 @@ $JOB_DIR/
 ├── workflow.yaml              (read-only snapshot)
 ├── orchestrator.jsonl         (your own stream-json; written by the runner)
 ├── orchestrator.log
+├── inputs/                    (operator's attached artifacts, optional)
 ├── repo/                      (project clone — exists when the workflow needs source code)
 └── nodes/<node_id>/
     ├── input.md               (you write before spawning the Task)
@@ -32,6 +33,7 @@ $JOB_DIR/
     ├── output.md              (the Task subagent writes — verify after return)
     ├── state.md               (you maintain — pending → running → succeeded | failed)
     ├── chat.jsonl             (the Task subagent's transcript — engine concern, leave alone)
+    ├── validation.md          (you write when a node fails its `requires:` check)
     ├── awaiting_human.md      (you write when human_review pause begins)
     └── human_decision.md      (the dashboard writes — you poll for it)
 ```
@@ -41,7 +43,7 @@ $JOB_DIR/
 ### Step 1 — Parse the workflow
 
 1. `Read $WORKFLOW_PATH`.
-2. Parse the YAML's `nodes:` list. Each entry has `id`, `prompt`, optional `after`, optional `human_review`.
+2. Parse the YAML's `nodes:` list. Each entry has `id`, `prompt`, optional `after`, optional `human_review`, optional `requires` (defaults to `["output.md"]`).
 3. Compute a topological order honoring `after:` edges. If multiple orderings are valid, pick any.
 
 ### Step 2 — For each node, in topo order
@@ -58,6 +60,11 @@ For each node `N`:
   
   <the user's $REQUEST_TEXT verbatim>
   
+  # Attached artifacts
+  
+  <only present for the first node when $JOB_DIR/inputs/ is non-empty;
+   see "First-node artifacts" below>
+  
   # Prior outputs
   
   ## <prior-node-id>
@@ -70,6 +77,19 @@ For each node `N`:
   ```
 
 - Write to `$JOB_DIR/nodes/<N.id>/input.md`.
+
+##### First-node artifacts
+
+If `N.after` is empty (this is a root / first node) AND `$JOB_DIR/inputs/` exists with files inside it, you must build a `# Attached artifacts` section:
+
+1. `Bash` — `ls -la $JOB_DIR/inputs/` to enumerate.
+2. For each file:
+   - Compute its size (use `Bash` — `wc -c <path>` or `stat`).
+   - **If size < 2KB and the file is text-like** (extensions: `.md`, `.txt`, `.log`, `.json`, `.yaml`, `.yml`, `.csv`, `.py`, `.js`, `.ts`, `.html`, `.css`, `.toml`, `.ini`, or no extension): `Read` it and inline the full content under a `### inputs/<filename>` heading inside a fenced code block.
+   - **If size 2KB-40KB and text-like**: `Read` it and inline only the first 40 lines, prefix with `### inputs/<filename> (first 40 lines)`.
+   - **If size > 40KB OR binary** (extensions: `.png`, `.jpg`, `.jpeg`, `.gif`, `.pdf`, `.zip`, `.tar`, `.gz`, `.so`, `.bin`): list path + size only, no content. The downstream agent can `Read` it via the path if needed.
+
+This is how the first agent learns about attached design docs, screenshots, error logs, etc.
 
 #### 2.2 Render the prompt
 
@@ -123,12 +143,64 @@ The subagent should:
 
 Wait synchronously for the Task to return.
 
-#### 2.5 Verify output
+#### 2.5 Verify required outputs (STRICT)
 
-After the Task returns:
+After the Task returns, run a **strict file-existence check** for every path in `N.requires` (defaults to `["output.md"]` if not specified in the workflow yaml).
 
-- Check `$JOB_DIR/nodes/<N.id>/output.md` exists and is non-empty.
-- If missing or empty: re-spawn the Task **once** with a sterner reminder: "You did not write output.md. The path is X. Write it now." If still missing, set state to `failed`, write `job.md` with state `failed`, and stop.
+For each path `P` in `N.requires`:
+
+1. Check the file at `$JOB_DIR/nodes/<N.id>/<P>` exists.
+2. Check it is non-empty (size > 0 bytes). Use `Bash` — `wc -c $JOB_DIR/nodes/<N.id>/<P>` or `Read` it and check the content isn't empty.
+
+**No semantic check.** You do NOT read the content to "verify quality" — only existence + non-empty. The agent is responsible for content.
+
+Collect the failing paths into a list `MISSING`.
+
+If `MISSING` is empty: success — proceed to step 2.6 / 2.7.
+
+If `MISSING` is non-empty (any required file missing or empty):
+
+1. Write `$JOB_DIR/nodes/<N.id>/validation.md` with:
+
+   ```markdown
+   ---
+   attempt: 1
+   missing: [<comma-separated paths>]
+   checked_at: <UTC ISO>
+   ---
+   
+   # Validation failure (attempt 1)
+   
+   The following required files were missing or empty after the agent's first attempt:
+   
+   - `<path1>`
+   - `<path2>`
+   ...
+   
+   Re-spawning the Task with a sterner instruction.
+   ```
+
+2. **Re-spawn the Task ONCE** with the prompt extended by:
+
+   ```markdown
+   ---
+   
+   ## VALIDATION FAILURE — RETRY
+   
+   Your previous attempt did not produce these required files:
+   - `<path1>` (missing or empty)
+   - `<path2>` (missing or empty)
+   
+   You MUST write all of these files using the `Write` tool before ending your turn. The job will fail otherwise. The full list of files you must produce in this node's folder is: <full N.requires list>.
+   ```
+
+3. Re-validate after the retry returns.
+
+4. If still missing on attempt 2:
+   - Append to `validation.md` (attempt 2 section).
+   - Set node state to `failed` with `error: "missing required outputs after retry: [<paths>]"`.
+   - Write `job.md` with state `failed`.
+   - Stop. Do **not** attempt a third retry.
 
 #### 2.6 If `human_review: true` — pause
 
@@ -156,7 +228,13 @@ After the Task returns:
   ```
 
 - If `approved`: delete `awaiting_human.md`, mark state succeeded, continue.
-- If `needs-revision`: re-spawn the Task with the human's comment as additional context (append to input.md under `## Human review feedback`), let it write a fresh `output.md`, then write a new `awaiting_human.md`, delete the old `human_decision.md`, and poll again. Repeat up to 3 revision cycles. After 3, mark state failed.
+- If `needs-revision`:
+  1. Append the comment from `human_decision.md` to `input.md` under a new `## Human review feedback (revision N)` section.
+  2. Re-spawn the Task with the extended prompt + a sterner imperative: "The reviewer requested revisions: <comment>. Revise your output and write a fresh `output.md`."
+  3. After the retry, re-run the strict `requires:` validation from step 2.5.
+  4. Delete the old `human_decision.md` and `awaiting_human.md`, then write a fresh `awaiting_human.md` for the next round of review.
+  5. Poll again.
+  6. **Cap at 3 revision cycles total**. If the operator returns `needs-revision` for a 4th time, mark the node failed with `error: "human review max revisions exceeded (3)"` and write `job.md` state failed.
 
 #### 2.7 Update node state to `succeeded`
 

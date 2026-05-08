@@ -34,6 +34,10 @@ class WorkflowError(Exception):
     """Raised when a workflow YAML can't be parsed or fails sanity checks."""
 
 
+def _default_requires() -> list[str]:
+    return ["output.md"]
+
+
 class Node(BaseModel):
     """A single node in the workflow DAG."""
 
@@ -47,12 +51,31 @@ class Node(BaseModel):
         description="If true, orchestrator pauses after the agent's first pass and waits for human_decision.md.",
     )
     description: str | None = Field(default=None, description="Optional human-readable note.")
+    requires: list[str] = Field(
+        default_factory=_default_requires,
+        description=(
+            "Files (relative to the node's folder) that must exist + be non-empty "
+            "before the node is marked succeeded. Strict file-existence check; "
+            "no semantic verification. Defaults to ['output.md']."
+        ),
+    )
 
     @field_validator("id")
     @classmethod
     def _id_shape(cls, v: str) -> str:
         if not v.replace("-", "").replace("_", "").isalnum():
             raise ValueError(f"node id {v!r} must be alphanumeric with - or _")
+        return v
+
+    @field_validator("requires")
+    @classmethod
+    def _requires_shape(cls, v: list[str]) -> list[str]:
+        for path in v:
+            if not path or path.startswith("/") or ".." in path.split("/"):
+                raise ValueError(
+                    f"requires entry {path!r} must be a non-empty relative path "
+                    "without '..' segments"
+                )
         return v
 
 
@@ -157,6 +180,7 @@ def workflow_summary(workflow: Workflow) -> dict[str, Any]:
                 "after": list(n.after),
                 "human_review": n.human_review,
                 "description": n.description,
+                "requires": list(n.requires),
             }
             for n in workflow.nodes
         ],
