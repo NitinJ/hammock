@@ -54,7 +54,7 @@ def spawn_orchestrator(
     log.info("spawning orchestrator subprocess for %s", slug)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
-    proc = subprocess.Popen(  # noqa: S603 — controlled args
+    proc = subprocess.Popen(
         args,
         cwd=str(repo_root),
         env=env,

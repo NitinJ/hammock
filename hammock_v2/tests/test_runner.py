@@ -112,8 +112,10 @@ def test_render_orchestrator_substitutes_context(tmp_path: Path) -> None:
 
 
 def test_run_rejects_unknown_workflow(tmp_path: Path) -> None:
+    from hammock_v2.engine.workflow import WorkflowError
+
     job = JobConfig(slug="t-005", workflow_name="bogus", request_text="x")
-    with pytest.raises(Exception):
+    with pytest.raises(WorkflowError):
         run_job(job=job, root=tmp_path, runner=_fake_runner_factory())
 
 

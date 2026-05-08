@@ -53,9 +53,7 @@ async def _watch(slug: str, request: Request) -> AsyncIterator[str]:
             return
         try:
             current = snapshot()
-            changed = [
-                p for p, m in current.items() if seen.get(p, 0) != m
-            ]
+            changed = [p for p, m in current.items() if seen.get(p, 0) != m]
             for path in changed:
                 rel = os.path.relpath(path, job_dir)
                 if rel.startswith("nodes" + os.sep):
@@ -74,7 +72,7 @@ async def _watch(slug: str, request: Request) -> AsyncIterator[str]:
             if last_ping >= 15:
                 yield "event: ping\ndata: \n\n"
                 last_ping = 0
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("sse watcher error: %s", exc)
             yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
         await asyncio.sleep(1)

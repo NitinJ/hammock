@@ -63,9 +63,7 @@ def test_human_decision_404(client: TestClient) -> None:
     assert r.status_code == 404
 
 
-def test_human_decision_invalid_payload(
-    client: TestClient, hammock_v2_root: Path
-) -> None:
+def test_human_decision_invalid_payload(client: TestClient, hammock_v2_root: Path) -> None:
     # Set up a node dir manually
     paths.ensure_job_layout("test-slug", root=hammock_v2_root)
     paths.ensure_node_layout("test-slug", "n", root=hammock_v2_root)
@@ -76,9 +74,7 @@ def test_human_decision_invalid_payload(
     assert r.status_code == 400
 
 
-def test_human_decision_writes_file(
-    client: TestClient, hammock_v2_root: Path
-) -> None:
+def test_human_decision_writes_file(client: TestClient, hammock_v2_root: Path) -> None:
     paths.ensure_job_layout("test-slug", root=hammock_v2_root)
     paths.ensure_node_layout("test-slug", "n", root=hammock_v2_root)
     r = client.post(
@@ -93,9 +89,7 @@ def test_human_decision_writes_file(
     assert "looks good" in text
 
 
-def test_submit_job_then_list(
-    client: TestClient, hammock_v2_root: Path
-) -> None:
+def test_submit_job_then_list(client: TestClient, hammock_v2_root: Path) -> None:
     """Run a fake-mode submit through the API and verify the job dir
     materializes via the run_job CLI."""
     r = client.post(
@@ -111,6 +105,7 @@ def test_submit_job_then_list(
     # The orchestrator subprocess writes job.md eventually; in fake
     # mode this is essentially synchronous (couple hundred ms). Poll.
     import time
+
     job_md = paths.job_md(slug, root=hammock_v2_root)
     for _ in range(40):
         if job_md.is_file():

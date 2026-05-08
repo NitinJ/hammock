@@ -85,7 +85,9 @@ def load_workflow(path: Path) -> Workflow:
     except yaml.YAMLError as exc:
         raise WorkflowError(f"workflow {path} is not valid yaml: {exc}") from exc
     if not isinstance(raw, Mapping):
-        raise WorkflowError(f"workflow {path} top-level must be a mapping, got {type(raw).__name__}")
+        raise WorkflowError(
+            f"workflow {path} top-level must be a mapping, got {type(raw).__name__}"
+        )
     try:
         wf = Workflow.model_validate(raw)
     except ValidationError as exc:
@@ -96,9 +98,7 @@ def load_workflow(path: Path) -> Workflow:
     for n in wf.nodes:
         for dep in n.after:
             if dep not in ids:
-                raise WorkflowError(
-                    f"node {n.id!r}: after references unknown node {dep!r}"
-                )
+                raise WorkflowError(f"node {n.id!r}: after references unknown node {dep!r}")
     if _has_cycle(wf.nodes):
         raise WorkflowError(f"workflow {path}: cycle detected in after: edges")
     return wf
@@ -114,7 +114,7 @@ def topological_order(workflow: Workflow) -> list[Node]:
         if node_id in visited:
             return
         if node_id in stack:
-            cycle = " → ".join(stack[stack.index(node_id) :] + [node_id])
+            cycle = " → ".join([*stack[stack.index(node_id) :], node_id])
             raise WorkflowError(f"cycle: {cycle}")
         n = by_id[node_id]
         for dep in n.after:

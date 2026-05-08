@@ -72,7 +72,7 @@ def write_job_md(job_dir: Path, payload: dict[str, str]) -> None:
         "finished_at",
         "error",
     ):
-        if k in payload and payload[k]:
+        if payload.get(k):
             lines.append(f"{k}: {payload[k]}")
     lines.append("---")
     lines.append("")
@@ -225,6 +225,6 @@ def discover_workflows(workflows_dir: Path = WORKFLOWS_DIR) -> list[Workflow]:
     for path in sorted(workflows_dir.glob("*.yaml")):
         try:
             out.append(load_workflow(path))
-        except Exception as exc:  # noqa: BLE001 — surface to caller
+        except Exception as exc:
             log.warning("workflow %s failed to load: %s", path, exc)
     return out

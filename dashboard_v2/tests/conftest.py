@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -11,7 +10,7 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def hammock_v2_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def hammock_v2_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Set HAMMOCK_V2_ROOT to a tmpdir for the duration of the test."""
     root = tmp_path / "hammock-v2-root"
     root.mkdir()

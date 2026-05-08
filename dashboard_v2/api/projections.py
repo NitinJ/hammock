@@ -84,7 +84,9 @@ def job_summary(slug: str, root: Path) -> dict[str, Any] | None:
         "started_at": front.get("started_at"),
         "finished_at": front.get("finished_at"),
         "error": front.get("error"),
-        "request": body.split("## Request", 1)[-1].strip() if "## Request" in body else body.strip(),
+        "request": body.split("## Request", 1)[-1].strip()
+        if "## Request" in body
+        else body.strip(),
         "nodes": nodes_overview,
     }
 
@@ -177,7 +179,13 @@ def write_human_decision(
         raise ValueError(f"decision must be 'approved' or 'needs-revision', got {decision!r}")
     target = paths.node_human_decision(slug, node_id, root=root)
     target.parent.mkdir(parents=True, exist_ok=True)
-    body_lines = ["---", f"decision: {decision}", f"submitted_at: {_dt.datetime.now(_dt.UTC).isoformat()}", "---", ""]
+    body_lines = [
+        "---",
+        f"decision: {decision}",
+        f"submitted_at: {_dt.datetime.now(_dt.UTC).isoformat()}",
+        "---",
+        "",
+    ]
     if comment:
         body_lines.append(comment.strip())
     target.write_text("\n".join(body_lines) + "\n")
@@ -189,6 +197,7 @@ def workflow_yaml_path_for_name(name: str) -> Path | None:
     for wf in discover_workflows():
         if wf.name == name:
             from hammock_v2.engine.runner import WORKFLOWS_DIR
+
             return WORKFLOWS_DIR / f"{name}.yaml"
     return None
 

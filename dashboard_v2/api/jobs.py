@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import secrets
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -131,9 +130,7 @@ def get_orchestrator_chat(slug: str) -> dict[str, Any]:
 
 
 @router.post("/jobs/{slug}/nodes/{node_id}/human_decision")
-def post_human_decision(
-    slug: str, node_id: str, body: HumanDecisionRequest
-) -> dict[str, str]:
+def post_human_decision(slug: str, node_id: str, body: HumanDecisionRequest) -> dict[str, str]:
     settings = load_settings()
     if not paths.node_dir(slug, node_id, root=settings.root).is_dir():
         raise HTTPException(status_code=404, detail="node not found")

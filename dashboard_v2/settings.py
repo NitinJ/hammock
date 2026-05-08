@@ -19,7 +19,9 @@ class AppSettings:
 
 
 def load_settings() -> AppSettings:
-    root = resolve_root(Path(os.environ["HAMMOCK_V2_ROOT"]) if "HAMMOCK_V2_ROOT" in os.environ else None)
+    root = resolve_root(
+        Path(os.environ["HAMMOCK_V2_ROOT"]) if "HAMMOCK_V2_ROOT" in os.environ else None
+    )
     project = os.environ.get("HAMMOCK_V2_PROJECT_REPO_PATH")
     project_path = Path(project) if project else None
     claude_binary = os.environ.get("HAMMOCK_V2_CLAUDE_BINARY", "claude")
@@ -35,4 +37,4 @@ def load_settings() -> AppSettings:
     )
 
 
-__all__ = ["AppSettings", "DEFAULT_ROOT", "load_settings"]
+__all__ = ["DEFAULT_ROOT", "AppSettings", "load_settings"]
