@@ -247,3 +247,48 @@ def test_resolves_multiple_inputs(tmp_path: Path) -> None:
     assert resolved["bug"].present
     assert isinstance(resolved["req"].value, JobRequestValue)
     assert isinstance(resolved["bug"].value, BugReportValue)
+
+
+def test_resolver_follows_multi_hop_ref_chain(tmp_path: Path) -> None:
+    """Nested loops with `[last]`/single-iter projections naturally
+    produce chains of $ref pointer files: outer-loop projection points
+    at inner-loop projection points at the body's actual envelope.
+    Resolver must follow the chain to its terminating envelope, not
+    raise on the second hop. T6 dogfood discovery, 2026-05-08.
+    """
+    from engine.v1.resolver import _read_envelope
+
+    job_slug = "test-multi-hop"
+    paths.ensure_job_layout(job_slug, root=tmp_path)
+    # Body's actual envelope at innermost iter path (outer=0, inner=0).
+    _write_envelope(
+        root=tmp_path,
+        job_slug=job_slug,
+        var_name="design_spec",
+        type_name="bug-report",
+        value={"summary": "from-body", "document": "## body content"},
+    )
+    body_path = paths.variable_envelope_path(job_slug, "design_spec", root=tmp_path)
+    body_path.rename(body_path.parent / "design_spec__i0_0.json")
+    # Inner loop's projection at outer iter 0.
+    (body_path.parent / "design_spec__i0.json").write_text('{"$ref": "design_spec__i0_0"}')
+    # Outer loop's projection at top scope.
+    (body_path.parent / "design_spec__top.json").write_text('{"$ref": "design_spec__i0"}')
+
+    env = _read_envelope(body_path.parent / "design_spec__top.json")
+    assert env is not None
+    assert env.value["summary"] == "from-body"
+
+
+def test_resolver_detects_ref_pointer_cycle(tmp_path: Path) -> None:
+    """A → B → A cycle is malformed and must raise rather than loop."""
+    from engine.v1.resolver import _read_envelope
+
+    job_slug = "test-cycle"
+    paths.ensure_job_layout(job_slug, root=tmp_path)
+    var_dir = paths.variables_dir(job_slug, root=tmp_path)
+    (var_dir / "x__top.json").write_text('{"$ref": "x__i0"}')
+    (var_dir / "x__i0.json").write_text('{"$ref": "x__top"}')
+
+    with pytest.raises(ResolutionError, match="cycle detected"):
+        _read_envelope(var_dir / "x__top.json")
