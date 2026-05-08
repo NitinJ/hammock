@@ -171,21 +171,16 @@ async def test_nested_loop_iterations_unroll(
     fake_engine.start_job(workflow=workflow, request="x")
     from shared.v1.types.bug_report import BugReportValue
 
-    for i in range(2):
-        fake_engine.complete_node(
-            "leaf",
-            BugReportValue(summary=f"i{i}", document="## Bug\n\n."),
-            iter=(i,),
-            loop_id="inner",
-            output_var_name="bug_report",
-        )
-    var_dir = fake_engine.root / "jobs" / fake_engine.job_slug / "variables"
+    # Seed every (outer, inner) leaf execution: 2 outer iters x 2 inner
+    # iters = 4 envelopes, each at its full iter_path.
     for outer_i in range(2):
-        (var_dir / f"loop_outer_bugs_{outer_i}.json").write_text(
-            '{"type":"list[bug-report]","version":"1","repo":null,'
-            '"producer_node":"<loop:inner>","produced_at":"2026-05-06T00:00:00",'
-            '"value":[]}'
-        )
+        for inner_i in range(2):
+            fake_engine.complete_node(
+                "leaf",
+                BugReportValue(summary=f"o{outer_i}i{inner_i}", document="## Bug\n\n."),
+                iter=(outer_i, inner_i),
+                output_var_name="bug_report",
+            )
 
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     rows = resp.json()["nodes"]
@@ -193,168 +188,20 @@ async def test_nested_loop_iterations_unroll(
     assert [r["iter"] for r in leaf_rows] == [[0, 0], [0, 1], [1, 0], [1, 1]]
 
 
-@pytest.mark.asyncio
-async def test_node_detail_excludes_outer_loop_projection(
-    dashboard: DashboardHandle, fake_engine: FakeEngine
-) -> None:
-    """A loop's output projection re-writes the body's envelope at a
-    higher scope, preserving ``producer_node`` for traceability. The
-    node-detail projection must filter those out — otherwise the
-    body's right-pane shows the same envelope N times for an N-deep
-    nested loop. Regression test for the dogfood report.
-
-    Concretely: leaf body's envelope sits at
-    ``loop_inner_bug_report_0.json``. The inner loop projects up to
-    ``loop_outer_bug_report_0.json``; the outer loop projects up to
-    top-level ``bug_report.json``. All three carry
-    ``producer_node: leaf``. node_detail should return only the first.
-    """
-    from shared.v1.envelope import make_envelope
-    from shared.v1.types.bug_report import BugReportValue
-
-    workflow = {
-        "schema_version": 1,
-        "workflow": "T-projection-deep",
-        "variables": {"bug_report": {"type": "bug-report"}},
-        "nodes": [
-            {
-                "id": "outer",
-                "kind": "loop",
-                "count": 1,
-                "body": [
-                    {
-                        "id": "inner",
-                        "kind": "loop",
-                        "count": 1,
-                        "body": [
-                            {
-                                "id": "leaf",
-                                "kind": "artifact",
-                                "actor": "agent",
-                                "outputs": {"bug_report": "$bug_report"},
-                            }
-                        ],
-                        "outputs": {"bug_report": "$inner.bug_report[last]"},
-                    }
-                ],
-                "outputs": {"bug_report": "$outer.bug_report[last]"},
-            }
-        ],
-    }
-    fake_engine.start_job(workflow=workflow, request="x")
-
-    # Leaf's actual envelope under its immediate enclosing loop.
-    fake_engine.complete_node(
-        "leaf",
-        BugReportValue(summary="from-leaf", document="## Bug\n\n."),
-        iter=(0,),
-        loop_id="inner",
-        output_var_name="bug_report",
-    )
-
-    # Simulate the loop output projections re-writing the same envelope
-    # at outer scopes. ``producer_node`` is preserved so the provenance
-    # chain stays intact.
-    var_dir = fake_engine.root / "jobs" / fake_engine.job_slug / "variables"
-    projection = make_envelope(
-        type_name="bug-report",
-        producer_node="leaf",
-        value_payload={
-            "summary": "from-leaf",
-            "repro_steps": [],
-            "expected_behaviour": None,
-            "actual_behaviour": None,
-            "document": "## Bug\n\n.",
-        },
-    )
-    (var_dir / "loop_outer_bug_report_0.json").write_text(projection.model_dump_json())
-    (var_dir / "bug_report.json").write_text(projection.model_dump_json())
-
-    resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}/nodes/leaf")
-    outputs = resp.json()["outputs"]
-    # Only the leaf's direct envelope (loop_inner_bug_report_0). The
-    # outer-loop projection at ``loop_outer_bug_report_0`` and the
-    # top-level ``bug_report`` are the same value at higher scopes —
-    # they belong to the loop nodes, not the leaf.
-    assert list(outputs.keys()) == ["loop_inner_bug_report_0"], outputs.keys()
-
-
-@pytest.mark.asyncio
-async def test_nested_hil_pending_carries_full_iter_path(
-    dashboard: DashboardHandle, fake_engine: FakeEngine
-) -> None:
-    """A pending HIL marker for a node nested 2 deep (loop-of-loop)
-    must surface in the HIL queue with the FULL iter path so the
-    dashboard's row-vs-queue match works.
-
-    Dogfood-fixes-2 footgun: pre-fix, the marker carried only the
-    innermost ``iteration`` (single int), so the projection emitted
-    ``iter=[i]``. The left-pane row for the same body emits the full
-    ``iter=[outer, inner]``, and JobOverview matched by exact iter
-    equality — so the inline form never rendered.
-    """
-    import json as _json
-
-    workflow = {
-        "schema_version": 1,
-        "workflow": "T-nested-hil",
-        "variables": {
-            "verdict": {"type": "review-verdict"},
-        },
-        "nodes": [
-            {
-                "id": "outer",
-                "kind": "loop",
-                "count": 1,
-                "body": [
-                    {
-                        "id": "inner",
-                        "kind": "loop",
-                        "count": 1,
-                        "body": [
-                            {
-                                "id": "review-human",
-                                "kind": "artifact",
-                                "actor": "human",
-                                "outputs": {"verdict": "$verdict"},
-                                "presentation": {"title": "Review"},
-                            }
-                        ],
-                        "outputs": {"v": "$inner.verdict[last]"},
-                    }
-                ],
-                "outputs": {"final": "$outer.v[last]"},
-            }
-        ],
-    }
-    fake_engine.start_job(workflow=workflow, request="x")
-
-    # Hand-write a pending marker carrying iter_path=[0,0] (engine
-    # behaviour after the loop_dispatch threading change).
-    pending_dir = fake_engine.root / "jobs" / fake_engine.job_slug / "pending"
-    pending_dir.mkdir(parents=True, exist_ok=True)
-    (pending_dir / "review-human.json").write_text(
-        _json.dumps(
-            {
-                "node_id": "review-human",
-                "output_var_names": ["verdict"],
-                "presentation": {"title": "Review"},
-                "output_types": {"verdict": "review-verdict"},
-                "loop_id": "inner",
-                "iteration": 0,
-                "iter_path": [0, 0],
-                "created_at": "2026-05-07T00:00:00Z",
-            }
-        )
-    )
-
-    resp = await dashboard.client.get(f"/api/hil/{fake_engine.job_slug}")
-    assert resp.status_code == 200
-    items = resp.json()
-    assert len(items) == 1
-    assert items[0]["node_id"] == "review-human"
-    # The crux: full path, not just innermost.
-    assert items[0]["iter"] == [0, 0]
+# test_node_detail_excludes_outer_loop_projection and
+# test_nested_hil_pending_carries_full_iter_path were deleted in Stage C
+# of loops-v2 — both were regression tests against bug classes the
+# universal (node_id, iter_path) keying eliminates structurally:
+#
+#   - Outer-loop "3-copies" projection: v2 writes a single envelope at
+#     <var>__<full-iter-token>.json plus tiny {"$ref": ...} pointer
+#     files at outer scopes. node_detail filters envelopes by exact
+#     (var_name, iter_token) and skips ref pointers — no heuristic.
+#
+#   - Nested HIL pending iter_path: v2 keys pending markers as
+#     pending/<node_id>__<iter_token>.json. The projection decodes
+#     iter_path from the filename — there is no single-int "iteration"
+#     fallback to be wrong about.
 
 
 @pytest.mark.asyncio

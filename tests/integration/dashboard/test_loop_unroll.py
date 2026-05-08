@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from shared.v1 import paths as v1_paths
 from tests.integration.conftest import DashboardHandle
 from tests.integration.fake_engine import FakeEngine
 
@@ -131,26 +130,18 @@ async def test_nested_loop_two_levels_unroll(
     """Inner-loop body envelopes drive inner iteration count; outer
     envelopes drive outer count. Body rows nest with iter=[outer, inner]."""
     fake_engine.start_job(workflow=_nested_workflow(), request="x")
-    # Inner loop has run 2 iters at the latest outer pass.
-    for i in range(2):
-        _seed_loop_body_envelope(
-            fake_engine, loop_id="inner", var_name="bug_report", iteration=i, summary=f"i{i}"
-        )
-    # Outer loop has run 2 iters (its projected output `bugs` exists per outer iter).
-    var_dir = v1_paths.variables_dir(fake_engine.job_slug, root=fake_engine.root)
+    # 2 outer iters x 2 inner iters: seed body envelopes for every
+    # leaf execution so the projection sees iter (outer_i, inner_i)
+    # for each (the universal v2 keying carries the full iter_path).
     for outer_i in range(2):
-        v1_paths.loop_variable_envelope_path(
-            fake_engine.job_slug,
-            "outer",
-            "bugs",
-            outer_i,
-            root=fake_engine.root,
-        ).parent.mkdir(parents=True, exist_ok=True)
-        (var_dir / f"loop_outer_bugs_{outer_i}.json").write_text(
-            '{"type":"list[bug-report]","version":"1","repo":null,'
-            '"producer_node":"<loop:inner>","produced_at":"2026-05-06T00:00:00",'
-            '"value":[]}'
-        )
+        for inner_i in range(2):
+            fake_engine.complete_node(
+                "write-one",
+                _Bug(summary=f"o{outer_i}i{inner_i}"),
+                iter=(outer_i, inner_i),
+                output_var_name="bug_report",
+                type_name="bug-report",
+            )
 
     resp = await dashboard.client.get(f"/api/jobs/{fake_engine.job_slug}")
     assert resp.status_code == 200, resp.text

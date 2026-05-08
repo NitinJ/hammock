@@ -119,18 +119,32 @@ async def get_node_chat(
 
 
 @router.get("/{job_slug}/nodes/{node_id}", response_model=NodeDetail)
-async def get_node(request: Request, job_slug: str, node_id: str) -> NodeDetail:
-    """Per-node drilldown: state + envelopes produced by this node id.
+async def get_node(
+    request: Request,
+    job_slug: str,
+    node_id: str,
+    iter: Annotated[
+        str,
+        Query(description="iter_token (e.g. 'top', 'i0', 'i0_1'); default 'top'"),
+    ] = "top",
+) -> NodeDetail:
+    """Per-(node, iter_path) drilldown.
 
-    Note: for loop body nodes, ``state.json`` reflects the latest
-    iteration only; the per-iteration state is reconstructed from
-    envelope existence in the parent loop's iteration row of
-    ``GET /api/jobs/{slug}``."""
+    With v2 keying every node-execution has its own state.json under
+    ``nodes/<id>/<iter_token>/state.json`` and outputs at
+    ``variables/<var>__<iter_token>.json``. The optional ``?iter=<token>``
+    query parameter selects the iteration; default ``top`` means the
+    top-level execution."""
     settings = request.app.state.settings  # type: ignore[attr-defined]
-    detail = projections.node_detail(settings.root, job_slug, node_id)
+    try:
+        iter_path = v1_paths.parse_iter_token(iter)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"bad iter_token: {exc}") from exc
+    detail = projections.node_detail(settings.root, job_slug, node_id, iter_path)
     if detail is None:
         raise HTTPException(
-            status_code=404, detail=f"no node {node_id!r} on disk for job {job_slug!r}"
+            status_code=404,
+            detail=(f"no node {node_id!r} (iter={iter!r}) on disk for job {job_slug!r}"),
         )
     return detail
 

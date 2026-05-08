@@ -406,26 +406,27 @@ class FakeEngine:
         prompt: str | None = None,
         output_var_names: list[str] | None = None,
     ) -> str:
-        """Drop a pending marker at pending/<node_id>.json. Returns
-        node_id (the gate identifier).
+        """Drop a pending marker at ``pending/<node_id>__<iter_token>.json``.
+        Returns node_id (the gate identifier).
 
-        ``output_var_names`` defaults to ``[node_id]``."""
+        ``output_var_names`` defaults to ``[node_id]``. ``loop_id`` is
+        ignored — v2 keys solely on ``iter_path``."""
+        del loop_id
         var_names = output_var_names if output_var_names is not None else [node_id]
         marker = {
             "node_id": node_id,
             "output_var_names": var_names,
             "output_types": dict.fromkeys(var_names, type_name),
             "presentation": {"prompt": prompt} if prompt else {},
-            "loop_id": loop_id,
-            "iteration": iter[0] if iter else None,
+            "iter_path": list(iter),
             "created_at": _utc_now().isoformat(),
         }
-        path = self._pending_dir() / f"{node_id}.json"
+        path = v1_paths.pending_marker_path(self.job_slug, node_id, iter, root=self.root)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, json.dumps(marker, indent=2))
         self._emit_event(
             "hil_requested",
-            {"node_id": node_id, "type": type_name, "iter": list(iter), "loop_id": loop_id},
+            {"node_id": node_id, "type": type_name, "iter": list(iter)},
             node_id=node_id,
         )
         return node_id
@@ -448,7 +449,7 @@ class FakeEngine:
         Returns the parsed envelope value as a BaseModel. The exact
         Value class is resolved from the type registry via type_name
         (read off the envelope when not provided)."""
-        pending_path = self._pending_dir() / f"{node_id}.json"
+        pending_path = v1_paths.pending_marker_path(self.job_slug, node_id, iter, root=self.root)
         if pending_path.exists():
             raise AssertionError(f"HIL pending marker still present at {pending_path}")
 

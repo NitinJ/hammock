@@ -9,6 +9,11 @@ and resolves each fan-out by calling the relevant projection again.
 
 All paths come from ``shared.v1.paths``. The disk layout is the v1
 layout exclusively — v0 is gone.
+
+v2 keying (loops-v2): every execution is identified by ``(node_id,
+iter_path)`` where ``iter_path`` is a tuple of loop iteration indices,
+outermost first. ``state.json`` lives at ``nodes/<id>/<iter_token>/``
+and variable envelopes at ``variables/<var>__<iter_token>.json``.
 """
 
 from __future__ import annotations
@@ -129,8 +134,10 @@ class NodeDetail(BaseModel):
     last_error: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    # Output envelopes the node produced (top-level only here; loop-
-    # indexed envelopes surface via the loop's parent node).
+    iter: list[int] = Field(default_factory=list)
+    """The iter_path this node-detail row corresponds to. Top-level
+    nodes get an empty list; loop body executions carry the full path."""
+    # Output envelopes the node produced for this iter_path.
     outputs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -353,8 +360,7 @@ def _list_nodes(root: Path, job_slug: str, workflow: Workflow | None) -> list[No
     With a loadable workflow: walk declaration order; loops are expanded
     into per-iteration body rows tagged with ``iter`` + ``loop_path`` +
     ``parent_loop_id``. Without one: fall back to a flat enumeration of
-    ``nodes/<id>/state.json`` files (useful when the workflow file is
-    gone or malformed)."""
+    every ``nodes/<id>/<iter_token>/state.json`` on disk."""
     if workflow is None:
         return _list_nodes_flat(root, job_slug)
     out: list[NodeListEntry] = []
@@ -364,7 +370,7 @@ def _list_nodes(root: Path, job_slug: str, workflow: Workflow | None) -> list[No
             root=root,
             job_slug=job_slug,
             out=out,
-            iter_path=[],
+            iter_path=(),
             loop_path=[],
             parent_loop_id=None,
         )
@@ -372,29 +378,41 @@ def _list_nodes(root: Path, job_slug: str, workflow: Workflow | None) -> list[No
 
 
 def _list_nodes_flat(root: Path, job_slug: str) -> list[NodeListEntry]:
-    """Workflow-less fallback: read whichever state.json files exist."""
+    """Workflow-less fallback: read every ``nodes/<id>/<token>/state.json``
+    we can find on disk. Loop / parent metadata is unavailable here, so
+    rows carry only ``node_id`` + ``iter`` + state fields."""
     nodes_dir = v1_paths.nodes_dir(job_slug, root=root)
     if not nodes_dir.is_dir():
         return []
     out: list[NodeListEntry] = []
     for nd in sorted(nodes_dir.iterdir()):
-        sp = nd / "state.json"
-        if not sp.is_file():
+        if not nd.is_dir():
             continue
-        try:
-            nr = NodeRun.model_validate_json(sp.read_text())
-        except Exception:
-            continue
-        out.append(
-            NodeListEntry(
-                node_id=nr.node_id,
-                state=nr.state,
-                attempts=nr.attempts,
-                last_error=nr.last_error,
-                started_at=nr.started_at,
-                finished_at=nr.finished_at,
+        for iter_dir in sorted(nd.iterdir()):
+            if not iter_dir.is_dir():
+                continue
+            sp = iter_dir / "state.json"
+            if not sp.is_file():
+                continue
+            try:
+                ip = v1_paths.parse_iter_token(iter_dir.name)
+            except ValueError:
+                continue
+            try:
+                nr = NodeRun.model_validate_json(sp.read_text())
+            except Exception:
+                continue
+            out.append(
+                NodeListEntry(
+                    node_id=nr.node_id,
+                    state=nr.state,
+                    attempts=nr.attempts,
+                    last_error=nr.last_error,
+                    started_at=nr.started_at,
+                    finished_at=nr.finished_at,
+                    iter=list(ip),
+                )
             )
-        )
     return out
 
 
@@ -404,7 +422,7 @@ def _emit_node_rows(
     root: Path,
     job_slug: str,
     out: list[NodeListEntry],
-    iter_path: list[int],
+    iter_path: tuple[int, ...],
     loop_path: list[str],
     parent_loop_id: str | None,
 ) -> None:
@@ -413,15 +431,15 @@ def _emit_node_rows(
     ``loop_path`` extended.
 
     Always emits at least iter 0 of every loop, even when no envelopes
-    have landed on disk yet. That way the operator sees the workflow
-    structure upfront; body rows display ``pending`` until the engine
-    reaches them."""
+    or state files have landed on disk yet. That way the operator sees
+    the workflow structure upfront; body rows display ``pending`` until
+    the engine reaches them."""
     if isinstance(node, LoopNode):
         # Always show at least iter 0 — workflow structure visible to
         # the operator before the engine produces its first envelope.
-        # Once iter 0 lands an envelope, _count_loop_iterations_seen
-        # returns 1; iter 1 only shows when a second envelope appears.
-        iters = max(1, _count_loop_iterations_seen(node.id, job_slug, root))
+        # Once iter 0 lands a state/envelope, _count_loop_iterations_seen
+        # returns 1; iter N only shows once we observe state at index N.
+        iters = max(1, _count_loop_iterations_seen(node, iter_path, job_slug, root))
         for i in range(iters):
             for body in node.body:
                 _emit_node_rows(
@@ -429,7 +447,7 @@ def _emit_node_rows(
                     root=root,
                     job_slug=job_slug,
                     out=out,
-                    iter_path=[*iter_path, i],
+                    iter_path=(*iter_path, i),
                     loop_path=[*loop_path, node.id],
                     parent_loop_id=node.id,
                 )
@@ -451,21 +469,17 @@ def _build_node_entry(
     *,
     root: Path,
     job_slug: str,
-    iter_path: list[int],
+    iter_path: tuple[int, ...],
     loop_path: list[str],
     parent_loop_id: str | None,
 ) -> NodeListEntry:
-    """Read on-disk state for *node* and synthesise the per-row entry.
+    """Read on-disk state for *(node, iter_path)* and synthesise the
+    per-row entry.
 
-    The engine writes a single ``nodes/<id>/state.json`` per node — for
-    loop body nodes that file reflects the *latest* iteration. We refine
-    state per iteration:
-
-    - If a loop-indexed output envelope exists for this iter → SUCCEEDED.
-    - Else if this is the latest iter on disk → use state.json.
-    - Else → PENDING (the loop hasn't reached this iter yet, which
-      shouldn't happen in a well-formed call but stays safe)."""
-    sp = v1_paths.node_state_path(job_slug, node.id, root=root)
+    With v2 path keying, every ``(node_id, iter_path)`` has its own
+    ``state.json`` — no need to refine state from envelope existence;
+    the state file is per-iter and authoritative."""
+    sp = v1_paths.node_state_path(job_slug, node.id, iter_path, root=root)
     nr: NodeRun | None = None
     if sp.is_file():
         try:
@@ -479,17 +493,12 @@ def _build_node_entry(
     started_at = nr.started_at if nr is not None else None
     finished_at = nr.finished_at if nr is not None else None
 
-    # For loop body rows, prefer envelope-existence as the truth signal.
-    if iter_path and parent_loop_id is not None:
-        innermost_iter = iter_path[-1]
-        latest_seen = _count_loop_iterations_seen(parent_loop_id, job_slug, root) - 1
-        if _node_iter_has_envelope(node, parent_loop_id, innermost_iter, job_slug, root):
-            state = NodeRunState.SUCCEEDED
-        elif innermost_iter < latest_seen:
-            # An older iteration with no envelope on disk — body finished
-            # without producing this output (e.g. runs_if false).
-            state = NodeRunState.SKIPPED
-        # iter == latest_seen: keep state.json as-is (RUNNING / PENDING / ...).
+    # Fallback signal: when state.json hasn't been written yet but the
+    # node has produced its envelope (e.g. tests seeding only envelopes
+    # via FakeEngine.complete_node), surface SUCCEEDED so the row
+    # reflects observable progress.
+    if nr is None and _node_has_envelope_at(node, iter_path, job_slug, root):
+        state = NodeRunState.SUCCEEDED
 
     return NodeListEntry(
         node_id=node.id,
@@ -507,59 +516,102 @@ def _build_node_entry(
     )
 
 
-def _node_iter_has_envelope(
+def _node_has_envelope_at(
     node: ArtifactNode | CodeNode,
-    loop_id: str,
-    iteration: int,
+    iter_path: tuple[int, ...],
     job_slug: str,
     root: Path,
 ) -> bool:
-    """True iff a loop-indexed output envelope for *node* at *iteration*
-    is present on disk for any of the node's declared output var names.
-
-    v2: variables are keyed by iter_path, not loop_id+iter. Stage C
-    will rewrite this projection wholesale; for now we ignore loop_id
-    and trust iter_path."""
-    _ = loop_id
+    """True iff any of *node*'s declared output variables has an
+    envelope at the exact ``iter_path``."""
     for output_ref in (node.outputs or {}).values():
         var_name = output_ref.lstrip("$").split(".", 1)[0].rstrip("?")
         if not var_name:
             continue
-        env = v1_paths.variable_envelope_path(job_slug, var_name, (iteration,), root=root)
+        env = v1_paths.variable_envelope_path(job_slug, var_name, iter_path, root=root)
         if env.is_file():
             return True
     return False
 
 
-def _count_loop_iterations_seen(loop_id: str, job_slug: str, root: Path) -> int:
-    """Highest visible iteration index for *loop_id* + 1. Zero if nothing
-    on disk yet.
+def _count_loop_iterations_seen(
+    loop: LoopNode,
+    enclosing_iter_path: tuple[int, ...],
+    job_slug: str,
+    root: Path,
+) -> int:
+    """Highest visible iteration index for *loop* (under the given
+    enclosing scope) + 1. Zero if nothing on disk yet.
 
-    Heuristic: scan ``variables/loop_<id>_*_<i>.json`` filenames. Engine
-    writes one file per (loop, body_var, iteration), so the highest
-    trailing integer across any matching file is the iteration count."""
-    var_dir = v1_paths.variables_dir(job_slug, root=root)
-    if not var_dir.is_dir():
-        return 0
-    safe_id = loop_id.replace("/", "_").replace(" ", "_")
-    prefix = f"loop_{safe_id}_"
-    suffix = ".json"
+    Strategy: union evidence from every body node's per-iter state
+    directory and per-iter output envelope. We look at body nodes
+    recursively (so an inner-loop header iter still surfaces an outer
+    iter even when the leaf hasn't completed yet) but only count
+    direct-child iter indices (the int at depth ``len(enclosing_iter_path)``).
+    """
+    depth = len(enclosing_iter_path)
     highest = -1
-    for p in var_dir.iterdir():
-        name = p.name
-        if not name.startswith(prefix) or not name.endswith(suffix):
-            continue
-        middle = name[len(prefix) : -len(suffix)]
-        last_us = middle.rfind("_")
-        if last_us == -1:
-            continue
-        try:
-            i = int(middle[last_us + 1 :])
-        except ValueError:
-            continue
-        if i > highest:
-            highest = i
+
+    # Walk every leaf node in the loop body (recursing through inner
+    # loops). For each leaf, scan ``nodes/<id>/`` for iter directories
+    # whose iter_path begins with enclosing_iter_path; the index at
+    # ``depth`` is this loop's iteration counter.
+    for leaf in _iter_leaf_nodes(loop.body):
+        node_dir = v1_paths.node_dir(job_slug, leaf.id, root=root)
+        if node_dir.is_dir():
+            for iter_dir in node_dir.iterdir():
+                if not iter_dir.is_dir():
+                    continue
+                try:
+                    ip = v1_paths.parse_iter_token(iter_dir.name)
+                except ValueError:
+                    continue
+                if len(ip) <= depth:
+                    continue
+                if ip[:depth] != enclosing_iter_path:
+                    continue
+                if ip[depth] > highest:
+                    highest = ip[depth]
+
+        # Also inspect envelope files for body output vars: ``<var>__i<...>.json``.
+        for output_ref in (leaf.outputs or {}).values():
+            var_name = output_ref.lstrip("$").split(".", 1)[0].rstrip("?")
+            if not var_name:
+                continue
+            var_dir = v1_paths.variables_dir(job_slug, root=root)
+            if not var_dir.is_dir():
+                continue
+            prefix = f"{var_name}__"
+            suffix = ".json"
+            for p in var_dir.iterdir():
+                name = p.name
+                if not name.startswith(prefix) or not name.endswith(suffix):
+                    continue
+                token = name[len(prefix) : -len(suffix)]
+                try:
+                    ip = v1_paths.parse_iter_token(token)
+                except ValueError:
+                    continue
+                if len(ip) <= depth:
+                    continue
+                if ip[:depth] != enclosing_iter_path:
+                    continue
+                if ip[depth] > highest:
+                    highest = ip[depth]
+
     return highest + 1
+
+
+def _iter_leaf_nodes(nodes: list[Node]) -> list[ArtifactNode | CodeNode]:
+    """Flatten a node list to its leaf (artifact / code) nodes,
+    recursing through nested LoopNode bodies."""
+    out: list[ArtifactNode | CodeNode] = []
+    for n in nodes:
+        if isinstance(n, LoopNode):
+            out.extend(_iter_leaf_nodes(n.body))
+        else:
+            out.append(n)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -567,8 +619,21 @@ def _count_loop_iterations_seen(loop_id: str, job_slug: str, root: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-def node_detail(root: Path, job_slug: str, node_id: str) -> NodeDetail | None:
-    sp = v1_paths.node_state_path(job_slug, node_id, root=root)
+def node_detail(
+    root: Path,
+    job_slug: str,
+    node_id: str,
+    iter_path: tuple[int, ...] = (),
+) -> NodeDetail | None:
+    """Per-(node, iter_path) drilldown.
+
+    With v2 path keying: ``state.json`` lives at
+    ``nodes/<id>/<iter_token>/state.json`` and outputs sit at
+    ``variables/<var>__<iter_token>.json``. Filtering is structural — we
+    look up each declared output's expected filename directly rather
+    than scanning the whole variables/ dir.
+    """
+    sp = v1_paths.node_state_path(job_slug, node_id, iter_path, root=root)
     if not sp.is_file():
         return None
     try:
@@ -577,32 +642,35 @@ def node_detail(root: Path, job_slug: str, node_id: str) -> NodeDetail | None:
         return None
 
     outputs: dict[str, dict[str, Any]] = {}
-    var_dir = v1_paths.variables_dir(job_slug, root=root)
-    if var_dir.is_dir():
-        # Match envelopes by **path shape**, not just producer_node. Loop
-        # output projections preserve the original producer_node when
-        # they re-write an envelope at a higher loop scope (so the
-        # provenance chain stays intact); naively matching on
-        # producer_node alone surfaces those projections under the
-        # original node's detail page, producing N copies of the same
-        # output for an N-deep nested-loop body. Filter to the node's
-        # direct output paths only:
-        #   - top-level node: ``<var>.json``
-        #   - loop body node: ``loop_<innermost_loop_id>_<var>_<i>.json``
-        cfg = _read_job_config(root, job_slug)
-        workflow = _try_load_workflow(cfg.workflow_path) if cfg is not None else None
-        location = _locate_node_in_workflow(workflow, node_id)
+    cfg = _read_job_config(root, job_slug)
+    workflow = _try_load_workflow(cfg.workflow_path) if cfg is not None else None
+    var_names = _node_output_var_names(workflow, node_id)
 
-        for env_path in sorted(var_dir.glob("*.json")):
-            try:
-                env = Envelope.model_validate_json(env_path.read_text())
-            except Exception:
-                continue
-            if env.producer_node != node_id:
-                continue
-            if location is not None and not _envelope_belongs_to_node(env_path.name, location):
-                continue
-            outputs[env_path.stem] = json.loads(env.model_dump_json())
+    for var_name in var_names:
+        env_path = v1_paths.variable_envelope_path(job_slug, var_name, iter_path, root=root)
+        if not env_path.is_file():
+            continue
+        try:
+            text = env_path.read_text()
+        except OSError:
+            continue
+        # Pointer files (``{"$ref": "..."}``) at outer scopes belong to
+        # the loop, not the body node — skip them.
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(raw, dict) and set(raw.keys()) == {"$ref"}:
+            continue
+        try:
+            env = Envelope.model_validate(raw)
+        except Exception:
+            continue
+        if env.producer_node != node_id:
+            # Different producer → either a loop projection materialised
+            # an aggregated value at this slot, or someone else owns it.
+            continue
+        outputs[env_path.stem] = json.loads(env.model_dump_json())
 
     return NodeDetail(
         node_id=nr.node_id,
@@ -611,73 +679,36 @@ def node_detail(root: Path, job_slug: str, node_id: str) -> NodeDetail | None:
         last_error=nr.last_error,
         started_at=nr.started_at,
         finished_at=nr.finished_at,
+        iter=list(iter_path),
         outputs=outputs,
     )
 
 
-def _locate_node_in_workflow(
-    workflow: Workflow | None, node_id: str
-) -> tuple[str | None, set[str]] | None:
-    """Find *node_id* in the workflow's DAG (recursing into loop bodies).
-
-    Returns ``(parent_loop_id_or_None, declared_output_var_names)`` or
-    ``None`` when the node isn't found (typical when the workflow file
-    is gone — caller falls back to including all matched envelopes for
-    debug visibility)."""
+def _node_output_var_names(workflow: Workflow | None, node_id: str) -> list[str]:
+    """Find *node_id* in the workflow (recursing into loop bodies) and
+    return its declared output variable names. Empty list if the node
+    isn't found — the caller surfaces no outputs in that case rather
+    than scanning blindly."""
     if workflow is None:
-        return None
+        return []
 
-    def visit(nodes: list[Node], parent_loop_id: str | None) -> tuple[str | None, set[str]] | None:
+    def visit(nodes: list[Node]) -> list[str] | None:
         for n in nodes:
             if isinstance(n, LoopNode):
-                hit = visit(n.body, n.id)
+                hit = visit(n.body)
                 if hit is not None:
                     return hit
                 continue
             if n.id == node_id:
-                var_names = {
-                    ref.lstrip("$").split(".", 1)[0].rstrip("?")
-                    for ref in (n.outputs or {}).values()
-                }
-                var_names.discard("")
-                return parent_loop_id, var_names
+                names: list[str] = []
+                for ref in (n.outputs or {}).values():
+                    v = ref.lstrip("$").split(".", 1)[0].rstrip("?")
+                    if v:
+                        names.append(v)
+                return names
         return None
 
-    return visit(workflow.nodes, None)
-
-
-def _envelope_belongs_to_node(filename: str, location: tuple[str | None, set[str]]) -> bool:
-    """True iff *filename* is the direct output path for the node at
-    *location* — i.e., not a loop-projected re-write at a higher scope."""
-    parent_loop_id, var_names = location
-    if not filename.endswith(".json"):
-        return False
-    stem = filename[: -len(".json")]
-
-    if parent_loop_id is None:
-        # Top-level node: direct path is ``<var>.json``.
-        return stem in var_names
-
-    # Loop body node: direct path is
-    # ``loop_<parent_loop_id>_<var>_<iter>.json``. The var name itself
-    # may contain underscores, and so may the loop id, so split off the
-    # ``loop_`` prefix and the trailing ``_<digits>`` and match the
-    # remainder against ``<parent_loop_id>_<var>``.
-    if not stem.startswith("loop_"):
-        return False
-    rest = stem[len("loop_") :]
-    last_us = rest.rfind("_")
-    if last_us < 0:
-        return False
-    iter_part = rest[last_us + 1 :]
-    if not iter_part.isdigit():
-        return False
-    head = rest[:last_us]
-    expected_prefix = f"{parent_loop_id}_"
-    if not head.startswith(expected_prefix):
-        return False
-    var = head[len(expected_prefix) :]
-    return var in var_names
+    return visit(workflow.nodes) or []
 
 
 # ---------------------------------------------------------------------------
@@ -713,12 +744,12 @@ def _workflow_name_for_job(root: Path, job_slug: str) -> str:
 
 
 def _hil_explicit_for_job(root: Path, job_slug: str, workflow_name: str) -> list[HilQueueItem]:
-    pending_dir = v1_paths.job_dir(job_slug, root=root) / "pending"
+    pending_dir = v1_paths.pending_dir(job_slug, root=root)
     if not pending_dir.is_dir():
         return []
     out: list[HilQueueItem] = []
     for f in sorted(pending_dir.glob("*.json")):
-        item = _read_pending_marker(root, job_slug, workflow_name, f)
+        item = _read_pending_marker(job_slug, workflow_name, f)
         if item is not None:
             out.append(item)
     return out
@@ -737,16 +768,22 @@ def _hil_implicit_for_job(root: Path, job_slug: str, workflow_name: str) -> list
 
 
 def hil_queue_item(root: Path, job_slug: str, node_id: str) -> HilQueueItem | None:
-    """Return the explicit pending HIL for ``(job_slug, node_id)`` if any.
+    """Return the pending HIL for ``(job_slug, node_id)`` if any.
 
-    Implicit asks are addressed by ``call_id``, not ``node_id`` (one
-    node may have multiple in-flight asks). For implicit lookup use
-    :func:`hil_queue_ask`."""
-    f = v1_paths.job_dir(job_slug, root=root) / "pending" / f"{node_id}.json"
-    if not f.is_file():
+    With v2 keying, the marker filename is ``<node_id>__<iter_token>.json``;
+    a node may have multiple pending markers across iter_paths (rare —
+    usually only one is open at a time). When more than one matches, the
+    first sorted match is returned. Callers needing iter disambiguation
+    should iterate ``hil_queue(root, job_slug=...)``."""
+    pdir = v1_paths.pending_dir(job_slug, root=root)
+    if not pdir.is_dir():
         return None
     workflow_name = _workflow_name_for_job(root, job_slug)
-    return _read_pending_marker(root, job_slug, workflow_name, f)
+    for f in sorted(pdir.glob(f"{node_id}__*.json")):
+        item = _read_pending_marker(job_slug, workflow_name, f)
+        if item is not None and item.node_id == node_id:
+            return item
+    return None
 
 
 def hil_queue_ask(root: Path, job_slug: str, call_id: str) -> HilQueueItem | None:
@@ -758,21 +795,19 @@ def hil_queue_ask(root: Path, job_slug: str, call_id: str) -> HilQueueItem | Non
     return _read_ask_marker(job_slug, workflow_name, f)
 
 
-def _read_pending_marker(
-    root: Path, job_slug: str, workflow_name: str, path: Path
-) -> HilQueueItem | None:
+def _read_pending_marker(job_slug: str, workflow_name: str, path: Path) -> HilQueueItem | None:
     try:
         data = json.loads(path.read_text())
     except Exception:
         return None
     created_at = _parse_iso_or_none(data.get("created_at"))
-    iter_list = _iter_from_pending(data)
+    iter_list = _iter_from_pending(data, path)
     output_types = dict(data.get("output_types") or {})
     return HilQueueItem(
         kind="explicit",
         job_slug=job_slug,
         workflow_name=workflow_name,
-        node_id=data.get("node_id", path.stem),
+        node_id=data.get("node_id", _node_id_from_pending_filename(path.stem)),
         iter=iter_list,
         created_at=created_at,
         output_var_names=list(data.get("output_var_names") or []),
@@ -780,6 +815,16 @@ def _read_pending_marker(
         presentation=dict(data.get("presentation") or {}),
         form_schemas=_build_form_schemas(output_types),
     )
+
+
+def _node_id_from_pending_filename(stem: str) -> str:
+    """Pending markers are named ``<node_id>__<iter_token>``. Strip the
+    iter_token suffix; if none, the whole stem is the node_id (defensive
+    against legacy markers)."""
+    sep = stem.rfind("__")
+    if sep < 0:
+        return stem
+    return stem[:sep]
 
 
 def _build_form_schemas(
@@ -837,18 +882,22 @@ def _read_ask_marker(job_slug: str, workflow_name: str, path: Path) -> HilQueueI
     )
 
 
-def _iter_from_pending(data: dict[str, Any]) -> list[int]:
-    """Pending markers carry ``loop_id`` + ``iteration`` (innermost int)
-    and, for nested loops, ``iter_path`` (full chain outer..innermost).
-    Prefer ``iter_path`` so the projection's ``iter`` matches the row's
-    iter (left-pane row keying); fall back to single-element form for
-    older single-level markers."""
+def _iter_from_pending(data: dict[str, Any], path: Path) -> list[int]:
+    """Decode the pending marker's iter_path. Source of truth is the
+    marker's filename suffix (``<node_id>__<iter_token>.json``); the
+    in-body ``iter_path`` array is treated as a redundant copy. Falls
+    back to body if the filename is malformed."""
+    stem = path.stem
+    sep = stem.rfind("__")
+    if sep >= 0:
+        token = stem[sep + 2 :]
+        try:
+            return list(v1_paths.parse_iter_token(token))
+        except ValueError:
+            pass
     full = data.get("iter_path")
     if isinstance(full, list) and all(isinstance(x, int) for x in full):
         return list(full)
-    raw = data.get("iteration")
-    if isinstance(raw, int):
-        return [raw]
     return []
 
 

@@ -6,8 +6,16 @@ semantic ``kind``; the SSE handler uses ``scopes_for`` to fan changes
 out to the right subscribers.
 
 This module replaces the v0 path classification that lived in
-``dashboard.state.cache``. It targets the v1 layout exclusively
-(no backwards compatibility with v0 stage / hil paths).
+``dashboard.state.cache``. It targets the v1 layout exclusively.
+
+v2 keying (loops-v2): every execution is identified by
+``(node_id, iter_path)``. State and envelope filenames carry the iter
+token explicitly:
+
+  - ``nodes/<node_id>/<iter_token>/state.json``
+  - ``variables/<var>__<iter_token>.json``
+  - ``pending/<node_id>__<iter_token>.json``
+  - ``nodes/<node_id>/<iter_token>/runs/<n>/chat.jsonl``  (chat tail)
 """
 
 from __future__ import annotations
@@ -17,15 +25,17 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
+from shared.v1 import paths as v1_paths
+
 PathKind = Literal[
     "project",  # projects/<slug>/project.json
     "job",  # jobs/<slug>/job.json
-    "node",  # jobs/<slug>/nodes/<node_id>/state.json
-    "variable",  # jobs/<slug>/variables/<var>.json (top-level envelope)
-    "loop_variable",  # jobs/<slug>/variables/loop_<lid>_<var>_<i>.json
-    "pending",  # jobs/<slug>/pending/<node_id>.json (HIL marker)
+    "node",  # jobs/<slug>/nodes/<node_id>/<iter_token>/state.json
+    "variable",  # jobs/<slug>/variables/<var>__<iter_token>.json
+    "pending",  # jobs/<slug>/pending/<node_id>__<iter_token>.json
     "ask",  # jobs/<slug>/asks/<call_id>.json (implicit HIL marker)
     "events_jsonl",  # jobs/<slug>/events.jsonl
+    "chat_jsonl",  # jobs/<slug>/nodes/<id>/<token>/runs/<n>/chat.jsonl
     "unknown",
 ]
 
@@ -39,9 +49,9 @@ class ClassifiedPath:
     job_slug: str | None = None
     node_id: str | None = None
     var_name: str | None = None
-    loop_id: str | None = None
-    iteration: int | None = None
+    iter_path: tuple[int, ...] | None = None
     call_id: str | None = None
+    attempt: int | None = None
 
 
 class ChangeKind(StrEnum):
@@ -56,7 +66,8 @@ def classify_path(path: Path, root: Path) -> ClassifiedPath:
     """Map an absolute *path* under *root* to its semantic kind.
 
     Returns ``ClassifiedPath(kind="unknown")`` for paths the dashboard
-    does not track (per-attempt run dirs, raw artifacts, side files).
+    does not track (per-attempt prompts / stderr / output.json, side
+    files).
     """
     try:
         rel = path.relative_to(root)
@@ -73,49 +84,97 @@ def classify_path(path: Path, root: Path) -> ClassifiedPath:
     if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "job.json":
         return ClassifiedPath("job", job_slug=parts[1])
 
-    # jobs/<slug>/nodes/<node_id>/state.json
-    if len(parts) == 5 and parts[0] == "jobs" and parts[2] == "nodes" and parts[4] == "state.json":
-        return ClassifiedPath("node", job_slug=parts[1], node_id=parts[3])
+    # jobs/<slug>/nodes/<node_id>/<iter_token>/state.json
+    if len(parts) == 6 and parts[0] == "jobs" and parts[2] == "nodes" and parts[5] == "state.json":
+        try:
+            ip = v1_paths.parse_iter_token(parts[4])
+        except ValueError:
+            return ClassifiedPath("unknown")
+        return ClassifiedPath(
+            "node",
+            job_slug=parts[1],
+            node_id=parts[3],
+            iter_path=ip,
+        )
 
-    # jobs/<slug>/variables/<file>
+    # jobs/<slug>/nodes/<node_id>/<iter_token>/runs/<attempt>/chat.jsonl
+    if (
+        len(parts) == 8
+        and parts[0] == "jobs"
+        and parts[2] == "nodes"
+        and parts[5] == "runs"
+        and parts[7] == "chat.jsonl"
+    ):
+        try:
+            ip = v1_paths.parse_iter_token(parts[4])
+        except ValueError:
+            return ClassifiedPath("unknown")
+        try:
+            attempt = int(parts[6])
+        except ValueError:
+            return ClassifiedPath("unknown")
+        return ClassifiedPath(
+            "chat_jsonl",
+            job_slug=parts[1],
+            node_id=parts[3],
+            iter_path=ip,
+            attempt=attempt,
+        )
+
+    # jobs/<slug>/variables/<var>__<iter_token>.json
     if len(parts) == 4 and parts[0] == "jobs" and parts[2] == "variables":
         fname = parts[3]
         if not fname.endswith(".json"):
             return ClassifiedPath("unknown")
         stem = fname[: -len(".json")]
-        if stem.startswith("loop_"):
-            # loop_<loop_id>_<var>_<iteration>
-            # Iteration is the last underscore-separated chunk; var is the
-            # one before. Loop id is everything between "loop_" and the
-            # second-to-last underscore. (Loop ids may contain underscores
-            # via the v1.0 path-safety replacement.)
-            inner = stem[len("loop_") :]
-            try:
-                head, iter_str = inner.rsplit("_", 1)
-                loop_id, var_name = head.rsplit("_", 1)
-                iteration = int(iter_str)
-            except (ValueError, AttributeError):
-                return ClassifiedPath("unknown")
-            return ClassifiedPath(
-                "loop_variable",
-                job_slug=parts[1],
-                var_name=var_name,
-                loop_id=loop_id,
-                iteration=iteration,
-            )
-        return ClassifiedPath("variable", job_slug=parts[1], var_name=stem)
+        sep = stem.rfind("__")
+        if sep < 0:
+            return ClassifiedPath("unknown")
+        var_name = stem[:sep]
+        token = stem[sep + 2 :]
+        try:
+            ip = v1_paths.parse_iter_token(token)
+        except ValueError:
+            return ClassifiedPath("unknown")
+        if not var_name:
+            return ClassifiedPath("unknown")
+        return ClassifiedPath(
+            "variable",
+            job_slug=parts[1],
+            var_name=var_name,
+            iter_path=ip,
+        )
 
-    # jobs/<slug>/pending/<node_id>.json
+    # jobs/<slug>/pending/<node_id>__<iter_token>.json
     if (
         len(parts) == 4
         and parts[0] == "jobs"
         and parts[2] == "pending"
         and parts[3].endswith(".json")
     ):
+        stem = parts[3][: -len(".json")]
+        sep = stem.rfind("__")
+        if sep < 0:
+            # Defensive: legacy markers without iter token. Treat as
+            # top-level (iter_path=()) so they still classify rather
+            # than disappear from the watcher's view.
+            return ClassifiedPath(
+                "pending",
+                job_slug=parts[1],
+                node_id=stem,
+                iter_path=(),
+            )
+        node_id = stem[:sep]
+        token = stem[sep + 2 :]
+        try:
+            ip = v1_paths.parse_iter_token(token)
+        except ValueError:
+            return ClassifiedPath("unknown")
         return ClassifiedPath(
             "pending",
             job_slug=parts[1],
-            node_id=parts[3][: -len(".json")],
+            node_id=node_id,
+            iter_path=ip,
         )
 
     # jobs/<slug>/asks/<call_id>.json (implicit HIL marker; the per-job
