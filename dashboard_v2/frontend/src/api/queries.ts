@@ -69,9 +69,7 @@ export function useDeleteWorkflow() {
   });
 }
 
-export async function validateWorkflowYaml(
-  yaml: string,
-): Promise<{
+export async function validateWorkflowYaml(yaml: string): Promise<{
   valid: boolean;
   error?: string;
   name?: string;

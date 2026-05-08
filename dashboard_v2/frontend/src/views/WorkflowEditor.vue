@@ -68,9 +68,7 @@
         </div>
         <div class="flex-1 overflow-auto">
           <DagVisualizer v-if="liveNodes && liveNodes.length > 0" :nodes="liveNodes" />
-          <p v-else class="text-text-tertiary text-xs p-4">
-            Fix the YAML to render the DAG.
-          </p>
+          <p v-else class="text-text-tertiary text-xs p-4">Fix the YAML to render the DAG.</p>
         </div>
       </div>
     </div>

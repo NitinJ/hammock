@@ -42,26 +42,17 @@
             {{ wf.bundled ? "Bundled" : "Custom" }}
           </span>
         </div>
-        <p
-          v-if="wf.description"
-          class="text-xs text-text-secondary line-clamp-2 mb-3"
-        >
+        <p v-if="wf.description" class="text-xs text-text-secondary line-clamp-2 mb-3">
           {{ wf.description }}
         </p>
         <div class="flex items-center gap-1.5 mt-3">
           <span
             v-for="(node, i) in (wf.nodes ?? []).slice(0, 8)"
             :key="`${wf.name}-${node.id}-${i}`"
-            :class="[
-              'size-2 rounded-full',
-              node.human_review ? 'bg-state-awaiting' : 'bg-accent',
-            ]"
+            :class="['size-2 rounded-full', node.human_review ? 'bg-state-awaiting' : 'bg-accent']"
             :title="node.id"
           />
-          <span
-            v-if="(wf.nodes ?? []).length > 8"
-            class="text-[10px] text-text-tertiary ml-1"
-          >
+          <span v-if="(wf.nodes ?? []).length > 8" class="text-[10px] text-text-tertiary ml-1">
             +{{ (wf.nodes ?? []).length - 8 }}
           </span>
         </div>

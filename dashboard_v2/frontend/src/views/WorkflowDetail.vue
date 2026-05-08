@@ -36,9 +36,7 @@
         <span
           :class="[
             'text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full',
-            isBundled
-              ? 'bg-accent/10 text-accent'
-              : 'bg-state-succeeded/10 text-state-succeeded',
+            isBundled ? 'bg-accent/10 text-accent' : 'bg-state-succeeded/10 text-state-succeeded',
           ]"
         >
           {{ isBundled ? "Bundled" : "Custom" }}
@@ -53,9 +51,7 @@
     </header>
 
     <div v-if="workflow.isPending.value" class="text-text-tertiary">Loading…</div>
-    <div v-else-if="workflow.isError.value" class="text-state-failed">
-      Failed to load workflow.
-    </div>
+    <div v-else-if="workflow.isError.value" class="text-state-failed">Failed to load workflow.</div>
     <template v-else-if="workflow.data.value">
       <section class="surface p-5">
         <h2 class="text-xs uppercase tracking-wider text-text-tertiary mb-3">DAG</h2>
@@ -103,10 +99,7 @@
                   >HIL</span
                 >
               </div>
-              <p
-                v-if="node.description"
-                class="text-xs text-text-secondary mt-0.5"
-              >
+              <p v-if="node.description" class="text-xs text-text-secondary mt-0.5">
                 {{ node.description }}
               </p>
               <div class="flex flex-wrap items-center gap-2 mt-1">

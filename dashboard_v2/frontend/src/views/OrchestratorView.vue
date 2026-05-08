@@ -23,8 +23,12 @@ import { RouterLink } from "vue-router";
 
 import ChatTail from "@/components/ChatTail.vue";
 import { useOrchestratorChat } from "@/api/queries";
+import { useJobStream } from "@/composables/useJobStream";
 
 const props = defineProps<{ slug: string }>();
 const slugRef = computed(() => props.slug);
 const chat = useOrchestratorChat(slugRef);
+// Subscribe to SSE so the transcript invalidates as the orchestrator
+// emits more turns (orchestrator_appended events).
+useJobStream(slugRef);
 </script>

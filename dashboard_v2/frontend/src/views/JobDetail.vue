@@ -18,7 +18,14 @@
       </div>
       <div class="flex items-center justify-between gap-4 mb-3">
         <h1 class="font-mono text-base font-medium text-text-primary truncate">{{ slugRef }}</h1>
-        <StatePill v-if="job.data.value" :state="job.data.value.state" />
+        <div class="flex items-center gap-2">
+          <span
+            v-if="job.data.value?.state === 'running' && stream.connected.value"
+            class="size-2 rounded-full bg-state-running animate-pulse"
+            title="Live updates"
+          />
+          <StatePill v-if="job.data.value" :state="job.data.value.state" />
+        </div>
       </div>
       <p v-if="job.data.value?.request" class="text-sm text-text-secondary line-clamp-3">
         {{ job.data.value.request }}
@@ -81,11 +88,13 @@ import { RouterLink } from "vue-router";
 import StatePill from "@/components/StatePill.vue";
 import NodePane from "@/components/NodePane.vue";
 import { useJob } from "@/api/queries";
+import { useJobStream } from "@/composables/useJobStream";
 import type { NodeOverview } from "@/api/types";
 
 const props = defineProps<{ slug: string }>();
 const slugRef = computed(() => props.slug);
 const job = useJob(slugRef);
+const stream = useJobStream(slugRef);
 const selectedNodeId = ref<string | null>(null);
 
 watch(

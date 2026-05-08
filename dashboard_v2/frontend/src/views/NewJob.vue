@@ -52,13 +52,7 @@
           @drop.prevent="onDrop"
           @click="onPickClick"
         >
-          <input
-            ref="fileInput"
-            type="file"
-            multiple
-            class="hidden"
-            @change="onPick"
-          />
+          <input ref="fileInput" type="file" multiple class="hidden" @change="onPick" />
           <p class="text-sm text-text-secondary">
             Drag & drop files here, or
             <span class="text-accent underline">browse</span>
@@ -116,7 +110,9 @@ const route = useRoute();
 const workflows = useWorkflows();
 const submit = useSubmitJob();
 
-const workflowName = ref(typeof route.query.workflow === "string" ? route.query.workflow : "fix-bug");
+const workflowName = ref(
+  typeof route.query.workflow === "string" ? route.query.workflow : "fix-bug",
+);
 const requestText = ref("");
 const error = ref<string | null>(null);
 const files = ref<File[]>([]);

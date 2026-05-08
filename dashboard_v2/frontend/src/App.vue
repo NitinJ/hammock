@@ -62,8 +62,6 @@ const isJobsActive = computed(() =>
   ["jobs", "job-detail", "orchestrator", "new-job"].includes(String(route.name)),
 );
 const isWorkflowsActive = computed(() =>
-  ["workflows", "workflow-detail", "workflow-edit", "workflow-new"].includes(
-    String(route.name),
-  ),
+  ["workflows", "workflow-detail", "workflow-edit", "workflow-new"].includes(String(route.name)),
 );
 </script>
