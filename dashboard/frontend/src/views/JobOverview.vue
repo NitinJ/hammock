@@ -20,7 +20,28 @@
       Failed to load job: {{ job.error.value?.message }}
     </div>
 
-    <div v-else-if="job.data.value" class="grid flex-1 grid-cols-12 gap-4">
+    <div
+      v-if="job.data.value?.state === 'failed' && firstFailure"
+      data-testid="job-failure-banner"
+      class="mb-3 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm"
+    >
+      <div class="font-semibold text-red-300">Job failed</div>
+      <div class="mt-1 text-text-primary">
+        at
+        <button
+          type="button"
+          class="font-mono underline decoration-red-400/60 hover:decoration-red-300"
+          @click="selectNode(firstFailure)"
+        >
+          {{ firstFailure.name ?? firstFailure.node_id }}</button
+        ><span v-if="firstFailure.name" class="ml-1 font-mono text-xs text-text-secondary"
+          >({{ firstFailure.node_id }})</span
+        >
+      </div>
+      <pre class="mt-2 whitespace-pre-wrap text-xs text-red-200">{{ firstFailure.last_error }}</pre>
+    </div>
+
+    <div v-if="job.data.value" class="grid flex-1 grid-cols-12 gap-4">
       <!-- Left pane: node list with loop unrolling -->
       <aside class="col-span-4 overflow-auto rounded-md border border-border bg-surface-raised">
         <div class="border-b border-border px-3 py-2 text-xs uppercase text-text-secondary">
@@ -221,6 +242,17 @@ const nodeDetail = useNodeDetail(jobSlug, selectedNodeId);
 const renderedRows = computed(() =>
   buildRenderedRows(job.data.value?.nodes ?? [], job.data.value?.loop_names ?? {}),
 );
+
+/** When a job is in ``failed`` state, surface the first node that
+ *  failed with an error message so the operator doesn't have to click
+ *  through node-by-node to find what went wrong. Skips nodes with no
+ *  ``last_error`` (e.g. ones that were skipped or never dispatched). */
+const firstFailure = computed<NodeListEntry | null>(() => {
+  for (const n of job.data.value?.nodes ?? []) {
+    if (n.state === "failed" && n.last_error) return n;
+  }
+  return null;
+});
 
 /** Display name for the selected node — picks the name from any matching
  *  node row (by node_id), or falls back to node_id when no name is set. */
