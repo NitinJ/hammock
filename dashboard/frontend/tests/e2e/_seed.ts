@@ -70,6 +70,7 @@ export interface SeededNodeOptions {
   nodeId: string;
   state?: "pending" | "running" | "succeeded" | "failed" | "skipped";
   attempts?: number;
+  lastError?: string | null;
 }
 
 export function seedNode(opts: SeededNodeOptions): void {
@@ -83,7 +84,7 @@ export function seedNode(opts: SeededNodeOptions): void {
         node_id: opts.nodeId,
         state: opts.state ?? "succeeded",
         attempts: opts.attempts ?? 1,
-        last_error: null,
+        last_error: opts.lastError ?? null,
         started_at: now,
         finished_at: now,
       },

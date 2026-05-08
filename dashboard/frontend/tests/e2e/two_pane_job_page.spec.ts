@@ -50,3 +50,43 @@ test("succeeded node with no outputs renders the empty-output panel", async ({
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("Node completed — no output produced.");
 });
+
+test("failed job surfaces a banner with the failed node's last_error", async ({
+  page,
+}) => {
+  const failedSlug = "twopane-failed-2026-01-01";
+  seedJob({
+    slug: failedSlug,
+    workflowName: "t-test",
+    state: "failed",
+    workflowYaml: `schema_version: 1
+workflow: t-test
+variables:
+  request: { type: job-request }
+nodes:
+  - id: design-spec-loop
+    name: "Design spec — review cycle"
+    kind: artifact
+    actor: agent
+`,
+  });
+  seedNode({
+    slug: failedSlug,
+    nodeId: "design-spec-loop",
+    state: "failed",
+    lastError:
+      "loop 'design-spec-loop': predicate never became true after 1 iteration(s)",
+  });
+
+  await page.goto(`/jobs/${failedSlug}`);
+  const banner = page.getByTestId("job-failure-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Job failed");
+  await expect(banner).toContainText("Design spec — review cycle");
+  await expect(banner).toContainText("(design-spec-loop)");
+  await expect(banner).toContainText("predicate never became true");
+
+  // Click the failed-node button → URL gains ?node=...
+  await banner.getByRole("button", { name: /Design spec/ }).click();
+  await expect(page).toHaveURL(/node=design-spec-loop/);
+});
