@@ -28,7 +28,7 @@ nodes:
   // Seed the upstream `spec` envelope so the engine's review-verdict
   // produce can resolve inputs (not strictly required for form render,
   // but makes the file shape match what the engine would write).
-  const specPath = join(jobDir(SLUG), "variables", "spec.json");
+  const specPath = join(jobDir(SLUG), "variables", "spec__top.json");
   writeFileSync(
     specPath,
     JSON.stringify({
@@ -80,14 +80,11 @@ test("HIL queue renders an explicit gate and submits to the right marker path", 
 
   // After submission the pending marker is removed by the engine.
   await expect
-    .poll(
-      () =>
-        existsSync(join(jobDir(SLUG), "pending", "review-spec-human.json")),
-    )
+    .poll(() => existsSync(join(jobDir(SLUG), "pending", "review-spec-human__top.json")))
     .toBe(false);
 
   // And the variable envelope landed.
-  const envPath = join(jobDir(SLUG), "variables", "review.json");
+  const envPath = join(jobDir(SLUG), "variables", "review__top.json");
   await expect.poll(() => existsSync(envPath)).toBe(true);
   const env = JSON.parse(readFileSync(envPath, "utf-8"));
   expect(env.type).toBe("review-verdict");
