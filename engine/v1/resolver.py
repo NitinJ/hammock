@@ -72,43 +72,51 @@ def _parse_ref(ref: str) -> tuple[str, list[str]]:
     return var_name, [f for f in fields if f]
 
 
-def _read_envelope(path: Path) -> Envelope | None:
-    """Read an envelope at *path*, following one ``$ref`` indirection.
+_MAX_REF_DEPTH = 16
 
-    Loop output projections may write a tiny pointer file with the
-    shape ``{"$ref": "<source-stem>"}`` instead of duplicating the body
-    envelope. We follow such pointers exactly once: if the resolved
-    source is itself a $ref, that's a wiring bug and we raise.
+
+def _read_envelope(path: Path) -> Envelope | None:
+    """Read an envelope at *path*, following ``$ref`` pointer chains.
+
+    Loop output projections write a tiny pointer file with the shape
+    ``{"$ref": "<source-stem>"}`` instead of duplicating the body
+    envelope. Nested loops produce *chains* of pointers — outer loop's
+    projection points at the inner loop's projection, which points at
+    the body's actual envelope. We follow the chain to the terminating
+    real envelope.
+
+    Bounded by ``_MAX_REF_DEPTH`` (16) to prevent infinite loops if a
+    pointer somehow points at itself; the bound is much greater than
+    any realistic workflow nesting depth, so a chain hitting it
+    indicates a wiring bug rather than legitimate deep nesting.
     """
-    if not path.is_file():
-        return None
-    raw = path.read_bytes()
-    if not raw.strip():
-        return None
-    # Cheap pre-parse to detect $ref pointer files without doing two
-    # full Envelope validations on the happy path.
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
-        stem = parsed["$ref"]
-        if not isinstance(stem, str) or not stem:
-            raise ResolutionError(f"$ref pointer at {path} has invalid stem {stem!r}")
-        source = path.parent / f"{stem}.json"
-        if not source.is_file():
+    visited: list[Path] = []
+    current = path
+    for _ in range(_MAX_REF_DEPTH):
+        if not current.is_file():
             return None
-        source_raw = source.read_bytes()
-        if not source_raw.strip():
+        if current in visited:
+            chain = " → ".join(str(p) for p in [*visited, current])
+            raise ResolutionError(f"$ref pointer cycle detected: {chain}")
+        visited.append(current)
+        raw = current.read_bytes()
+        if not raw.strip():
             return None
-        source_parsed = json.loads(source_raw)
-        if isinstance(source_parsed, dict) and set(source_parsed.keys()) == {"$ref"}:
-            raise ResolutionError(
-                f"$ref pointer at {path} resolves to another $ref at {source}; "
-                "multi-hop chaining is not allowed"
-            )
-        return Envelope.model_validate_json(source_raw)
-    return Envelope.model_validate_json(raw)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
+            stem = parsed["$ref"]
+            if not isinstance(stem, str) or not stem:
+                raise ResolutionError(f"$ref pointer at {current} has invalid stem {stem!r}")
+            current = current.parent / f"{stem}.json"
+            continue
+        return Envelope.model_validate_json(raw)
+    raise ResolutionError(
+        f"$ref pointer chain exceeded depth {_MAX_REF_DEPTH} starting at {path}; "
+        "either the chain is malformed or workflow nesting is implausibly deep"
+    )
 
 
 def _materialise_value(envelope: Envelope) -> BaseModel:

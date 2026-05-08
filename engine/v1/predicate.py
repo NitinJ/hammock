@@ -139,40 +139,45 @@ def _resolve_index(index_form: str, current_iteration: int | None) -> int | None
     return int(index_form)
 
 
+_MAX_REF_DEPTH = 16
+
+
 def _read_envelope(path: Path) -> Envelope | None:
-    """Read an envelope at *path*, following one ``$ref`` indirection.
+    """Read an envelope at *path*, following ``$ref`` pointer chains.
 
     Mirrors ``engine.v1.resolver._read_envelope`` so loop output
     projections written as ``{"$ref": "<stem>"}`` pointer files resolve
-    transparently for predicate evaluation as well.
+    transparently for predicate evaluation as well. Nested loops with
+    `[last]`/`[i-1]`/single-iter projections produce chains of
+    pointers — we walk them until we hit a terminating envelope.
     """
-    if not path.is_file():
-        return None
-    raw = path.read_bytes()
-    if not raw.strip():
-        return None
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
-        stem = parsed["$ref"]
-        if not isinstance(stem, str) or not stem:
-            raise PredicateError(f"$ref pointer at {path} has invalid stem {stem!r}")
-        source = path.parent / f"{stem}.json"
-        if not source.is_file():
+    visited: list[Path] = []
+    current = path
+    for _ in range(_MAX_REF_DEPTH):
+        if not current.is_file():
             return None
-        source_raw = source.read_bytes()
-        if not source_raw.strip():
+        if current in visited:
+            chain = " → ".join(str(p) for p in [*visited, current])
+            raise PredicateError(f"$ref pointer cycle detected: {chain}")
+        visited.append(current)
+        raw = current.read_bytes()
+        if not raw.strip():
             return None
-        source_parsed = json.loads(source_raw)
-        if isinstance(source_parsed, dict) and set(source_parsed.keys()) == {"$ref"}:
-            raise PredicateError(
-                f"$ref pointer at {path} resolves to another $ref at {source}; "
-                "multi-hop chaining is not allowed"
-            )
-        return Envelope.model_validate_json(source_raw)
-    return Envelope.model_validate_json(raw)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict) and set(parsed.keys()) == {"$ref"}:
+            stem = parsed["$ref"]
+            if not isinstance(stem, str) or not stem:
+                raise PredicateError(f"$ref pointer at {current} has invalid stem {stem!r}")
+            current = current.parent / f"{stem}.json"
+            continue
+        return Envelope.model_validate_json(raw)
+    raise PredicateError(
+        f"$ref pointer chain exceeded depth {_MAX_REF_DEPTH} starting at {path}; "
+        "either the chain is malformed or workflow nesting is implausibly deep"
+    )
 
 
 def _read_loop_envelope(
