@@ -1,10 +1,5 @@
 <template>
-  <span
-    :class="[
-      'pill',
-      `pill-${state}`,
-    ]"
-  >
+  <span :class="['pill', `pill-${state}`]">
     <span class="size-1.5 rounded-full" :class="dotClass" />
     {{ label }}
   </span>

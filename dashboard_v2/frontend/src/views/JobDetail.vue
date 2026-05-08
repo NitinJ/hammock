@@ -2,7 +2,10 @@
   <section class="space-y-5">
     <header class="surface p-5">
       <div class="flex items-center justify-between mb-3">
-        <RouterLink :to="{ name: 'jobs' }" class="text-xs text-text-tertiary hover:text-text-secondary">
+        <RouterLink
+          :to="{ name: 'jobs' }"
+          class="text-xs text-text-tertiary hover:text-text-secondary"
+        >
           ← Jobs
         </RouterLink>
         <RouterLink
@@ -20,7 +23,10 @@
       <p v-if="job.data.value?.request" class="text-sm text-text-secondary line-clamp-3">
         {{ job.data.value.request }}
       </p>
-      <div v-if="job.data.value?.error" class="mt-3 surface bg-state-failed/10 border-state-failed/40 p-3 text-xs text-state-failed">
+      <div
+        v-if="job.data.value?.error"
+        class="mt-3 surface bg-state-failed/10 border-state-failed/40 p-3 text-xs text-state-failed"
+      >
         {{ job.data.value.error }}
       </div>
     </header>
@@ -49,7 +55,9 @@
               <span :class="['size-2 mt-1.5 rounded-full shrink-0', dotColor(node)]" />
               <span class="flex-1 min-w-0">
                 <span class="block text-sm text-text-primary truncate">{{ node.id }}</span>
-                <span class="text-xs text-text-tertiary">{{ node.state }}<span v-if="node.awaiting_human"> · awaiting human</span></span>
+                <span class="text-xs text-text-tertiary"
+                  >{{ node.state }}<span v-if="node.awaiting_human"> · awaiting human</span></span
+                >
               </span>
             </button>
           </li>
@@ -60,11 +68,7 @@
         <div v-if="!selectedNodeId" class="surface p-12 text-center">
           <p class="text-text-secondary">Select a node from the timeline.</p>
         </div>
-        <NodePane
-          v-else
-          :slug="slugRef"
-          :node-id="selectedNodeId"
-        />
+        <NodePane v-else :slug="slugRef" :node-id="selectedNodeId" />
       </main>
     </div>
   </section>

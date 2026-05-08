@@ -1,10 +1,8 @@
-import js from "@eslint/js";
 import vue from "eslint-plugin-vue";
 import vueTsConfig from "@vue/eslint-config-typescript";
 import vuePrettierConfig from "@vue/eslint-config-prettier";
 
 export default [
-  js.configs.recommended,
   ...vue.configs["flat/recommended"],
   ...vueTsConfig(),
   vuePrettierConfig,

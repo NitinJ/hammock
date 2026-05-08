@@ -13,9 +13,7 @@
     </header>
 
     <div v-if="jobs.isPending.value" class="text-text-tertiary text-sm">Loading…</div>
-    <div v-else-if="jobs.isError.value" class="text-state-failed text-sm">
-      Failed to load jobs.
-    </div>
+    <div v-else-if="jobs.isError.value" class="text-state-failed text-sm">Failed to load jobs.</div>
     <div v-else-if="(jobs.data.value ?? []).length === 0" class="surface p-12 text-center">
       <h2 class="text-lg font-medium text-text-primary mb-2">No jobs yet</h2>
       <p class="text-sm text-text-secondary mb-4">
@@ -37,7 +35,9 @@
             </span>
             <StatePill :state="job.state" />
           </header>
-          <p class="text-sm text-text-primary line-clamp-2 mb-3">{{ job.request || "(no request)" }}</p>
+          <p class="text-sm text-text-primary line-clamp-2 mb-3">
+            {{ job.request || "(no request)" }}
+          </p>
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-center gap-1">
               <span
@@ -52,7 +52,9 @@
               {{ formatDuration(job.started_at, job.finished_at) }}
             </span>
           </div>
-          <div class="mt-3 text-xs font-mono text-text-tertiary truncate group-hover:text-text-secondary transition-colors">
+          <div
+            class="mt-3 text-xs font-mono text-text-tertiary truncate group-hover:text-text-secondary transition-colors"
+          >
             {{ job.slug }}
           </div>
         </RouterLink>

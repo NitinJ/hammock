@@ -1,4 +1,5 @@
 <template>
+  <!-- eslint-disable-next-line vue/no-v-html -- html is sanitized via rehype-sanitize in renderMarkdown -->
   <div class="markdown-body" v-html="html" />
 </template>
 

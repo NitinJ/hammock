@@ -15,9 +15,7 @@
 body {
   font-family: "Inter", system-ui, sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  background:
-    radial-gradient(circle at top, rgba(124, 58, 237, 0.06), transparent 70%),
-    #0a0e1a;
+  background: radial-gradient(circle at top, rgba(124, 58, 237, 0.06), transparent 70%), #0a0e1a;
   min-height: 100vh;
 }
 

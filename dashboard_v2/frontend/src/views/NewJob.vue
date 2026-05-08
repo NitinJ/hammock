@@ -13,7 +13,11 @@
           Workflow
         </label>
         <select v-model="workflowName" class="input">
-          <option v-for="wf in workflows.data.value?.workflows ?? []" :key="wf.name" :value="wf.name">
+          <option
+            v-for="wf in workflows.data.value?.workflows ?? []"
+            :key="wf.name"
+            :value="wf.name"
+          >
             {{ wf.name }} — {{ wf.description ?? "" }}
           </option>
         </select>

@@ -56,8 +56,7 @@ export function useNodeChat(slug: Ref<string>, nodeId: Ref<string | null>) {
   const queryKey = computed(() => QUERY_KEYS.chat(slug.value, nodeId.value ?? ""));
   return useQuery({
     queryKey,
-    queryFn: () =>
-      api.get<ChatResponse>(`/api/jobs/${slug.value}/nodes/${nodeId.value}/chat`),
+    queryFn: () => api.get<ChatResponse>(`/api/jobs/${slug.value}/nodes/${nodeId.value}/chat`),
     enabled: computed(() => !!slug.value && !!nodeId.value),
     refetchInterval: 3000,
   });

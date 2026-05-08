@@ -1,11 +1,11 @@
 <template>
   <div class="min-h-screen flex flex-col">
-    <header
-      class="sticky top-0 z-10 backdrop-blur-md bg-bg/70 border-b border-border"
-    >
+    <header class="sticky top-0 z-10 backdrop-blur-md bg-bg/70 border-b border-border">
       <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         <RouterLink :to="{ name: 'jobs' }" class="flex items-center gap-3">
-          <span class="size-7 rounded-lg bg-gradient-to-br from-accent to-accent-soft shadow-glow"></span>
+          <span
+            class="size-7 rounded-lg bg-gradient-to-br from-accent to-accent-soft shadow-glow"
+          ></span>
           <span class="font-semibold tracking-tight text-text-primary">Hammock</span>
           <span class="text-xs font-mono text-text-tertiary">v2</span>
         </RouterLink>

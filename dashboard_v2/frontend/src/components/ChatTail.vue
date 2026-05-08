@@ -3,12 +3,7 @@
     <div v-if="!chat || chat.turns.length === 0" class="text-text-tertiary text-sm">
       No transcript yet.
     </div>
-    <div
-      v-else
-      v-for="(turn, i) in chat.turns"
-      :key="i"
-      class="surface p-3 text-sm"
-    >
+    <div v-else v-for="(turn, i) in chat.turns" :key="i" class="surface p-3 text-sm">
       <header class="flex items-center justify-between mb-2">
         <span class="font-mono text-xs uppercase tracking-wider text-text-tertiary">
           {{ turn.type }}<span v-if="turnSubtype(turn)"> · {{ turnSubtype(turn) }}</span>
@@ -31,19 +26,24 @@
           <summary class="cursor-pointer font-mono text-xs text-text-tertiary">
             tool result ({{ approxLen(block.content) }} chars)
           </summary>
-          <pre class="mt-2 font-mono text-xs whitespace-pre-wrap text-text-secondary p-2 bg-bg-elevated rounded">{{ String(block.content ?? '') }}</pre>
+          <pre
+            class="mt-2 font-mono text-xs whitespace-pre-wrap text-text-secondary p-2 bg-bg-elevated rounded"
+            >{{ String(block.content ?? "") }}</pre
+          >
         </details>
       </template>
       <template v-else-if="turn.type === 'result'">
         <div class="font-mono text-xs text-text-secondary">
-          <span :class="resultClass(turn)">{{ turn.is_error ? '✗ failed' : '✓ done' }}</span>
+          <span :class="resultClass(turn)">{{ turn.is_error ? "✗ failed" : "✓ done" }}</span>
           <span v-if="turn.num_turns" class="ml-2">{{ turn.num_turns }} turns</span>
-          <span v-if="turn.total_cost_usd" class="ml-2">${{ formatCost(Number(turn.total_cost_usd)) }}</span>
+          <span v-if="turn.total_cost_usd" class="ml-2"
+            >${{ formatCost(Number(turn.total_cost_usd)) }}</span
+          >
         </div>
       </template>
       <template v-else-if="turn.type === 'system'">
         <div class="font-mono text-xs text-text-tertiary">
-          {{ turn.session_id ? `session ${String(turn.session_id).slice(0,8)}…` : 'system' }}
+          {{ turn.session_id ? `session ${String(turn.session_id).slice(0, 8)}…` : "system" }}
           <span v-if="turn.cwd" class="ml-2">cwd: {{ turn.cwd }}</span>
         </div>
       </template>
