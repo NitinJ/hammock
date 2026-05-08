@@ -1,4 +1,4 @@
-"""Tests for ``GET /api/jobs/{slug}/nodes/{node_id}/chat``.
+"""Tests for ``GET /api/jobs/{slug}/nodes/{node_id}/iter/{iter_token}/chat``.
 
 Endpoint surfaces the per-attempt ``chat.jsonl`` (claude stream-json
 output) so the dashboard can render the agent's turn-by-turn transcript
@@ -6,10 +6,12 @@ in the right pane.
 
 Contract:
 - Returns ``{turns: [...], attempt: <n>, has_chat: bool}``.
-- Missing file (old jobs / not-yet-run nodes) → ``has_chat: false``,
+- Missing file (not-yet-run nodes) → ``has_chat: false``,
   ``turns: []``.
 - Malformed JSONL line → skipped; valid lines still returned.
 - ``?attempt=<n>`` selects an attempt; default 1.
+- ``iter_token`` axis selects the iteration (``top`` for top-level
+  executions, ``i<...>`` for loop-body executions). Bad token → 400.
 """
 
 from __future__ import annotations
@@ -77,7 +79,7 @@ async def test_chat_endpoint_returns_parsed_turns(dashboard: DashboardHandle) ->
         ],
     )
 
-    resp = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/chat")
+    resp = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/iter/top/chat")
     assert resp.status_code == 200
     body = resp.json()
     assert body["has_chat"] is True
@@ -94,11 +96,11 @@ async def test_chat_endpoint_returns_parsed_turns(dashboard: DashboardHandle) ->
 async def test_chat_endpoint_missing_file_has_chat_false(
     dashboard: DashboardHandle,
 ) -> None:
-    """Old jobs (no chat.jsonl) and not-yet-run nodes both look the same:
-    the file does not exist. The endpoint returns 200 with has_chat=False,
-    not 404 — the frontend treats this as 'no transcript yet'."""
+    """Not-yet-run nodes have no chat.jsonl on disk. The endpoint
+    returns 200 with has_chat=False, not 404 — the frontend treats
+    this as 'no transcript yet'."""
     paths.ensure_job_layout("j2", root=dashboard.root)
-    resp = await dashboard.client.get("/api/jobs/j2/nodes/some-node/chat")
+    resp = await dashboard.client.get("/api/jobs/j2/nodes/some-node/iter/top/chat")
     assert resp.status_code == 200
     body = resp.json()
     assert body["has_chat"] is False
@@ -127,7 +129,7 @@ async def test_chat_endpoint_skips_malformed_lines(
         ],
     )
 
-    resp = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/chat")
+    resp = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/iter/top/chat")
     assert resp.status_code == 200
     body = resp.json()
     assert body["has_chat"] is True
@@ -156,9 +158,13 @@ async def test_chat_endpoint_respects_attempt_query(dashboard: DashboardHandle) 
         lines=[{"type": "system", "second_attempt": True}],
     )
 
-    resp1 = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/chat?attempt=1")
+    resp1 = await dashboard.client.get(
+        f"/api/jobs/{job_slug}/nodes/{node_id}/iter/top/chat?attempt=1"
+    )
     assert resp1.json()["turns"][0].get("first_attempt") is True
-    resp2 = await dashboard.client.get(f"/api/jobs/{job_slug}/nodes/{node_id}/chat?attempt=2")
+    resp2 = await dashboard.client.get(
+        f"/api/jobs/{job_slug}/nodes/{node_id}/iter/top/chat?attempt=2"
+    )
     assert resp2.json()["turns"][0].get("second_attempt") is True
     assert resp2.json()["attempt"] == 2
 
@@ -166,7 +172,7 @@ async def test_chat_endpoint_respects_attempt_query(dashboard: DashboardHandle) 
 @pytest.mark.asyncio
 async def test_chat_endpoint_iter_token_route(dashboard: DashboardHandle) -> None:
     """The iter-keyed route reads chat.jsonl from the matching iter
-    directory. Top-level token 'top' is equivalent to the legacy route."""
+    directory. Top-level executions use the literal token 'top'."""
     job_slug = "j-iter"
     node_id = "leaf"
     paths.ensure_job_layout(job_slug, root=dashboard.root)

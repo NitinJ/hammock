@@ -132,27 +132,6 @@ async def get_node_chat_at_iter(
     return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
 
 
-@router.get("/{job_slug}/nodes/{node_id}/chat", response_model=AgentChatResponse)
-async def get_node_chat(
-    request: Request,
-    job_slug: str,
-    node_id: str,
-    attempt: Annotated[int, Query(ge=1, description="attempt number (default 1)")] = 1,
-) -> AgentChatResponse:
-    """Top-level (iter_path=()) chat transcript shorthand.
-
-    Kept as a thin alias for the iter-keyed route while Stage D migrates
-    the frontend to always send an iter_token. Equivalent to
-    ``/iter/top/chat``.
-    """
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    turns = read_agent_chat(settings.root, job_slug, node_id, (), attempt=attempt)
-    has_chat = (
-        v1_paths.node_attempt_dir(job_slug, node_id, attempt, root=settings.root) / "chat.jsonl"
-    ).is_file()
-    return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
-
-
 @router.get("/{job_slug}/nodes/{node_id}", response_model=NodeDetail)
 async def get_node(
     request: Request,

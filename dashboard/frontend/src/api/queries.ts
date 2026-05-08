@@ -4,13 +4,15 @@
  * URL surface (mirrors `dashboard/api/*.py`):
  *
  *   GET  /api/health
- *   GET  /api/jobs                    — list (?repo_slug, ?state)
- *   GET  /api/jobs/{slug}             — detail with NodeListEntry list
- *   POST /api/jobs                    — submit (returns job_slug)
- *   GET  /api/jobs/{slug}/nodes/{id}  — node detail (envelopes)
- *   GET  /api/hil                     — all pending HIL across jobs
- *   GET  /api/hil/{slug}              — pending for one job
- *   GET  /api/hil/{slug}/{node}       — explicit pending detail
+ *   GET  /api/jobs                                 — list (?repo_slug, ?state)
+ *   GET  /api/jobs/{slug}                          — detail with NodeListEntry list
+ *   POST /api/jobs                                 — submit (returns job_slug)
+ *   GET  /api/jobs/{slug}/nodes/{id}?iter=<token>  — node detail (envelopes)
+ *   GET  /api/jobs/{slug}/nodes/{id}/iter/{token}/chat?attempt=<n>
+ *                                                  — per-(node,iter,attempt) chat tail
+ *   GET  /api/hil                                  — all pending HIL across jobs
+ *   GET  /api/hil/{slug}                           — pending for one job
+ *   GET  /api/hil/{slug}/{node}                    — explicit pending detail
  *   POST /api/hil/{slug}/{node}/answer
  *   GET  /api/hil/{slug}/asks/{call_id}
  *   POST /api/hil/{slug}/asks/{call_id}/answer
