@@ -150,30 +150,133 @@ KISS-on-purpose:
 - The "innermost-only iter on disk" lossiness (filename includes full token).
 - The custom HIL iter_path retrofit logic — replaced by the universal scheme.
 
-## Migration
+## Migration stages
 
-One PR, big-but-bounded:
+The migration lands as a single PR `loops-v2` against `main`. Within the PR, work splits into 5 stages. **Each stage has a concrete smoke test that says "this stage is done." Do not start stage N+1 until stage N's smoke test passes.**
 
-1. New `iter_token` helpers in `shared/v1/paths.py`. Update every existing path helper to take `iter_path: tuple[int, ...] = ()` and route through the token.
-2. Update `_NodeContext.expected_path` (artifact + code) to use the new layout.
-3. Update `dispatch_loop` to thread `iter_path` through the body.
-4. Update `dispatch_artifact_agent` and `dispatch_code_agent` to:
-   - Receive `iter_path` parameter
-   - Read agent's raw output from `runs/<n>/output.json`
-   - Wrap and write envelope at the v2 path
-5. Update `produce()` for every type — read raw output instead of envelope.
-6. Update `resolver.py` and `predicate.py` to take `iter_path` context.
-7. Update HIL pending marker writer + reader.
-8. Update `dashboard/state/projections.py` — projections walk new layout. If we pick Option B for projections: resolver follows `$ref` files transparently; projections code reads through them.
-9. Update frontend `schema.d.ts`, `JobOverview.vue`, `renderRows.ts` — universal iter_path.
-10. **Live chat tail**: add `chat_appended` SSE event in `dashboard/api/sse.py` watcher; wire `AgentChatTail.vue` to refetch on event; preserve scroll position when not at bottom.
-11. Wipe all existing on-disk jobs (pre-v1 dogfood data; no production users).
-12. Migrate test fixtures (~30 files; mechanical).
-13. Add a regression suite: T7 = "outer until-loop with `needs-revision` then `approved`, two outer iters, asserts no state leak."
+When dispatching an agent for a stage, point them at this section: "Read `docs/loop-execution-model.md` → "Migration stages" → implement Stage X end-to-end → run the stage's smoke test → commit and report."
 
-Tests we can delete (covered by v2's invariants):
-- `test_nested_hil_pending_carries_full_iter_path` (subsumed)
-- `test_node_detail_excludes_outer_loop_projection` (loop projections are gone — see next section)
+### Stage A — Path scaffolding ✅ DONE (commit `954a9a9`)
+
+Adds `iter_token` helper and updates path helpers to take optional `iter_path` parameter. Old helpers retained as deprecated shims so the codebase imports cleanly during stages B-E.
+
+**Files**: `shared/v1/paths.py`, `tests/shared/v1/test_paths.py`
+
+**Smoke test** (PASSING):
+- `.venv/bin/pytest tests/shared/v1/test_paths.py -q` — 29 tests pass
+- Round-trip check: `iter_token((0,1)) == "i0_1"` and `parse_iter_token("i0_1") == (0,1)`
+- Top-level: `iter_token(()) == "top"`
+
+### Stage B — Engine migration
+
+Migrate the engine end-to-end: dispatchers thread `iter_path`, agent raw output split, resolver `$ref` follow, loop projection writes. After this stage the engine is fully on the new keying. Deprecated path shims from Stage A get DELETED at the end of this stage.
+
+**Files** (in dependency order — touch them in this order to keep the codebase compiling at each save point):
+1. `engine/v1/loop_dispatch.py` — `dispatch_loop` threads `iter_path: tuple[int, ...]` through to body dispatchers.
+2. `engine/v1/artifact.py` — `_NodeContext` accepts `iter_path`; `expected_path()` returns the v2 path; new `attempt_output_path()` returns `attempt_dir / "output.json"`.
+3. `engine/v1/code_dispatch.py` — same pattern as artifact.
+4. `engine/v1/driver.py` — top-level dispatch with `iter_path=()`; pending markers at `pending_marker_path(slug, node_id, iter_path)`.
+5. `shared/v1/types/<each>.py` — `produce(decl, ctx)` reads from `ctx.attempt_output_path()` (raw value-JSON the agent wrote). Validates against `Value` model. Returns. Wrapping into envelope is done by the dispatcher, not by `produce`. `render_for_producer` instructs the agent to write to that path.
+6. Dispatcher post-claude flow: read `output.json`. If missing or empty → hard fail. Else validate → wrap via `make_envelope` → write to `variable_envelope_path(slug, var, iter_path)`.
+7. `engine/v1/resolver.py` + `engine/v1/predicate.py` — read variable through `variable_envelope_path(slug, var, iter_path)`. If file content is `{"$ref": "<stem>"}`, follow once to source path. Multi-hop chaining not allowed (raise on chain).
+8. `engine/v1/loop_dispatch.py` (post-iter): for each loop `outputs:` declaration:
+   - `[last]` / `[i-1]` / single-iter selectors → write `{"$ref": "<source-stem>"}` pointer file at outer-scope path
+   - `[*]` aggregations → materialize the actual `list[T]` envelope (values are small lists of refs to body envelopes; aggregation is unambiguous; pointer-file approach doesn't fit because there's no single source)
+9. `shared/v1/paths.py` — DELETE `loop_variable_envelope_path` and `_safe_loop_id` shims.
+10. `hammock/templates/workflows/*/prompts/*.md` — verify no hardcoded path references that conflict with the agent's new write target. Update if needed.
+
+**Smoke test**:
+- `.venv/bin/pytest tests/engine/v1/ -q` — all engine unit tests pass
+- `.venv/bin/pytest tests/integration/test_harness.py -q` — FakeEngine end-to-end harness passes
+- `git grep -n "loop_variable_envelope_path\|_safe_loop_id" engine/ shared/` — zero hits (shims deleted)
+- New on-disk shape verified: drive a 2-deep nested fake-engine workflow, then assert:
+  - `nodes/<id>/i0_1/state.json` exists; `nodes/<id>/state.json` does not
+  - `variables/<var>__i0_1.json` exists; `variables/loop_<id>_<var>_<iter>.json` does not
+  - Outer projection at `variables/<var>__i0.json` is `{"$ref": "<stem>"}` (text match), not a copy of the source envelope
+- Manual: read a `$ref` pointer file via `cat` — content is `{"$ref": "<stem>"}` JSON, exactly. Resolver test reads through it transparently.
+
+**Done when**: ALL bullet points pass.
+
+### Stage C — Dashboard backend
+
+Update projections, chat endpoint, and SSE pipeline to use the new keying. Test fixtures in `tests/integration/dashboard/` migrate as part of this stage (since the projections move to new paths).
+
+**Files**:
+- `dashboard/state/projections.py` — walk `nodes/<id>/<iter_token>/state.json`; `node_detail` filters envelopes by exact `(var_name, iter_token)`; HIL queue reads from new pending marker path. DELETE `_envelope_belongs_to_node` heuristic — subsumed.
+- `dashboard/state/chat.py` — `read_agent_chat(root, slug, node_id, iter_path, attempt)` reads from `nodes/<id>/<iter_token>/runs/<n>/chat.jsonl`.
+- `dashboard/api/jobs.py` — chat endpoint route becomes `GET /api/jobs/{slug}/nodes/{node_id}/iter/{iter_token}/chat?attempt=<n>`.
+- `dashboard/api/sse.py` — emit `chat_appended` event for `(slug, node_id, iter_token, attempt)`. Coalesce: at most one event per (key, 500ms window). Empty payload — frontend refetches.
+- DELETE the iter_path retrofit logic from dogfood-fixes-2 era — subsumed by universal keying.
+- Test fixture migration: `tests/integration/dashboard/` files that hand-construct old paths or seed envelopes via `loop_<id>_...` patterns.
+
+**Smoke test**:
+- `.venv/bin/pytest tests/integration/dashboard/ -q` — all dashboard tests pass
+- Hand-craft a job dir with nested loop state on disk, then `GET /api/jobs/<slug>` returns one `NodeListEntry` per `(node_id, iter_path)` discovered
+- `GET /api/jobs/<slug>/nodes/<id>/iter/<token>/chat?attempt=1` returns parsed turns from `nodes/<id>/<token>/runs/1/chat.jsonl`
+- HIL queue: pending marker at `pending/<id>__<token>.json` shows up in `GET /api/hil/<slug>` with the correct `iter` array
+- Manual SSE check: touch a `chat.jsonl` file, observe `chat_appended` event on `GET /sse/job/<slug>` within 500ms
+- `tests/integration/dashboard/test_nested_hil_pending_carries_full_iter_path` and `test_node_detail_excludes_outer_loop_projection` either pass with the new keying OR get deleted as subsumed (call this out in the commit message)
+
+**Done when**: ALL bullet points pass.
+
+### Stage D — Frontend
+
+Universal iter_path handling + live chat tail subscription.
+
+**Files**:
+- `dashboard/frontend/src/api/schema.d.ts` — `AgentChatResponse` and any iter-related types match Stage C
+- `dashboard/frontend/src/api/queries.ts` — `useAgentChat(jobSlug, nodeId, iterPath, attempt)`
+- `dashboard/frontend/src/views/JobOverview.vue` — `selectNode` emits iter_path; URL is `?node=<id>&iter=0,1`; chat tail receives iter_path
+- `dashboard/frontend/src/components/jobs/AgentChatTail.vue` — subscribe to `chat_appended` for current `(node_id, iter_path, attempt)`; on event, refetch chat. Auto-scroll only if user is within ~50px of bottom; else preserve scroll
+- `dashboard/frontend/src/composables/useSse.ts` — `chat_appended` in event union
+- `dashboard/frontend/tests/e2e/_seed.ts` — `seedNode` accepts `iterPath`, `seedChat` writes to new path
+
+**Smoke test**:
+- `cd dashboard/frontend && pnpm test` — all vitest tests pass
+- `pnpm type-check`, `pnpm format`, `pnpm build` — clean
+- `pnpm test:e2e` — all Playwright tests pass, including new ones:
+  - Nested loop fixture: left pane shows iter rows for both outer iters; clicking iter 1's body opens its chat tail
+  - Live chat update: simulate appending a turn to chat.jsonl, observe new turn appearing in tail without manual refresh
+  - Scroll preservation: scroll up, simulate poke, assert scroll position not changed
+
+**Done when**: ALL bullet points pass + at least one new live-chat-update Playwright case passes.
+
+### Stage E — T7 regression + final cleanup
+
+Add the integration regression that prevents the bug class we set out to kill. Final docs updates. Full gauntlet end-to-end.
+
+**Files**:
+- `tests/integration/test_loops_v2_no_state_leak.py` — NEW. T7: outer until-loop with body containing write-design-spec + review-human; verdict alternates needs-revision (iter 0) → approved (iter 1). FakeEngine drives it. Asserts:
+  - After outer iter 0: state files at iter token `i0` for body nodes
+  - After outer iter 1 starts: fresh state files at `i1` — old `i0` state files preserved, distinct content
+  - Variable envelopes: `design_spec__i0_0.json` and `design_spec__i1_0.json` are distinct files
+  - Projection at `design_spec__top.json` is `{"$ref": "design_spec__i1_0"}` (the last iter)
+  - Resolver returns iter-1 content when reading `$design_spec`
+- `docs/loop-execution-model.md` — drop status markers as stages complete; finalize the `[*]` materialization choice in Stage B as a clarification
+- `docs/for_agents/gotchas.md` — annotate "producer_node is for traceability" with "(structurally fixed in v2)"
+- Any leftover test fixture sweep (most should be done in Stages B-D as their tests touch them)
+
+**Smoke test (the FULL gauntlet)** — none can be skipped:
+- `ruff format` (root) — clean
+- `pyright shared/ dashboard/` — strict, 0 errors / 0 warnings
+- `.venv/bin/pytest -q` — Python 3.12, all green
+- `uv run --python 3.13 ... pytest -q` — Python 3.13, all green
+- `cd dashboard/frontend && pnpm format && pnpm type-check && pnpm test && pnpm build && pnpm test:e2e` — all clean
+- `ruff check` — clean (LAST, after formatters)
+- `pnpm lint` — clean (LAST)
+- T7 regression specifically green
+- `git grep -n "loop_variable_envelope_path\|_safe_loop_id"` — zero hits anywhere
+
+**Done when**: full gauntlet green + branch ready to push and PR.
+
+## Tests we can delete (subsumed by v2's invariants)
+
+These live tests target the patches we made along the way. Once the structural fix lands, they're either redundant or wrong:
+
+- `test_nested_hil_pending_carries_full_iter_path` — pending marker keying is now universal, not retrofitted
+- `test_node_detail_excludes_outer_loop_projection` — projection filtering is structural via `$ref` pointer files, not heuristic
+
+These should be deleted in Stage C (dashboard projections) or Stage E (cleanup) — pick whichever is cleaner.
 
 ## Loop output projections — the unfinished decision
 
@@ -260,22 +363,14 @@ If we pick B, the resolver gains one rule: "if a variable file is `{\"$ref\": \"
 
 I want a yes/no on B before locking the migration plan. The path scheme depends on it.
 
-## Open questions
+## Decisions locked
 
-1. **Iter token format**: `i0_1` vs `0-1` vs `0/1` (subdir). I lean `i0_1` (flat string, sortable, no path-traversal risk in URLs).
-2. **Variable separator**: `<var>__<token>.json` (double-underscore) vs `<var>.<token>.json`. Either works; double-underscore avoids confusion with file extensions.
-3. **`output.json` shape**: bare value JSON (today's de-facto) or already-wrapped-but-without-envelope-meta. I lean bare value — simpler agent prompt.
-4. **Attempts numbering**: `runs/1/`, `runs/2/`, etc. per `(node_id, iter_path)` — or globally per node_id. Per-iter feels right (a fresh iter starts at attempt 1).
-5. **Predicate footgun (already partly fixed)**: keep the load-time hard-reject for bare-ref `until` on non-bool? Yes, it stays.
+These were open during the design conversation; recording the resolution as canon:
 
-## Sequencing
-
-If you greenlight this:
-
-1. Lock the open questions above (one round of discussion).
-2. Branch `loop-execution-v2`. Single PR, mechanical migration. Probably 600–900 LOC delta. No new features — just the keying change + raw-output split + lazy projections + frontend iter unrolling.
-3. Wipe all jobs on disk.
-4. Real-claude dogfood the same scenario that broke today.
-5. If green: merge. If a new failure surfaces, it's a *different* class (not iter-keying or stale-envelope) and we know the model held up.
-
-After this lands, the patches I expect will go from "every dogfood reveals a structural bug" to "every dogfood reveals a prompt-tuning issue." Different problem class.
+1. **Iter token format**: `i0_1`. Flat string, sortable, no path-traversal risk in URLs.
+2. **Variable separator**: `<var>__<token>.json` (double-underscore). Avoids confusion with file extensions.
+3. **`output.json` shape**: bare value JSON. Simpler agent prompt; one less envelope layer in the agent's mental model.
+4. **Attempts numbering**: per `(node_id, iter_path)`. Each iter starts at attempt 1.
+5. **Predicate hard-reject** (from dogfood-fixes-2): bare-ref `until` on non-bool stays rejected at workflow load.
+6. **Loop output projections**: lazy via `{"$ref": "<source-stem>"}` pointer files for `[last]`/`[i-1]`/single-iter selectors. `[*]` aggregations materialize the actual list at write time (small data, unambiguous, no single source to point at).
+7. **Live SSE chat tail**: in scope. Whole-turn granularity. No partial-message streaming. Refetch-on-poke (no byte-offset diffing).
