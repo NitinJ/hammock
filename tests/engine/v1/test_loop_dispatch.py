@@ -69,7 +69,7 @@ def _fake_artifact_runner_factory(produce_payloads: dict[str, dict]):
 
     def fake(prompt: str, attempt_dir: Path, worktree: Path | None = None):
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -133,7 +133,7 @@ def test_count_loop_runs_body_count_times_and_aggregates_list(
     def fake_runner(prompt: str, attempt_dir: Path, cwd=None):
         invocations.append(attempt_dir)
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         # Simulate the agent writing the raw verdict JSON to the
         # expected loop-indexed path. The dispatcher's produce will read
@@ -199,7 +199,7 @@ def test_loop_body_node_state_json_persists_per_iteration(tmp_path: Path) -> Non
 
     def fake_runner(prompt: str, attempt_dir: Path, cwd=None):
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         # write body envelope at the iter path
         envs = list(paths.variables_dir(job_slug, root=tmp_path).glob("loop_vlist_verdict_*.json"))
@@ -363,7 +363,7 @@ def test_count_loop_resolves_count_from_loop_var_last_field(tmp_path: Path) -> N
     def fake(prompt, attempt_dir, cwd=None):
         invocations.append(attempt_dir)
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         idx = len(invocations) - 1
         paths.loop_variable_envelope_path(
@@ -413,7 +413,7 @@ def test_count_loop_literal_string_int_resolves(tmp_path: Path) -> None:
     def fake(prompt, attempt_dir, cwd=None):
         invocations.append(attempt_dir)
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         idx = len(invocations) - 1
         paths.loop_variable_envelope_path(
@@ -508,7 +508,7 @@ def test_nested_count_of_until_dispatches_and_projects(tmp_path: Path) -> None:
     def fake(prompt, attempt_dir, cwd=None):
         invocation_count["n"] += 1
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         # Write raw verdict JSON to the inner-loop indexed path; the
         # dispatcher's produce reads and wraps. Approving immediately
@@ -731,7 +731,7 @@ def test_until_loop_reenters_on_needs_revision_then_exits_on_approved(
         i = invocation_count["n"]
         invocation_count["n"] += 1
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("")
         v = iter_verdicts[i] if i < len(iter_verdicts) else "approved"
         target = paths.loop_variable_envelope_path(job_slug, "lp", "verdict", i, root=tmp_path)

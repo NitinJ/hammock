@@ -80,10 +80,10 @@ def test_path_outside_root_is_unknown(tmp_path: Path) -> None:
 
 
 def test_node_run_attempt_artefact_unknown(tmp_path: Path) -> None:
-    """Per-attempt run artefacts (stdout.log etc.) intentionally don't
+    """Per-attempt run artefacts (chat.jsonl etc.) intentionally don't
     classify — the dashboard reads them on demand via projections.
     Watching them would create event spam."""
-    p = v1_paths.node_attempt_dir("alpha", "write-spec", 1, root=tmp_path) / "stdout.log"
+    p = v1_paths.node_attempt_dir("alpha", "write-spec", 1, root=tmp_path) / "chat.jsonl"
     cp = classify_path(p, tmp_path)
     assert cp.kind == "unknown"
 

@@ -48,7 +48,7 @@ def _make_writer_fake(
         for var_name, payload in payloads.items():
             (variables_dir / f"{var_name}.json").write_text(json.dumps(payload))
         # Touch stdout/stderr so the dispatcher can verify they exist.
-        (attempt_dir / "stdout.log").write_text("(fake) agent succeeded\n")
+        (attempt_dir / "chat.jsonl").write_text("(fake) agent succeeded\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(
             args=["claude", "-p", "<prompt>"], returncode=0, stdout=b"", stderr=b""
@@ -61,7 +61,7 @@ def _make_failing_fake() -> Callable[[str, Path], subprocess.CompletedProcess[st
     def fake(
         prompt: str, attempt_dir: Path, cwd: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
-        (attempt_dir / "stdout.log").write_text("")
+        (attempt_dir / "chat.jsonl").write_text("")
         (attempt_dir / "stderr.log").write_text("(fake) agent crashed\n")
         return subprocess.CompletedProcess(args=["claude"], returncode=2, stdout=b"", stderr=b"")
 
@@ -188,7 +188,7 @@ def test_dispatch_fails_on_invalid_json_output(tmp_path: Path) -> None:
         job_dir = attempt_dir.parents[3]
         (job_dir / "variables").mkdir(parents=True, exist_ok=True)
         (job_dir / "variables" / "bug_report.json").write_text("{ broken")
-        (attempt_dir / "stdout.log").write_text("ok\n")
+        (attempt_dir / "chat.jsonl").write_text("ok\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -261,7 +261,7 @@ def test_attempt_dir_layout_default_attempt_1(tmp_path: Path) -> None:
     expected = paths.node_attempt_dir(job_slug, "write-bug-report", 1, root=tmp_path)
     assert result.attempt_dir == expected
     assert (expected / "prompt.md").is_file()
-    assert (expected / "stdout.log").is_file()
+    assert (expected / "chat.jsonl").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ def test_dispatch_passes_repo_dir_as_cwd_to_runner(tmp_path: Path) -> None:
         (variables_dir / "bug_report.json").write_text(
             json.dumps({"summary": "x", "document": "## Bug\n\n."})
         )
-        (attempt_dir / "stdout.log").write_text("(fake) ok\n")
+        (attempt_dir / "chat.jsonl").write_text("(fake) ok\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 
@@ -362,7 +362,7 @@ def test_dispatch_passes_cwd_none_when_no_repo(tmp_path: Path) -> None:
         (variables_dir / "bug_report.json").write_text(
             json.dumps({"summary": "x", "document": "## Bug\n\n."})
         )
-        (attempt_dir / "stdout.log").write_text("(fake) ok\n")
+        (attempt_dir / "chat.jsonl").write_text("(fake) ok\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 

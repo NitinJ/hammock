@@ -54,14 +54,14 @@ Diagnosing this in the wild: re-run with `claude --output-format json -p < promp
 
 The bundled `write-design-spec.md` had this issue during dogfood. Followup: tighten the engine footer (`render_for_producer` on each type) to be imperative everywhere, so per-workflow prompts don't have to repeat it.
 
-## Empty stdout from claude isn't always a clear failure
+## Empty chat.jsonl from claude isn't always a clear failure
 
 `claude -p` with `bypassPermissions` can return rc=0 with completely empty stdout. The dispatcher sees rc=0, runs `produce()`, finds the expected output file missing, and reports "output contract failed".
 
 When debugging:
 
-1. Don't trust the dispatcher error alone. Read `<job_dir>/nodes/<id>/runs/<n>/stdout.log` — it should have content.
-2. If empty: re-run the saved `prompt.md` with `--output-format json` to see `num_turns`, `stop_reason`, `result`.
+1. Don't trust the dispatcher error alone. Read `<job_dir>/nodes/<id>/runs/<n>/chat.jsonl` — it should have one JSON object per turn (system / assistant / user / result). The dashboard's right pane renders this for agent nodes.
+2. If empty: re-run the saved `prompt.md` with `claude --output-format json -p < prompt.md` for a one-shot diagnostic — that flag emits a single summary JSON with `num_turns`, `stop_reason`, `result`, which is easier to eyeball than the full stream.
 3. Common diagnoses:
    - Empty `result` + `stop_reason: end_turn` → prompt-tuning issue (see above).
    - `permission_denials: [...]` → bypassPermissions isn't doing what you think.

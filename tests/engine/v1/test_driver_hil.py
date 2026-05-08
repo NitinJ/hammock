@@ -81,7 +81,7 @@ def _make_writer_fake(
         variables_dir.mkdir(parents=True, exist_ok=True)
         for var_name, payload in payloads_per_node.get(node_id, {}).items():
             (variables_dir / f"{var_name}.json").write_text(json.dumps(payload))
-        (attempt_dir / "stdout.log").write_text(f"(fake) {node_id} done\n")
+        (attempt_dir / "chat.jsonl").write_text(f"(fake) {node_id} done\n")
         (attempt_dir / "stderr.log").write_text("")
         return subprocess.CompletedProcess(args=["c"], returncode=0, stdout=b"", stderr=b"")
 

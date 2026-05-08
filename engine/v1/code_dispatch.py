@@ -131,9 +131,15 @@ ClaudeRunner = Callable[[str, Path, Path], subprocess.CompletedProcess[str]]
 def _default_claude_runner(
     prompt: str, attempt_dir: Path, worktree: Path
 ) -> subprocess.CompletedProcess[str]:
-    stdout_path = attempt_dir / "stdout.log"
+    """Spawn `claude -p` with cwd=worktree.
+
+    Output captured as JSONL via ``--output-format stream-json`` (with
+    the required ``--verbose`` flag) so the dashboard can render the
+    turn-by-turn transcript.
+    """
+    chat_path = attempt_dir / "chat.jsonl"
     stderr_path = attempt_dir / "stderr.log"
-    with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
+    with chat_path.open("wb") as out, stderr_path.open("wb") as err:
         return subprocess.run(
             [
                 "claude",
@@ -141,6 +147,9 @@ def _default_claude_runner(
                 prompt,
                 "--permission-mode",
                 "bypassPermissions",
+                "--output-format",
+                "stream-json",
+                "--verbose",
             ],
             cwd=str(worktree),
             stdout=out,

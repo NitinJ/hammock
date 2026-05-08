@@ -369,13 +369,13 @@ class FakeEngine:
         iter: tuple[int, ...] = (),
         loop_id: str | None = None,
     ) -> None:
-        """Append a single line to the per-attempt stdout.log under
+        """Append a single line to the per-attempt chat.jsonl under
         nodes/<id>/runs/<n>/."""
         attempt = self._node_attempts.get(node_id, 1)
         attempt_dir = v1_paths.node_attempt_dir(self.job_slug, node_id, attempt, root=self.root)
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        stdout = attempt_dir / "stdout.log"
-        with stdout.open("a", encoding="utf-8") as f:
+        chat = attempt_dir / "chat.jsonl"
+        with chat.open("a", encoding="utf-8") as f:
             f.write(line)
             if not line.endswith("\n"):
                 f.write("\n")
