@@ -1,0 +1,122 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  background:
+    radial-gradient(circle at top, rgba(124, 58, 237, 0.06), transparent 70%),
+    #0a0e1a;
+  min-height: 100vh;
+}
+
+@layer components {
+  .surface {
+    @apply bg-bg-raised/60 border border-border backdrop-blur-md rounded-xl;
+  }
+
+  .surface-hover {
+    @apply hover:bg-bg-raised hover:border-border-strong transition-colors;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium uppercase tracking-wide;
+  }
+
+  .pill-pending {
+    @apply bg-state-pending/10 border-state-pending/40 text-state-pending;
+  }
+
+  .pill-running {
+    @apply bg-state-running/10 border-state-running/40 text-state-running;
+  }
+
+  .pill-succeeded {
+    @apply bg-state-succeeded/10 border-state-succeeded/40 text-state-succeeded;
+  }
+
+  .pill-failed {
+    @apply bg-state-failed/10 border-state-failed/40 text-state-failed;
+  }
+
+  .pill-awaiting {
+    @apply bg-state-awaiting/10 border-state-awaiting/40 text-state-awaiting;
+  }
+
+  .pill-completed {
+    @apply bg-state-succeeded/10 border-state-succeeded/40 text-state-succeeded;
+  }
+
+  .pill-submitted {
+    @apply bg-accent/10 border-accent/40 text-accent-soft;
+  }
+
+  .btn-accent {
+    @apply px-4 py-2 rounded-lg bg-accent/90 hover:bg-accent text-white font-medium transition-colors shadow-glow;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 rounded-lg border border-border hover:border-border-strong text-text-secondary hover:text-text-primary transition-colors;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 rounded-lg bg-bg-raised/40 border border-border focus:border-accent/60 focus:outline-none text-text-primary placeholder-text-tertiary;
+  }
+
+  .markdown-body h1 {
+    @apply text-2xl font-semibold mb-3 mt-4 text-text-primary;
+  }
+  .markdown-body h2 {
+    @apply text-xl font-semibold mb-2 mt-4 text-text-primary;
+  }
+  .markdown-body h3 {
+    @apply text-lg font-semibold mb-2 mt-3 text-text-primary;
+  }
+  .markdown-body p {
+    @apply text-sm text-text-secondary mb-3 leading-relaxed;
+  }
+  .markdown-body ul {
+    @apply list-disc list-inside text-sm text-text-secondary mb-3 space-y-1;
+  }
+  .markdown-body ol {
+    @apply list-decimal list-inside text-sm text-text-secondary mb-3 space-y-1;
+  }
+  .markdown-body code {
+    @apply font-mono text-xs bg-bg-elevated px-1.5 py-0.5 rounded text-accent-soft;
+  }
+  .markdown-body pre {
+    @apply font-mono text-xs bg-bg-elevated rounded-lg p-3 mb-3 overflow-x-auto border border-border;
+  }
+  .markdown-body pre code {
+    @apply bg-transparent p-0 text-text-primary;
+  }
+  .markdown-body a {
+    @apply text-accent-soft underline decoration-accent/40 hover:decoration-accent;
+  }
+  .markdown-body strong {
+    @apply text-text-primary font-semibold;
+  }
+  .markdown-body table {
+    @apply text-sm text-text-secondary mb-3 border border-border rounded-lg overflow-hidden;
+  }
+  .markdown-body th {
+    @apply px-3 py-2 bg-bg-elevated text-text-primary text-left font-medium border-b border-border;
+  }
+  .markdown-body td {
+    @apply px-3 py-2 border-b border-border/50;
+  }
+  .markdown-body blockquote {
+    @apply border-l-2 border-accent/40 pl-3 italic text-text-secondary mb-3;
+  }
+}
