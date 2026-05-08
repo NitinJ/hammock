@@ -310,16 +310,21 @@ async def test_sse_chat_appended_coalesces_within_window(tmp_path: Path) -> None
     Refetch-on-poke means over-emitting is wasteful — the contract is
     "at most one event per (job, node, iter_token, attempt) per ~500ms".
     """
-    appends: list[dict[str, object]] = [{"type": "system", "i": i} for i in range(5)]
+    # 8 appends spread over ~400ms - well within one 500ms coalesce
+    # window. We listen for 1.5s total to ride out inotify cold-start
+    # latency under suite contention without giving the coalesce
+    # window enough room for a second emission.
+    appends: list[dict[str, object]] = [{"type": "system", "i": i} for i in range(8)]
     count = await _run_watcher_and_chat_append(
         job_slug="t-sse-coalesce",
         node_id="write-spec",
         root_path=tmp_path,
         appends=appends,
-        inter_append_delay_s=0.01,
-        listen_seconds=0.7,
+        inter_append_delay_s=0.05,
+        listen_seconds=1.5,
     )
-    # 5 appends in ~50ms → coalesce should keep this <= 2 within the
-    # 700ms listen window (window is 500ms; second emit can land at
-    # ~510ms after the first if appends keep going).
+    # All 8 appends complete inside the 500ms coalesce window from the
+    # first emit; only one chat_appended PathChange should land on the
+    # subscriber. A second can sneak in at the boundary; we accept up
+    # to 2 to keep the test from flaking on coalesce-edge timing.
     assert 1 <= count <= 2, f"expected coalesce 1..2 chat events, got {count}"
