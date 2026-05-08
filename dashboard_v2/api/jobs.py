@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import logging
 import re
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from dashboard_v2.api.artifacts import save_artifacts
 from dashboard_v2.api.projections import (
     job_summary,
     list_jobs,
@@ -24,6 +27,8 @@ from dashboard_v2.api.projections import (
 from dashboard_v2.runner.spawn import spawn_orchestrator
 from dashboard_v2.settings import load_settings
 from hammock_v2.engine import paths
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -73,16 +78,58 @@ def get_workflow(name: str) -> dict[str, Any]:
 
 
 @router.post("/jobs", response_model=JobSubmitResponse)
-def submit_job(body: JobSubmitRequest) -> JobSubmitResponse:
+async def submit_job(
+    request: Request,
+    workflow: str | None = Form(default=None),
+    request_text: str | None = Form(default=None, alias="request"),
+    artifacts: list[UploadFile] = File(default_factory=list),
+) -> JobSubmitResponse:
+    """Submit a job. Accepts either:
+
+    - ``application/json`` with ``{workflow, request}`` (no artifacts).
+    - ``multipart/form-data`` with ``workflow``, ``request``, and any
+      number of ``artifacts`` files.
+    """
+    content_type = request.headers.get("content-type", "")
+    body_workflow = workflow
+    body_request = request_text
+    files: list[tuple[str, bytes]] = []
+    if content_type.startswith("application/json"):
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
+        body_workflow = payload.get("workflow")
+        body_request = payload.get("request")
+    elif content_type.startswith("multipart/form-data") or content_type.startswith(
+        "application/x-www-form-urlencoded"
+    ):
+        for upload in artifacts:
+            content = await upload.read()
+            files.append((upload.filename or "artifact", content))
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail="content-type must be application/json or multipart/form-data",
+        )
+    if not body_workflow:
+        raise HTTPException(status_code=400, detail="workflow is required")
+    if not body_request or not body_request.strip():
+        raise HTTPException(status_code=400, detail="request is required")
     settings = load_settings()
-    wf = load_workflow_or_none(body.workflow)
+    wf = load_workflow_or_none(body_workflow)
     if wf is None:
-        raise HTTPException(status_code=400, detail=f"workflow {body.workflow!r} not found")
-    slug = _derive_slug(body.workflow, body.request)
+        raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} not found")
+    slug = _derive_slug(body_workflow, body_request)
+    if files:
+        try:
+            save_artifacts(slug=slug, files=files, root=settings.root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     pid = spawn_orchestrator(
         slug=slug,
-        workflow_name=body.workflow,
-        request_text=body.request,
+        workflow_name=body_workflow,
+        request_text=body_request,
         root=settings.root,
         project_repo_path=settings.project_repo_path,
         claude_binary=settings.claude_binary,

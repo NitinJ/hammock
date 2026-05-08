@@ -30,7 +30,25 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (await r.json()) as T;
 }
 
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const r = await fetch(path, { method: "POST", body: form });
+  if (!r.ok) {
+    let detail = `POST ${path} → ${r.status}`;
+    try {
+      const j = (await r.json()) as { detail?: string };
+      if (j.detail) detail = j.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(r.status, detail);
+  }
+  return (await r.json()) as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
+  del: <T>(path: string) => request<T>("DELETE", path),
+  postForm,
 };

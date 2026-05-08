@@ -57,6 +57,11 @@ def repo_dir(slug: str, root: Path | None = None) -> Path:
     return job_dir(slug, root) / "repo"
 
 
+def inputs_dir(slug: str, root: Path | None = None) -> Path:
+    """Operator-attached artifacts (uploaded at submit time)."""
+    return job_dir(slug, root) / "inputs"
+
+
 def nodes_dir(slug: str, root: Path | None = None) -> Path:
     return job_dir(slug, root) / "nodes"
 
@@ -106,3 +111,10 @@ def ensure_node_layout(slug: str, node_id: str, root: Path | None = None) -> Pat
     nd = node_dir(slug, node_id, root)
     nd.mkdir(parents=True, exist_ok=True)
     return nd
+
+
+def ensure_inputs_dir(slug: str, root: Path | None = None) -> Path:
+    """Create the inputs/ dir for operator-attached artifacts. Idempotent."""
+    d = inputs_dir(slug, root)
+    d.mkdir(parents=True, exist_ok=True)
+    return d

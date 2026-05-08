@@ -75,8 +75,21 @@ export function useOrchestratorChat(slug: Ref<string>) {
 export function useSubmitJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { workflow: string; request: string }) =>
-      api.post<{ slug: string; pid: number }>("/api/jobs", body),
+    mutationFn: (body: { workflow: string; request: string; artifacts?: File[] }) => {
+      if (body.artifacts && body.artifacts.length > 0) {
+        const fd = new FormData();
+        fd.append("workflow", body.workflow);
+        fd.append("request", body.request);
+        for (const f of body.artifacts) {
+          fd.append("artifacts", f, f.name);
+        }
+        return api.postForm<{ slug: string; pid: number }>("/api/jobs", fd);
+      }
+      return api.post<{ slug: string; pid: number }>("/api/jobs", {
+        workflow: body.workflow,
+        request: body.request,
+      });
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.jobs() });
     },

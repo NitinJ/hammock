@@ -130,3 +130,78 @@ def test_orchestrator_chat_endpoint_empty(client: TestClient) -> None:
     r = client.get("/api/jobs/no-job/orchestrator/chat")
     assert r.status_code == 200
     assert r.json() == {"turns": [], "has_chat": False}
+
+
+def test_submit_multipart_with_artifacts(client: TestClient, hammock_v2_root: Path) -> None:
+    """Multipart submit saves artifacts to <job_dir>/inputs/."""
+    r = client.post(
+        "/api/jobs",
+        data={"workflow": "fix-bug", "request": "Add docstring with attached design doc"},
+        files=[
+            ("artifacts", ("design.md", b"# Design\n\nstuff", "text/markdown")),
+            ("artifacts", ("error.log", b"Error: nope" * 100, "text/plain")),
+            ("artifacts", ("../../../etc/passwd", b"root:x:0:0", "text/plain")),
+        ],
+    )
+    assert r.status_code == 200, r.text
+    slug = r.json()["slug"]
+    inputs = paths.inputs_dir(slug, root=hammock_v2_root)
+    assert inputs.is_dir()
+    files = sorted(p.name for p in inputs.iterdir())
+    # Path traversal sanitized to leaf
+    assert "design.md" in files
+    assert "error.log" in files
+    # No / or .. in any saved name
+    for f in files:
+        assert "/" not in f
+        assert ".." not in f
+        assert "passwd" in f or f in {"design.md", "error.log"}
+
+
+def test_submit_multipart_no_artifacts_still_works(
+    client: TestClient, hammock_v2_root: Path
+) -> None:
+    r = client.post(
+        "/api/jobs",
+        data={"workflow": "fix-bug", "request": "no artifacts"},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_submit_multipart_collisions_disambiguate(
+    client: TestClient, hammock_v2_root: Path
+) -> None:
+    """Two uploads with the same name don't overwrite each other."""
+    r = client.post(
+        "/api/jobs",
+        data={"workflow": "fix-bug", "request": "two artifacts same name"},
+        files=[
+            ("artifacts", ("note.txt", b"first", "text/plain")),
+            ("artifacts", ("note.txt", b"second", "text/plain")),
+        ],
+    )
+    assert r.status_code == 200, r.text
+    slug = r.json()["slug"]
+    inputs = paths.inputs_dir(slug, root=hammock_v2_root)
+    files = sorted(p.name for p in inputs.iterdir())
+    assert "note.txt" in files
+    assert any(f.startswith("note-") and f.endswith(".txt") for f in files)
+
+
+def test_submit_rejects_unsupported_content_type(client: TestClient) -> None:
+    r = client.post(
+        "/api/jobs",
+        content="bare text",
+        headers={"Content-Type": "text/plain"},
+    )
+    assert r.status_code == 415
+
+
+def test_submit_rejects_missing_workflow_field(client: TestClient) -> None:
+    r = client.post("/api/jobs", json={"request": "no workflow set"})
+    assert r.status_code == 400
+
+
+def test_submit_rejects_empty_request(client: TestClient) -> None:
+    r = client.post("/api/jobs", json={"workflow": "fix-bug", "request": "   "})
+    assert r.status_code == 400
