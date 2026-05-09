@@ -59,6 +59,15 @@ class Node(BaseModel):
             "no semantic verification. Defaults to ['output.md']."
         ),
     )
+    worktree: bool = Field(
+        default=False,
+        description=(
+            "If true, the orchestrator dispatches this node's subagent with "
+            "isolation='worktree' so it gets its own git worktree. Use for "
+            "code-bearing nodes (implement, open-pr) so concurrent or "
+            "back-to-back runs don't collide on the project repo."
+        ),
+    )
 
     @field_validator("id")
     @classmethod
@@ -181,6 +190,7 @@ def workflow_summary(workflow: Workflow) -> dict[str, Any]:
                 "human_review": n.human_review,
                 "description": n.description,
                 "requires": list(n.requires),
+                "worktree": n.worktree,
             }
             for n in workflow.nodes
         ],

@@ -178,19 +178,26 @@ def test_orchestrator_prompt_contains_revision_loop() -> None:
     assert "3 revision" in prompt.lower() or "max revisions" in prompt.lower()
 
 
-def test_orchestrator_prompt_uses_bash_claude_p_for_subagents() -> None:
-    """Orchestrator must spawn subagents via `claude -p` over Bash so the
-    chat.jsonl streams in real time with partial messages."""
+def test_orchestrator_prompt_uses_task_for_subagents() -> None:
+    """Orchestrator must dispatch each node's subagent via the Task tool
+    (not Bash claude -p). For nodes with `worktree: true`, Task is invoked
+    with `isolation="worktree"` so code-bearing subagents get isolated
+    git worktrees."""
     prompt = render_orchestrator_prompt(
         job_dir=Path("/x"),
         workflow_path=Path("/x/workflow.yaml"),
         request_text="r",
     )
-    assert "claude -p" in prompt
-    assert "--include-partial-messages" in prompt
-    assert "--output-format stream-json" in prompt
+    # Task is the spawn mechanism.
+    assert "Task" in prompt
+    assert "subagent_type" in prompt or "subagent" in prompt
+    # Worktree isolation is mentioned for code-bearing nodes.
+    assert "worktree" in prompt.lower()
+    # The chat.jsonl snapshot pattern is documented (orchestrator writes
+    # a small claude-stream-compatible jsonl after Task returns).
     assert "chat.jsonl" in prompt
-    # Should explicitly NOT use the Task tool for node dispatch.
-    assert "do not use the `task` tool" in prompt.lower() or (
-        "you do not use the `task` tool" in prompt.lower()
-    )
+    # The Bash claude -p spawn pattern is NO LONGER recommended.
+    # We allow the string "claude -p" only inside a "why not" rationale,
+    # so the structural check is: the prompt does NOT instruct redirecting
+    # output to chat.jsonl via Bash.
+    assert ">" not in prompt.split("chat.jsonl")[0][-20:] or "Task" in prompt

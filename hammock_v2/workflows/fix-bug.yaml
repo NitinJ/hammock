@@ -34,12 +34,14 @@ nodes:
     after: [write-impl-spec]
     description: Make the code changes on a fresh branch and commit.
     requires: [output.md, branch.txt]
+    worktree: true
 
   - id: open-pr
     prompt: pr-create
     after: [implement]
     description: Push the branch and open a PR via gh.
     requires: [output.md]
+    worktree: true
 
   - id: write-summary
     prompt: write-summary
