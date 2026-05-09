@@ -13,6 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from dashboard_v2 import projects as proj
+from dashboard_v2 import workflows as wf_lib
 from dashboard_v2.api.artifacts import save_artifacts
 from dashboard_v2.api.projections import (
     append_orchestrator_message,
@@ -24,7 +25,6 @@ from dashboard_v2.api.projections import (
     orchestrator_chat,
     orchestrator_events,
     orchestrator_messages,
-    resolve_workflow_path,
     write_human_decision,
 )
 from dashboard_v2.runner.spawn import spawn_orchestrator
@@ -129,8 +129,10 @@ async def submit_job(
         from pathlib import Path as _P
 
         project_repo_path = _P(project_data["repo_path"])
-    workflow_path = resolve_workflow_path(
-        body_workflow, root=settings.root, project_repo_path=project_repo_path
+    workflow_path = wf_lib.resolve_at_submit(
+        body_workflow,
+        root=settings.root,
+        project_slug=body_project_slug if body_project_slug else None,
     )
     if workflow_path is None:
         raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} not found")

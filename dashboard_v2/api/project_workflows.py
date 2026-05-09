@@ -1,8 +1,8 @@
 """Per-project workflows + prompts CRUD.
 
-Workflows: bundled (read-only) + project-local under
-``<repo_path>/.hammock-v2/workflows/<name>.yaml``. Project-local shadows
-bundled when names collide.
+Workflows are listed from three tiers (bundled, custom, this project).
+Project-specific shadows custom shadows bundled when names collide. The
+picker on the job-submit form uses this listing.
 
 Prompts: bundled (``hammock_v2/prompts/``) + project-local under
 ``<repo_path>/.hammock-v2/prompts/<name>.md``.
@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dashboard_v2 import projects as proj
+from dashboard_v2 import workflows as wf_lib
 from dashboard_v2.settings import load_settings
 from hammock_v2.engine.runner import (
     PROMPTS_DIR as BUNDLED_PROMPTS_DIR,
@@ -100,31 +101,16 @@ def _validate_yaml(yaml_text: str, expected_name: str | None = None) -> None:
 
 @router.get("/projects/{slug}/workflows")
 def list_project_workflows(slug: str) -> dict[str, Any]:
-    """Bundled + project-local. Project-local shadows bundled."""
-    _, repo_path = _project_or_404(slug)
-    out: dict[str, dict[str, Any]] = {}
-    if BUNDLED_WORKFLOWS_DIR.is_dir():
-        for p in sorted(BUNDLED_WORKFLOWS_DIR.glob("*.yaml")):
-            try:
-                wf = load_workflow(p)
-            except WorkflowError as exc:
-                log.warning("bundled workflow %s failed to load: %s", p, exc)
-                continue
-            summary = workflow_summary(wf)
-            summary["bundled"] = True
-            out[wf.name] = summary
-    user_dir = _project_workflows_dir(repo_path)
-    if user_dir.is_dir():
-        for p in sorted(user_dir.glob("*.yaml")):
-            try:
-                wf = load_workflow(p)
-            except WorkflowError as exc:
-                log.warning("project workflow %s failed to load: %s", p, exc)
-                continue
-            summary = workflow_summary(wf)
-            summary["bundled"] = False
-            out[wf.name] = summary
-    return {"workflows": list(out.values())}
+    """Bundled + custom + project-specific. Shadowing applied:
+    project-specific > custom > bundled when names collide.
+
+    Each entry carries `source` (bundled / custom / <project_slug>) so
+    the picker can show a pill. `bundled` field retained for back-compat.
+    """
+    project_slug, _repo_path = _project_or_404(slug)
+    settings = load_settings()
+    entries = wf_lib.list_for_project(project_slug, settings.root)
+    return {"workflows": [e.to_dict() for e in entries]}
 
 
 @router.post("/projects/{slug}/workflows", status_code=201)
@@ -169,18 +155,30 @@ def delete_project_workflow(slug: str, name: str) -> dict[str, Any]:
 
 @router.get("/projects/{slug}/workflows/{name}")
 def get_project_workflow(slug: str, name: str) -> dict[str, Any]:
+    """Resolve in project context: project-specific > custom > bundled.
+
+    The returned `source` field tells the caller which tier the yaml
+    came from.
+    """
     _validate_name(name)
-    _, repo_path = _project_or_404(slug)
-    user_path = _project_workflows_dir(repo_path) / f"{name}.yaml"
-    if user_path.is_file():
-        path = user_path
+    project_slug, repo_path = _project_or_404(slug)
+    settings = load_settings()
+    # Walk priorities in order
+    project_path = wf_lib.project_workflows_dir(repo_path) / f"{name}.yaml"
+    if project_path.is_file():
+        path = project_path
+        source = project_slug
         bundled = False
-    else:
-        bundled_path = BUNDLED_WORKFLOWS_DIR / f"{name}.yaml"
-        if not bundled_path.is_file():
-            raise HTTPException(status_code=404, detail=f"workflow {name!r} not found")
+    elif (custom_path := wf_lib.custom_workflows_dir(settings.root) / f"{name}.yaml").is_file():
+        path = custom_path
+        source = wf_lib.SOURCE_CUSTOM
+        bundled = False
+    elif (bundled_path := BUNDLED_WORKFLOWS_DIR / f"{name}.yaml").is_file():
         path = bundled_path
+        source = wf_lib.SOURCE_BUNDLED
         bundled = True
+    else:
+        raise HTTPException(status_code=404, detail=f"workflow {name!r} not found")
     yaml_text = path.read_text()
     try:
         wf = load_workflow(path)
@@ -191,6 +189,7 @@ def get_project_workflow(slug: str, name: str) -> dict[str, Any]:
             "nodes": [],
             "yaml": yaml_text,
             "bundled": bundled,
+            "source": source,
         }
     summary = workflow_summary(wf)
     return {
@@ -199,6 +198,7 @@ def get_project_workflow(slug: str, name: str) -> dict[str, Any]:
         "nodes": summary["nodes"],
         "yaml": yaml_text,
         "bundled": bundled,
+        "source": source,
     }
 
 
