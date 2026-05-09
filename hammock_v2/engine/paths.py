@@ -98,6 +98,16 @@ def node_human_decision(slug: str, node_id: str, root: Path | None = None) -> Pa
     return node_dir(slug, node_id, root) / "human_decision.md"
 
 
+def orchestrator_messages_jsonl(slug: str, root: Path | None = None) -> Path:
+    """2-way operator <-> orchestrator chat queue."""
+    return job_dir(slug, root) / "orchestrator_messages.jsonl"
+
+
+def orchestrator_state_json(slug: str, root: Path | None = None) -> Path:
+    """The orchestrator persists last-processed message line index here."""
+    return job_dir(slug, root) / "orchestrator_state.json"
+
+
 def ensure_job_layout(slug: str, root: Path | None = None) -> Path:
     """Create the job dir + nodes/ skeleton. Idempotent."""
     jd = job_dir(slug, root)

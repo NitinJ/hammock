@@ -274,6 +274,25 @@ finished_at: <UTC ISO>
 ---
 ```
 
+#### 2.8 Check for operator messages
+
+Between every node (after step 2.7 succeeds, before moving to the next node), check whether the operator has sent you any new messages:
+
+1. `Read $JOB_DIR/orchestrator_messages.jsonl` (this file may not yet exist; that's fine — skip if so).
+2. Each line is a JSON object: `{id, from, timestamp, text}`. The `from` field is `"operator"` or `"orchestrator"`.
+3. Track which messages you've already seen via `$JOB_DIR/orchestrator_state.json` (a small file you maintain — `{"last_processed_msg_id": "msg-3"}`). On startup it doesn't exist; create it.
+4. For each NEW operator message (i.e. those after `last_processed_msg_id`), decide what to do:
+   - **Status request** — append a response message of your own (see below) summarizing where you are in the workflow.
+   - **Skip <node_id>** — mark the named node as `skipped` in its `state.md`, do not dispatch a subagent for it, continue.
+   - **Abort** — write `state: failed` + `error: aborted by operator` to `job.md` and stop.
+   - **Re-run <node_id>** — clear the node's outputs (delete `output.md` etc. — keep `chat.jsonl` for history), re-dispatch.
+   - **Add instructions for the next node** — append the operator's text to the next node's `input.md` under a `# Operator note (mid-flight)` section.
+   - **Anything else** — interpret in good faith; respond with what you'll do.
+5. After acting, **append YOUR response** to `orchestrator_messages.jsonl` as a new line: `{"id": "msg-<n+1>", "from": "orchestrator", "timestamp": "<UTC ISO>", "text": "<your response>"}`. The dashboard will pick it up via the SSE `orchestrator_message_appended` event.
+6. Update `orchestrator_state.json` with the highest message id you've now processed (operator + orchestrator both count).
+
+This is the 2-way HIL chat — the operator can steer mid-run.
+
 ### Step 3 — Mark the job complete
 
 After the last node succeeds, write:

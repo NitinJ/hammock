@@ -52,6 +52,8 @@ def classify(rel_path: str) -> tuple[str, str | None] | None:
         return ("job_state_changed", None)
     if rel_path == "orchestrator.jsonl":
         return ("orchestrator_appended", None)
+    if rel_path == "orchestrator_messages.jsonl":
+        return ("orchestrator_message_appended", None)
     if rel_path.startswith("nodes" + os.sep):
         parts = rel_path.split(os.sep)
         if len(parts) < 3:

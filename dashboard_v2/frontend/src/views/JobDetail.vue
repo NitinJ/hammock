@@ -42,8 +42,29 @@
 
     <div v-else-if="job.data.value" class="grid grid-cols-12 gap-5">
       <aside class="col-span-12 lg:col-span-4 surface p-3 max-h-[70vh] overflow-auto">
-        <div class="text-xs uppercase tracking-wider text-text-tertiary px-2 py-1 mb-2">Nodes</div>
+        <div class="text-xs uppercase tracking-wider text-text-tertiary px-2 py-1 mb-2">
+          Timeline
+        </div>
         <ul class="space-y-1">
+          <li class="relative">
+            <span class="absolute left-[14px] top-7 bottom-0 w-px bg-border pointer-events-none" />
+            <button
+              type="button"
+              :class="[
+                'w-full text-left px-2 py-2 rounded-lg flex items-start gap-3 transition-colors',
+                selectedNodeId === '__orchestrator'
+                  ? 'bg-bg-elevated border border-border-strong'
+                  : 'hover:bg-bg-raised border border-transparent',
+              ]"
+              @click="selectedNodeId = '__orchestrator'"
+            >
+              <span class="size-2 mt-1.5 rounded-full shrink-0 bg-accent" />
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm text-text-primary">orchestrator</span>
+                <span class="text-xs text-text-tertiary">{{ job.data.value.state }}</span>
+              </span>
+            </button>
+          </li>
           <li v-for="(node, i) in job.data.value.nodes" :key="node.id" class="relative">
             <span
               v-if="i < job.data.value.nodes.length - 1"
@@ -72,8 +93,9 @@
       </aside>
 
       <main class="col-span-12 lg:col-span-8">
-        <div v-if="!selectedNodeId" class="surface p-12 text-center">
-          <p class="text-text-secondary">Select a node from the timeline.</p>
+        <OrchestratorPane v-if="selectedNodeId === '__orchestrator'" :slug="slugRef" />
+        <div v-else-if="!selectedNodeId" class="surface p-12 text-center">
+          <p class="text-text-secondary">Select an entry from the timeline.</p>
         </div>
         <NodePane v-else :slug="slugRef" :node-id="selectedNodeId" />
       </main>
@@ -87,6 +109,7 @@ import { RouterLink } from "vue-router";
 
 import StatePill from "@/components/StatePill.vue";
 import NodePane from "@/components/NodePane.vue";
+import OrchestratorPane from "@/components/OrchestratorPane.vue";
 import { useJob } from "@/api/queries";
 import { useJobStream } from "@/composables/useJobStream";
 import type { NodeOverview } from "@/api/types";

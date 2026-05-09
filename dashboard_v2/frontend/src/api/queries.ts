@@ -6,6 +6,7 @@ import type {
   ChatResponse,
   JobSummary,
   NodeDetail,
+  OrchestratorMessage,
   Project,
   ProjectPrompt,
   WorkflowDetail,
@@ -136,6 +137,46 @@ export function useOrchestratorChat(slug: Ref<string>) {
     queryFn: () => api.get<ChatResponse>(`/api/jobs/${slug.value}/orchestrator/chat`),
     enabled: computed(() => !!slug.value),
     refetchInterval: 3000,
+  });
+}
+
+interface OrchestratorEvent {
+  kind: string;
+  at: string;
+  detail: string;
+  node_id?: string;
+}
+
+export function useOrchestratorEvents(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.orchestratorEvents(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ events: OrchestratorEvent[] }>(`/api/jobs/${slug.value}/orchestrator/events`),
+    enabled: computed(() => !!slug.value),
+    refetchInterval: 3000,
+  });
+}
+
+export function useOrchestratorMessages(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.orchestratorMessages(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ messages: OrchestratorMessage[] }>(`/api/jobs/${slug.value}/orchestrator/messages`),
+    enabled: computed(() => !!slug.value),
+    refetchInterval: 3000,
+  });
+}
+
+export function useSendOrchestratorMessage(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { text: string }) =>
+      api.post<{ ok: string }>(`/api/jobs/${slug.value}/orchestrator/messages`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorMessages(slug.value) });
+    },
   });
 }
 

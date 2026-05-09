@@ -15,12 +15,15 @@ from pydantic import BaseModel, Field
 from dashboard_v2 import projects as proj
 from dashboard_v2.api.artifacts import save_artifacts
 from dashboard_v2.api.projections import (
+    append_orchestrator_message,
     job_summary,
     list_jobs,
     load_workflow_or_none,
     node_chat,
     node_detail,
     orchestrator_chat,
+    orchestrator_events,
+    orchestrator_messages,
     resolve_workflow_path,
     write_human_decision,
 )
@@ -203,6 +206,40 @@ def get_orchestrator_chat(slug: str) -> dict[str, Any]:
     settings = load_settings()
     turns = orchestrator_chat(slug, root=settings.root)
     return {"turns": turns, "has_chat": bool(turns)}
+
+
+@router.get("/jobs/{slug}/orchestrator/events")
+def get_orchestrator_events(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    if not paths.job_dir(slug, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    return {"events": orchestrator_events(slug, root=settings.root)}
+
+
+class OrchestratorMessageRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+
+
+@router.get("/jobs/{slug}/orchestrator/messages")
+def get_orchestrator_messages(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    if not paths.job_dir(slug, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    return {"messages": orchestrator_messages(slug, root=settings.root)}
+
+
+@router.post("/jobs/{slug}/orchestrator/messages")
+def post_orchestrator_message(slug: str, body: OrchestratorMessageRequest) -> dict[str, Any]:
+    settings = load_settings()
+    if not paths.job_dir(slug, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    try:
+        msg = append_orchestrator_message(
+            slug=slug, text=body.text, sender="operator", root=settings.root
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": "true", "message": msg}
 
 
 @router.post("/jobs/{slug}/nodes/{node_id}/human_decision")

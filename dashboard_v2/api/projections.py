@@ -152,6 +152,145 @@ def orchestrator_chat(slug: str, root: Path) -> list[dict[str, Any]]:
     return parse_jsonl(paths.orchestrator_jsonl(slug, root=root))
 
 
+def orchestrator_messages(slug: str, root: Path) -> list[dict[str, Any]]:
+    """Read the operator <-> orchestrator message queue."""
+    return parse_jsonl(paths.orchestrator_messages_jsonl(slug, root=root))
+
+
+def append_orchestrator_message(
+    *,
+    slug: str,
+    text: str,
+    sender: str,
+    root: Path,
+) -> dict[str, Any]:
+    """Append an operator (or orchestrator) message to the message queue."""
+    if sender not in ("operator", "orchestrator"):
+        raise ValueError(f"sender must be 'operator' or 'orchestrator', got {sender!r}")
+    if not text.strip():
+        raise ValueError("text cannot be empty")
+    target = paths.orchestrator_messages_jsonl(slug, root=root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing = parse_jsonl(target)
+    next_id = f"msg-{len(existing) + 1}"
+    payload = {
+        "id": next_id,
+        "from": sender,
+        "timestamp": _dt.datetime.now(_dt.UTC).isoformat(),
+        "text": text,
+    }
+    with target.open("a") as fh:
+        fh.write(json.dumps(payload) + "\n")
+    return payload
+
+
+def orchestrator_events(slug: str, root: Path) -> list[dict[str, Any]]:
+    """Build a chronological events list for the orchestrator pseudo-node.
+
+    Sources:
+    - job.md (state transitions)
+    - nodes/<id>/state.md (per-node started_at / finished_at)
+    - awaiting_human.md / human_decision.md presence
+    - validation.md attempts
+
+    The orchestrator's own chat.jsonl is rendered separately; this is
+    the human-readable timeline.
+    """
+    events: list[dict[str, Any]] = []
+    job_md_path = paths.job_md(slug, root=root)
+    if job_md_path.is_file():
+        front, _ = parse_frontmatter(job_md_path.read_text())
+        if front.get("submitted_at"):
+            events.append(
+                {
+                    "kind": "job_submitted",
+                    "at": front["submitted_at"],
+                    "detail": "job submitted",
+                }
+            )
+        if front.get("started_at"):
+            events.append(
+                {
+                    "kind": "job_started",
+                    "at": front["started_at"],
+                    "detail": "orchestrator started",
+                }
+            )
+        if front.get("finished_at"):
+            events.append(
+                {
+                    "kind": f"job_{front.get('state', 'finished')}",
+                    "at": front["finished_at"],
+                    "detail": f"job state: {front.get('state', 'finished')}",
+                }
+            )
+    nodes_dir = paths.nodes_dir(slug, root=root)
+    if nodes_dir.is_dir():
+        for node_dir_path in sorted(nodes_dir.iterdir()):
+            if not node_dir_path.is_dir():
+                continue
+            nid = node_dir_path.name
+            state_front, _ = parse_frontmatter(_safe_read(node_dir_path / "state.md"))
+            if state_front.get("started_at"):
+                events.append(
+                    {
+                        "kind": "node_started",
+                        "at": state_front["started_at"],
+                        "node_id": nid,
+                        "detail": f"node {nid} started",
+                    }
+                )
+            if state_front.get("finished_at"):
+                events.append(
+                    {
+                        "kind": f"node_{state_front.get('state', 'finished')}",
+                        "at": state_front["finished_at"],
+                        "node_id": nid,
+                        "detail": f"node {nid} {state_front.get('state', 'finished')}",
+                    }
+                )
+            awaiting_path = node_dir_path / "awaiting_human.md"
+            if awaiting_path.is_file():
+                a_front, _ = parse_frontmatter(awaiting_path.read_text())
+                if a_front.get("awaiting_human_since"):
+                    events.append(
+                        {
+                            "kind": "awaiting_human",
+                            "at": a_front["awaiting_human_since"],
+                            "node_id": nid,
+                            "detail": f"node {nid} awaiting human review",
+                        }
+                    )
+            decision_path = node_dir_path / "human_decision.md"
+            if decision_path.is_file():
+                d_front, body = parse_frontmatter(decision_path.read_text())
+                events.append(
+                    {
+                        "kind": "human_decision",
+                        "at": d_front.get("decided_at") or "",
+                        "node_id": nid,
+                        "detail": (
+                            f"human {d_front.get('decision', 'decided')}"
+                            + (f": {body.strip()[:120]}" if body.strip() else "")
+                        ),
+                    }
+                )
+            validation_path = node_dir_path / "validation.md"
+            if validation_path.is_file():
+                v_front, body = parse_frontmatter(validation_path.read_text())
+                events.append(
+                    {
+                        "kind": "validation_failure",
+                        "at": v_front.get("checked_at") or "",
+                        "node_id": nid,
+                        "detail": f"validation failed (attempt {v_front.get('attempt', '?')})",
+                    }
+                )
+    # Stable chronological ordering — empty timestamps sort first.
+    events.sort(key=lambda e: e.get("at") or "")
+    return events
+
+
 def list_workflows() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for wf in discover_workflows():
