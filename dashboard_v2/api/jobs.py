@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from dashboard_v2 import projects as proj
 from dashboard_v2 import workflows as wf_lib
 from dashboard_v2.api.artifacts import save_artifacts
+from dashboard_v2.jobs import lifecycle as lifecycle_lib
 from dashboard_v2.api.projections import (
     append_orchestrator_message,
     job_summary,
@@ -242,6 +243,42 @@ def post_orchestrator_message(slug: str, body: OrchestratorMessageRequest) -> di
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": "true", "message": msg}
+
+
+@router.post("/jobs/{slug}/pause")
+def post_pause(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.pause_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/jobs/{slug}/resume")
+def post_resume(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.resume_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/jobs/{slug}/stop")
+def post_stop(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.stop_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.delete("/jobs/{slug}")
+def delete_job(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.delete_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
 @router.post("/jobs/{slug}/nodes/{node_id}/human_decision")
