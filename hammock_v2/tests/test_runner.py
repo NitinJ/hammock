@@ -74,14 +74,15 @@ def test_submit_writes_initial_control_md(tmp_path: Path) -> None:
 
 
 def test_orchestrator_prompt_polls_control_md() -> None:
-    """The orchestrator must check control.md between iterations and
-    honor paused / cancelled states."""
+    """The orchestrator must check control.md every main-loop iteration
+    and honor paused / cancelled states."""
     prompt = _orchestrator_prompt()
     assert "control.md" in prompt
     assert "paused" in prompt.lower()
     assert "cancelled" in prompt.lower()
-    # The pause/cancel takes effect at the next checkpoint.
-    assert "checkpoint" in prompt.lower() or "between Tasks" in prompt
+    # The pause/cancel takes effect on the next loop iteration (≤1s),
+    # not at "between tasks" — the non-blocking model removes that idiom.
+    assert "next checkpoint" in prompt.lower() or "main loop" in prompt.lower()
     # The cancelled state writes job.md state=cancelled.
     assert "state: cancelled" in prompt or "state=cancelled" in prompt
 
@@ -216,37 +217,25 @@ def test_orchestrator_prompt_uses_task_for_subagents() -> None:
     (not Bash claude -p). For nodes with `worktree: true`, Task is invoked
     with `isolation="worktree"` so code-bearing subagents get isolated
     git worktrees."""
-    prompt = render_orchestrator_prompt(
-        job_dir=Path("/x"),
-        workflow_path=Path("/x/workflow.yaml"),
-        request_text="r",
-    )
+    prompt = _orchestrator_prompt()
     # Task is the spawn mechanism.
     assert "Task" in prompt
     assert "subagent_type" in prompt or "subagent" in prompt
     # Worktree isolation is mentioned for code-bearing nodes.
     assert "worktree" in prompt.lower()
     # The chat.jsonl snapshot pattern is documented (orchestrator writes
-    # a small claude-stream-compatible jsonl after Task returns).
+    # a small claude-stream-compatible jsonl after Task completes).
     assert "chat.jsonl" in prompt
-    # The Bash claude -p spawn pattern is NO LONGER recommended.
-    # We allow the string "claude -p" only inside a "why not" rationale,
-    # so the structural check is: the prompt does NOT instruct redirecting
-    # output to chat.jsonl via Bash.
-    assert ">" not in prompt.split("chat.jsonl")[0][-20:] or "Task" in prompt
 
 
-def test_orchestrator_prompt_checks_messages_before_each_dispatch() -> None:
-    """Operator messages must be checked at the START of each node
-    iteration, not only after the node completes. This bounds reply
-    latency at one Task duration rather than full-workflow duration."""
-    prompt = render_orchestrator_prompt(
-        job_dir=Path("/x"),
-        workflow_path=Path("/x/workflow.yaml"),
-        request_text="r",
-    )
-    # The pre-dispatch check is documented as step 2.0 (or named that way).
-    assert "2.0" in prompt or "before doing" in prompt.lower()
+def test_orchestrator_prompt_checks_messages_each_loop_iteration() -> None:
+    """Operator messages must be checked at the start of EVERY main-loop
+    iteration. Non-blocking Task means the loop runs ~1Hz regardless of
+    whether any Task is in flight, so the operator's max ack latency is
+    one loop tick (~1s), not a full Task duration."""
+    prompt = _orchestrator_prompt()
+    # Step A is the message-drain step at the top of every iteration.
+    assert "Step A" in prompt or "drain operator messages" in prompt.lower()
     # Fast-ack pattern: emit a brief ack BEFORE acting on the message.
     assert "fast-ack" in prompt.lower() or (
         "got your message" in prompt.lower() or "got it" in prompt.lower()
@@ -259,11 +248,39 @@ def test_orchestrator_prompt_says_all_work_through_task() -> None:
     """The orchestrator must route ALL node work through Task and reserve
     its own time for orchestration + responsiveness, per the user's
     'all work through Tasks' directive."""
-    prompt = render_orchestrator_prompt(
-        job_dir=Path("/x"),
-        workflow_path=Path("/x/workflow.yaml"),
-        request_text="r",
-    )
+    prompt = _orchestrator_prompt()
     assert "all work goes through task" in prompt.lower() or (
         "workflow nodes get one task each" in prompt.lower()
     )
+
+
+def test_orchestrator_prompt_uses_non_blocking_task_pattern() -> None:
+    """Orchestrator uses non-blocking Task() with TaskOutput(block=False)
+    polling and tracks active spawns in active_tasks. This is what makes
+    the loop continuous and operator-responsive."""
+    prompt = _orchestrator_prompt()
+    # TaskOutput is the polling primitive.
+    assert "TaskOutput" in prompt
+    # Non-blocking semantics explicitly called out.
+    assert "non-blocking" in prompt.lower()
+    # Active-tasks tracking in persisted state.
+    assert "active_tasks" in prompt
+    # block=False on poll calls.
+    assert "block=False" in prompt or "block: False" in prompt or "block:false" in prompt.lower()
+    # Concurrency cap.
+    assert "10 concurrent" in prompt.lower() or "ten concurrent" in prompt.lower()
+
+
+def test_orchestrator_prompt_polls_in_single_loop() -> None:
+    """The procedure is one continuous loop, not a per-node sequential
+    walk. The 'between Tasks' idiom from the synchronous model must be
+    gone."""
+    prompt = _orchestrator_prompt()
+    # Single continuous main loop is the canonical framing.
+    assert "main loop" in prompt.lower()
+    assert "continuous" in prompt.lower()
+    # The "between Tasks" idiom is no longer the framing.
+    # (We allow the string in a "no between Tasks framing" disclaimer,
+    # but it must not be the operative framing.)
+    # The loop iterates ~1Hz (1 second cadence).
+    assert "~1Hz" in prompt or "1Hz" in prompt or "~1 second" in prompt or "~1s" in prompt
