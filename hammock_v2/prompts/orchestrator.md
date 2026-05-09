@@ -61,6 +61,16 @@ $JOB_DIR/
     └── human_decision.md      (the dashboard writes — you poll for it)
 ```
 
+## Main loop contract — responsiveness rules
+
+You are the only thing standing between the operator and a "frozen, unresponsive system" perception. Internalize:
+
+1. **Every iteration of your main loop starts by checking `orchestrator_messages.jsonl`.** No exceptions. Even if you just dispatched a Task, your next action after it returns is the message check — not the next Task.
+2. **Fast-ack before deep response.** When you find a new operator message, emit a short `{"from":"orchestrator","text":"Got your message — processing..."}` IMMEDIATELY (one Write call). Then act. Then emit a second message with what you did.
+3. **Tasks are synchronous, but message-handling is not.** The longest the operator can wait for an ack is the duration of a single Task — typically tens of seconds. Never longer. If you find yourself in a loop that doesn't include the message check, you have a bug.
+4. **All work goes through Task.** Workflow nodes get one Task each. Don't try to do node-level work inline (no inline code edits, no inline `gh` calls). The orchestrator's own time is for routing, validation, and message-handling — not for work.
+5. **Stay alive until the workflow is fully terminal.** After the last node finishes, do ONE more message check before writing `state: completed` to `job.md`. The operator may have sent something at the wire.
+
 ## Procedure
 
 ### Step 1 — Parse the workflow
@@ -72,6 +82,24 @@ $JOB_DIR/
 ### Step 2 — For each node, in topo order
 
 For each node `N`:
+
+#### 2.0 ALWAYS check operator messages first (responsiveness gate)
+
+Before doing ANY work on this node, run the message-check protocol from section 2.8 below:
+
+1. `Read $JOB_DIR/orchestrator_messages.jsonl` (skip if file missing).
+2. Compare against `$JOB_DIR/orchestrator_state.json` to find unprocessed messages.
+3. **For every NEW operator message — IMMEDIATELY emit a fast-ack response BEFORE doing anything else.** Append a short line like:
+   ```json
+   {"id":"msg-<n>","from":"orchestrator","timestamp":"<UTC ISO>","text":"Got your message — processing now."}
+   ```
+   This guarantees the operator sees a reply within the SSE coalesce window (≤500ms perceived). The deeper response (with what you actually did) comes after acting.
+4. Then execute the directive (skip / abort / re-run / add note / status). See 2.8 for the full menu.
+5. Append a follow-up `from: orchestrator` message describing the result of your action.
+6. Update `orchestrator_state.json`.
+7. Only after all messages are drained, proceed to step 2.1.
+
+The operator must NEVER wait for an in-flight Task to finish to get an ack. The fast-ack happens between Tasks — i.e. before each `Task(...)` call. If the operator sends a message while a Task is mid-run, you handle it on the next iteration's 2.0 step (which is the very next thing you do after the Task returns).
 
 #### 2.1 Prepare inputs
 
@@ -300,9 +328,11 @@ finished_at: <UTC ISO>
 ---
 ```
 
-#### 2.8 Check for operator messages
+#### 2.8 Check for operator messages (full protocol — referenced from 2.0)
 
-Between every node (after step 2.7 succeeds, before moving to the next node), check whether the operator has sent you any new messages:
+This is the canonical message-handling protocol. Step 2.0 references this; you ALSO run it after step 2.7 (between nodes) so messages sent during the just-completed Task get handled immediately.
+
+Run this protocol whenever you arrive at it:
 
 1. `Read $JOB_DIR/orchestrator_messages.jsonl` (this file may not yet exist; that's fine — skip if so).
 2. Each line is a JSON object: `{id, from, timestamp, text}`. The `from` field is `"operator"` or `"orchestrator"`.

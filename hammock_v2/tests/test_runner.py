@@ -201,3 +201,36 @@ def test_orchestrator_prompt_uses_task_for_subagents() -> None:
     # so the structural check is: the prompt does NOT instruct redirecting
     # output to chat.jsonl via Bash.
     assert ">" not in prompt.split("chat.jsonl")[0][-20:] or "Task" in prompt
+
+
+def test_orchestrator_prompt_checks_messages_before_each_dispatch() -> None:
+    """Operator messages must be checked at the START of each node
+    iteration, not only after the node completes. This bounds reply
+    latency at one Task duration rather than full-workflow duration."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    # The pre-dispatch check is documented as step 2.0 (or named that way).
+    assert "2.0" in prompt or "before doing" in prompt.lower()
+    # Fast-ack pattern: emit a brief ack BEFORE acting on the message.
+    assert "fast-ack" in prompt.lower() or (
+        "got your message" in prompt.lower() or "got it" in prompt.lower()
+    )
+    # The main-loop responsiveness contract is called out near the top.
+    assert "main loop" in prompt.lower() or "responsiveness" in prompt.lower()
+
+
+def test_orchestrator_prompt_says_all_work_through_task() -> None:
+    """The orchestrator must route ALL node work through Task and reserve
+    its own time for orchestration + responsiveness, per the user's
+    'all work through Tasks' directive."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    assert "all work goes through task" in prompt.lower() or (
+        "workflow nodes get one task each" in prompt.lower()
+    )
