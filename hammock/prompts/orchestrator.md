@@ -126,6 +126,17 @@ $JOB_DIR/
 
 Run continuously until terminal exit (Step F).
 
+### NON-NEGOTIABLE iteration preamble — DO THIS FIRST EVERY TIME
+
+Each iteration of the loop **MUST** begin by reading TWO files in this exact order, before any other tool call:
+
+1. `Read $JOB_DIR/orchestrator_messages.jsonl`
+2. `Read $JOB_DIR/control.md`
+
+This is non-optional. The model's instinct will be to skip these reads when the active_tasks list looks unchanged — that is the most common bug in this orchestrator. **The operator-visible behaviour of "chat doesn't work" and "pause doesn't work" is caused entirely by skipping these two reads.** A single iteration that skips them breaks the operator's ability to interact with the job.
+
+After reading both files, fold their contents into Steps A (messages) and B (control). If you find yourself about to dispatch a Task or update state.json without having read both files in this iteration: stop, read them, and only then proceed.
+
 ### Step A — Drain operator messages
 
 1. `Read $JOB_DIR/orchestrator_messages.jsonl` (skip if missing).
@@ -251,6 +262,8 @@ When a `human_review: true` node passes validation in Step C.1:
 
 ### Step E — Dispatch newly-runnable nodes
 
+**Pre-dispatch guard.** Before evaluating any dispatch in this step, confirm you have already executed Steps A and B in this iteration (i.e. `Read $JOB_DIR/orchestrator_messages.jsonl` and `Read $JOB_DIR/control.md` since the most recent `Bash sleep`). If you have not: do those reads now. Dispatching a Task without honouring a paused control state or an unread operator message is a contract violation.
+
 For each node `N` in the runtime DAG (`workflow.nodes ∪ expanded_nodes.values()`), `N` is dispatchable iff:
 
 - `N.id` ∉ `completed_nodes ∪ failed_nodes ∪ skipped_nodes`
@@ -309,7 +322,7 @@ At end of each iteration:
   - When truly idle: no `failed_nodes` → write `job.md` with `state: completed`, `finished_at`. Has `failed_nodes` → write `job.md` with `state: failed`, `error: "<failed_nodes joined>"`, `finished_at`.
   - Exit cleanly.
 - **"All nodes terminal" definition**: every node in the runtime DAG (static workflow nodes + expanded children) is in `completed_nodes ∪ failed_nodes ∪ skipped_nodes`. **Pending nodes are NOT terminal.** If even one node is still in `pending` state, you are not done — regardless of whether anything is currently running. This is the most common mis-interpretation: a paused job has 0 active_tasks but many pending nodes; that is NOT "all terminal."
-- **Otherwise** — `Bash sleep 1` and loop back to Step A.
+- **Otherwise** — `Bash sleep 1` and loop back to Step A. The next iteration MUST start with `Read $JOB_DIR/orchestrator_messages.jsonl` and `Read $JOB_DIR/control.md` (the iteration preamble at the top of "Main loop"). Do not jump straight to Step C/E even if you "know" nothing changed — the operator may have appended a message or flipped control.md while you were sleeping.
 
 ## Message directives
 

@@ -105,6 +105,25 @@ def test_orchestrator_paused_does_not_fall_through_to_exit() -> None:
     assert "pending nodes are not terminal" in lower or "pending nodes are NOT terminal" in prompt
 
 
+def test_orchestrator_prompt_demands_message_and_control_read_every_iteration() -> None:
+    """Regression: the orchestrator must read orchestrator_messages.jsonl
+    AND control.md at the top of every iteration. The most common bug is
+    skipping these reads after the first iteration, which leaves operator
+    chat + pause unhonored. The prompt must call this out as non-optional
+    and gate Step E's dispatch on the reads having happened."""
+    prompt = _orchestrator_prompt()
+    # Non-optional iteration preamble.
+    assert "NON-NEGOTIABLE iteration preamble" in prompt
+    # Names both files in the preamble.
+    assert "orchestrator_messages.jsonl" in prompt and "control.md" in prompt
+    # Call out chat + pause as the failure modes when this is skipped.
+    lower = prompt.lower()
+    assert "chat doesn't work" in lower
+    assert "pause doesn't work" in lower
+    # Step E must have a pre-dispatch guard re-asserting the reads.
+    assert "Pre-dispatch guard" in prompt
+
+
 def test_submit_copies_repo(tmp_path: Path) -> None:
     src = tmp_path / "src-repo"
     (src / "subdir").mkdir(parents=True)
