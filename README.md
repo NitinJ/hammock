@@ -1,26 +1,14 @@
 # Hammock
 
-> Agentic development harness — a single local system that orchestrates safe, observable, human-gated edits to source repositories, driven by a Claude session as the orchestrator and background agents as the workers.
+> Agentic development harness — Claude Code AS the orchestrator.
 
-**Status:** v0 (Stages 0–16 complete). The end-to-end lifecycle works
-with either the **fake-fixture** runner (used by tests + the bundled
-smoke) or the real `claude`-spawning `RealStageRunner` (selected
-automatically when `HAMMOCK_FAKE_FIXTURES_DIR` is unset and `claude`
-is on `$PATH`). Per-stage MCP server + Stop hook plumbing into the
-driver entry point remains a v1+ item — see
-`docs/implementation.md § 9`.
-
-See [`docs/implementation.md`](docs/implementation.md) for the stage-by-stage plan and [`docs/design.md`](docs/design.md) for the canonical design. See [`docs/runbook.md`](docs/runbook.md) for the operator-facing reference.
-
-## What it is
-
-Hammock orchestrates safe, observable, human-gated edits to source repositories. It is the layer between the human (who sets goals, reviews, gates risky steps) and the agent fleet (which writes, tests, fixes, reviews code).
+Hammock orchestrates safe, observable, human-gated edits to source repositories. The orchestrator is a `claude -p` subprocess that walks a workflow DAG and spawns one `Task` subagent per node. The Python side persists state files, serves the dashboard, and forwards events.
 
 ## Quickstart
 
 ### Prerequisites
 
-- macOS or Linux, Python ≥ 3.12, `git` ≥ 2.40, [`gh`](https://cli.github.com/) ≥ 2.40, [`uv`](https://docs.astral.sh/uv/).
+- macOS or Linux, Python ≥ 3.12, `git` ≥ 2.40, [`gh`](https://cli.github.com/) ≥ 2.40, [`uv`](https://docs.astral.sh/uv/), Node ≥ 20 + `pnpm`.
 
 ### Install
 
@@ -28,58 +16,91 @@ Hammock orchestrates safe, observable, human-gated edits to source repositories.
 git clone https://github.com/NitinJ/hammock.git
 cd hammock
 uv sync --dev
+cd dashboard/frontend && pnpm install && pnpm build && cd ../..
 ```
 
-### First run (fake-fixture lifecycle)
-
-The fastest way to see the whole pipeline end-to-end is the bundled smoke,
-which uses fake stage fixtures (no real Claude, no network):
+### Run
 
 ```bash
-uv run python scripts/manual-smoke-stage16.py
+~/workspace/scripts/run-hammock-smoke.sh start
 ```
 
-It registers a synthetic project, submits a `fix-bug` job, walks the
-driver through every agent stage, resolves three human gates, and prints
-the path to the resulting job dir for inspection.
+Dashboard at <http://127.0.0.1:8765>.
 
-### First run with the dashboard
-
-For an interactive walk:
+To pin a project:
 
 ```bash
-# 1. Start the dashboard (long-lived; keep this terminal open).
-#    Set HAMMOCK_FAKE_FIXTURES_DIR to a fixtures dir if you want jobs
-#    spawned through the dashboard to use FakeStageRunner.
-uv run python -m dashboard
-#    → http://127.0.0.1:8765/
-
-# 2. In another terminal, register a project.
-uv run hammock project register /path/to/your/repo
-
-# 3. In the dashboard, open `/jobs/new`, fill the form, submit.
-#    The dashboard's POST /api/jobs spawns the Job Driver as a side
-#    effect and the Stage Live view will start streaming events.
-#    (CLI `hammock job submit` only compiles + writes the job dir; it
-#    does not spawn a driver. Use the dashboard for the watching flow.)
+HAMMOCK_PROJECT_REPO_PATH=/path/to/repo \
+  ~/workspace/scripts/run-hammock-smoke.sh start
 ```
 
-For everything else — health-check verbs, troubleshooting, the manual
-dogfood walk-through, and the v1+ items required for a real `claude`
-end-to-end run — see [`docs/runbook.md`](docs/runbook.md).
+### Submit a job
 
-## Layout
+Through the dashboard: click **+ New job**, pick a workflow, type a request, submit. The orchestrator runs against the registered project repo, opens PRs via `gh`, and pauses at HIL gates for your review.
+
+## Architecture
 
 ```
-hammock/
-├── shared/        # Pydantic models + paths + atomic writes; cross-process contract
-├── dashboard/     # the long-lived dashboard process (FastAPI + Vue 3)
-├── job_driver/    # one OS process per active job
-├── cli/           # `hammock project ...`, `hammock job ...`
-├── tests/         # unit + integration + e2e
-└── docs/          # design + implementation + runbook
+┌──────────────────┐    HTTP/SSE    ┌──────────────────┐    spawns      ┌──────────────────┐
+│  Vue 3 frontend  │ ─────────────> │  FastAPI dash    │ ─────────────> │  claude -p       │
+│  (vue-query)     │ <───────────── │   + projections  │                │  (orchestrator)  │
+└──────────────────┘                └──────────────────┘                └─────────┬────────┘
+                                              │ reads/writes                     │ Task() per node
+                                              ▼                                  ▼
+                                   ~/.hammock-v2/jobs/<slug>/                <subagent>
+                                   (per-node markdown,
+                                    SSE event log,
+                                    human-decision markers)
 ```
 
-## License
+- **Frontend** — `dashboard/frontend/`. Vue 3 SPA, vue-query, SSE for live updates.
+- **Dashboard** — `dashboard/`. FastAPI. No DB; reads `~/.hammock-v2/` via projections.
+- **Engine** — `hammock/engine/`. Workflow schema, runner, paths. The orchestrator prompt at `hammock/prompts/orchestrator.md` is the runtime.
+- **Bundled workflows + prompts** — `hammock/{workflows,prompts}/`.
 
-TBD.
+## Workflow YAML
+
+```yaml
+name: my-workflow
+description: |
+  Whatever this does.
+
+nodes:
+  - id: step-one
+    prompt: my-prompt-template
+
+  - id: step-two
+    prompt: another-prompt
+    after: [step-one]
+
+  - id: human-gate
+    prompt: review
+    after: [step-two]
+    human_review: true
+
+  - id: expander
+    prompt: my-expander
+    kind: workflow_expander    # subagent emits expansion.yaml at runtime
+    after: [human-gate]
+
+  - id: finale
+    prompt: write-summary
+    after: [expander]
+```
+
+Resolution order: `<repo>/.hammock-v2/workflows/<name>.yaml` (project-local) > `~/.hammock-v2/workflows/<name>.yaml` (custom) > bundled.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest dashboard/tests hammock/tests --tb=short
+```
+
+Default uses the fake claude runner; no tokens spent.
+
+## See also
+
+- `docs/hammock-v2-design.md` — design doc.
+- `docs/hammock-v2-extras.md` — workflow editor + project + prompt management.
+- `docs/hammock-v2-projects-and-chat.md` — project registry + 2-way operator chat.
+- `docs/hammock-v2-workflow-expander.md` — runtime fan-out via `kind: workflow_expander`.

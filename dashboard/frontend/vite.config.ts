@@ -1,6 +1,7 @@
-import { defineConfig } from "vitest/config";
-import vue from "@vitejs/plugin-vue";
 import { fileURLToPath, URL } from "node:url";
+
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
   plugins: [vue()],
@@ -10,18 +11,18 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 5174,
     proxy: {
-      "/api": "http://localhost:8765",
-      "/sse": "http://localhost:8765",
+      "/api": "http://127.0.0.1:8766",
+      "/sse": {
+        target: "http://127.0.0.1:8766",
+        changeOrigin: true,
+        ws: false,
+      },
     },
   },
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./tests/setup.ts"],
-    // Vitest must not try to load the Playwright e2e specs — they import
-    // @playwright/test which fails outside Playwright's runtime.
-    include: ["tests/unit/**/*.spec.ts"],
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
   },
 });

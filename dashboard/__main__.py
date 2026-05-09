@@ -1,46 +1,21 @@
-"""Entry point: ``python -m hammock.dashboard``.
-
-Starts a single-worker uvicorn server (per design doc § Process structure:
-single worker is locked — multiple workers would split the cache).
-"""
+"""Run the dashboard via `python -m dashboard`."""
 
 from __future__ import annotations
 
-import logging
+import os
 
 import uvicorn
-from rich.logging import RichHandler
-
-from dashboard.app import create_app
-from dashboard.settings import Settings
-
-
-def _configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True)],
-    )
 
 
 def main() -> None:
-    _configure_logging()
-    settings = Settings()
-    log = logging.getLogger("dashboard")
-    if settings.runner_mode == "real":
-        log.warning(
-            "runner-mode=REAL — jobs will spawn `%s` and may incur Claude API costs. "
-            "Set HAMMOCK_FAKE_FIXTURES_DIR to switch to fake-runner mode.",
-            settings.claude_binary,
-        )
-    else:
-        log.info(
-            "runner-mode=FAKE — fixtures: %s",
-            settings.fake_fixtures_dir,
-        )
-    app = create_app(settings)
-    uvicorn.run(app, host=settings.host, port=settings.port, workers=1)
+    host = os.environ.get("HAMMOCK_HOST", "127.0.0.1")
+    port = int(os.environ.get("HAMMOCK_PORT", "8765"))
+    uvicorn.run(
+        "dashboard.api.app:app",
+        host=host,
+        port=port,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":

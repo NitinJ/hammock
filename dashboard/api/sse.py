@@ -1,281 +1,132 @@
-"""SSE endpoints — /sse/global, /sse/job/{slug}, /sse/stage/{slug}/{sid}.
+"""SSE: watch the job dir for file changes, emit typed events.
 
-Per design doc § Real-time delivery: three scoped SSE channels with
-Last-Event-ID replay from on-disk jsonl files and 15-second keepalives.
+Wire format: text/event-stream with named events. Event types:
 
-Stage 10 ships the mechanism; the frontend wires up EventSource in Stage 11.
+- event: ping                       — keepalive every 30 ticks (~15s @ 500ms cadence)
+- event: node_state_changed         — `{slug, node_id}` (nodes/<id>/state.md)
+- event: chat_appended              — `{slug, node_id}` (nodes/<id>/chat.jsonl)
+- event: orchestrator_appended      — `{slug}` (orchestrator.jsonl)
+- event: awaiting_human             — `{slug, node_id}` (nodes/<id>/awaiting_human.md created)
+- event: human_decision_received    — `{slug, node_id}` (nodes/<id>/human_decision.md created)
+- event: job_state_changed          — `{slug}` (job.md)
+
+Coalesce: at most one event per (slug, event_type, node_id) per 500ms
+window. The poll cadence is 500ms so events surface within roughly the
+coalesce window; the explicit cap exists so spammy mtime storms
+(e.g. atomic rename rewrites) don't fan out.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
-from collections.abc import AsyncGenerator
-from pathlib import Path
+import logging
+import os
+import time
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from dashboard.state.pubsub import InProcessPubSub, replay_since
-from dashboard.watcher.tailer import CacheChange
-from shared.models import Event
+from dashboard.settings import load_settings
+from hammock.engine import paths
 
-router = APIRouter(tags=["sse"])
+log = logging.getLogger(__name__)
 
-KEEPALIVE_INTERVAL: float = 15.0
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+router = APIRouter()
 
 
-def _parse_last_event_id(request: Request) -> int | None:
-    """Return Last-Event-ID header as int, or None if absent / non-numeric."""
-    raw = request.headers.get("last-event-id")
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
+_COALESCE_S = 0.5
 
 
-def _format_change(change: CacheChange, scope: str) -> str:
-    """Format a CacheChange as an SSE message.
+def classify(rel_path: str) -> tuple[str, str | None] | None:
+    """Map a relative path under the job dir to an (event_type, node_id) tuple.
 
-    No ``id:`` field — CacheChange events are not persisted to disk, so they
-    cannot be replayed. The browser does not update Last-Event-ID for lines
-    without an ``id:`` field (per SSE spec).
+    Returns None if the path isn't one we surface as an event.
+
+    Public so tests and tooling can verify the mapping without going
+    through the streaming endpoint.
     """
-    classified = change.classified
-    data: dict[str, object] = {
-        "scope": scope,
-        "change_kind": change.kind.value,
-        "file_kind": classified.kind,
-    }
-    if classified.job_slug is not None:
-        data["job_slug"] = classified.job_slug
-    if classified.node_id is not None:
-        data["node_id"] = classified.node_id
-    if classified.var_name is not None:
-        data["var_name"] = classified.var_name
-    if classified.iter_path is not None:
-        data["iter"] = list(classified.iter_path)
-    if classified.attempt is not None:
-        data["attempt"] = classified.attempt
-    if classified.project_slug is not None:
-        data["project_slug"] = classified.project_slug
-    if classified.call_id is not None:
-        data["call_id"] = classified.call_id
-    # Stage 12.5 (A4): emit as unnamed event (no ``event:`` line) so the browser
-    # fires ``EventSource.onmessage``.  Named events only reach ``addEventListener``
-    # listeners, which the frontend does not register.
-    return f"data: {json.dumps(data)}\n\n"
+    if rel_path == "job.md":
+        return ("job_state_changed", None)
+    if rel_path == "orchestrator.jsonl":
+        return ("orchestrator_appended", None)
+    if rel_path == "orchestrator_messages.jsonl":
+        return ("orchestrator_message_appended", None)
+    if rel_path.startswith("nodes" + os.sep):
+        parts = rel_path.split(os.sep)
+        if len(parts) < 3:
+            return None
+        node_id = parts[1]
+        leaf = parts[2]
+        if leaf == "state.md":
+            return ("node_state_changed", node_id)
+        if leaf == "chat.jsonl":
+            return ("chat_appended", node_id)
+        if leaf == "awaiting_human.md":
+            return ("awaiting_human", node_id)
+        if leaf == "human_decision.md":
+            return ("human_decision_received", node_id)
+    return None
 
 
-def _format_replay_event(event: object, scope: str) -> str:
-    """Format a shared.models.Event (from JSONL replay) as an SSE message.
+async def _watch(slug: str, request: Request) -> AsyncIterator[str]:
+    settings = load_settings()
+    job_dir = paths.job_dir(slug, root=settings.root)
+    seen: dict[str, float] = {}
+    last_emit: dict[tuple[str, str | None], float] = {}
 
-    Unnamed events (no ``event:`` line) fire ``EventSource.onmessage``, which
-    is how the frontend wires up its handler.  Named events only reach
-    ``addEventListener(type, handler)`` listeners — the frontend does not use
-    those for log replay.
-
-    Data payload matches the SseEvent TypeScript interface exactly so the
-    frontend can parse the raw ``event.data`` without field mapping.
-
-    ``id: <seq>`` is included for scoped channels (job, stage) so the browser
-    updates Last-Event-ID, enabling reconnect replay.  Global scope omits
-    ``id:`` because seq is per-job monotonic (not globally unique) — emitting
-    it would corrupt Last-Event-ID across reconnects.
-    """
-    from shared.models import Event as _Event
-
-    e: _Event = event  # type: ignore[assignment]
-    data = {
-        "seq": e.seq,
-        "timestamp": e.timestamp.isoformat(),
-        "event_type": e.event_type,
-        "source": e.source,
-        "job_id": e.job_id,
-        "stage_id": e.stage_id,
-        "task_id": e.task_id,
-        "subagent_id": e.subagent_id,
-        "parent_event_seq": e.parent_event_seq,
-        "payload": e.payload,
-    }
-    # Global scope: suppress id: — seq is per-job, not globally monotonic.
-    id_line = "" if scope == "global" else f"id: {e.seq}\n"
-    return f"{id_line}data: {json.dumps(data)}\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Core generator
-# ---------------------------------------------------------------------------
-
-
-async def _poll_disconnected(request: Request) -> None:
-    """Return as soon as the client disconnects (polls every 50 ms)."""
-    while not await request.is_disconnected():
-        await asyncio.sleep(0.05)
-
-
-async def _event_stream(
-    request: Request,
-    scope: str,
-    pubsub: InProcessPubSub[CacheChange],
-    root: Path,
-    last_event_id: int | None,
-    events_pubsub: InProcessPubSub[Event] | None = None,
-) -> AsyncGenerator[str, None]:
-    """Replay from disk, then forward live pub/sub events with keepalives.
-
-    Two phases:
-
-    1. **Replay** — if the client sent ``Last-Event-ID: N``, yield all
-       on-disk events for *scope* with ``seq > N``.  These carry ``id:``
-       so the browser updates its last-seen seq.
-
-    2. **Live** — subscribe to *pubsub* on *scope*.  Each :class:`CacheChange`
-       is translated to an SSE message (no ``id:`` — not persistently
-       replayable).  A ``": keepalive"`` comment is sent every
-       :data:`KEEPALIVE_INTERVAL` seconds of inactivity to keep the
-       connection alive through proxies.
-
-    Disconnect detection races against both the message queue and the
-    keepalive timer so the generator exits within ~50 ms of client close
-    rather than waiting up to KEEPALIVE_INTERVAL seconds.
-
-    Stage 12.5 (A8): on global scope the server never emits ``id:`` (seq is
-    per-job, not globally monotonic), so any Last-Event-ID a client sends
-    on global is meaningless.  Pre-12.5 we still applied that header as a
-    per-job ``seq > N`` filter, which silently dropped every event from any
-    job whose local seq was below N.  Now: on global, replay everything
-    regardless (force ``last_event_id=-1``), so a client cannot lose data
-    by misconfiguration.
-    """
-    # Phase 1 — replay
-    if last_event_id is not None:
-        replay_floor = -1 if scope == "global" else last_event_id
-        async for event in replay_since(scope, replay_floor, root=root):
-            yield _format_replay_event(event, scope)
-
-    # Phase 2 — live stream
-    # Two channels:
-    # - pubsub carries CacheChange (state-file mutations, no id: — not replayable)
-    # - events_pubsub carries typed Event records tailed from events.jsonl
-    #   (with id: so the browser updates Last-Event-ID for reconnect replay)
-    change_sub = pubsub.subscribe(scope)
-    event_sub = events_pubsub.subscribe(scope) if events_pubsub is not None else None
-    try:
-        while True:
-            change_task: asyncio.Task[CacheChange] = asyncio.create_task(
-                change_sub._queue.get()  # type: ignore[attr-defined]
-            )
-            event_task: asyncio.Task[Event] | None = (
-                asyncio.create_task(event_sub._queue.get())  # type: ignore[attr-defined]
-                if event_sub is not None
-                else None
-            )
-            ka_task = asyncio.create_task(asyncio.sleep(KEEPALIVE_INTERVAL))
-            dc_task = asyncio.create_task(_poll_disconnected(request))
-
-            wait_set: set[asyncio.Task[object]] = {change_task, ka_task, dc_task}
-            if event_task is not None:
-                wait_set.add(event_task)
-
-            done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
-
-            for t in (change_task, event_task, ka_task, dc_task):
-                if t is not None and t not in done:
-                    t.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await t
-
-            if dc_task in done:
-                break
-
-            yielded = False
-            if change_task in done:
+    def snapshot() -> dict[str, float]:
+        out: dict[str, float] = {}
+        if not job_dir.is_dir():
+            return out
+        for dirpath, _dirnames, filenames in os.walk(job_dir):
+            for f in filenames:
+                full = os.path.join(dirpath, f)
                 try:
-                    change = change_task.result()
-                except Exception:
-                    break
-                yield _format_change(change, scope)
-                yielded = True
+                    out[full] = os.path.getmtime(full)
+                except OSError:
+                    continue
+        return out
 
-            if event_task is not None and event_task in done:
-                try:
-                    event = event_task.result()
-                except Exception:
-                    pass
-                else:
-                    yield _format_replay_event(event, scope)
-                    yielded = True
+    seen = snapshot()
+    yield "event: ping\ndata: connected\n\n"
 
-            if not yielded and ka_task in done:
-                yield ": keepalive\n\n"
-    finally:
-        await change_sub.aclose()
-        if event_sub is not None:
-            await event_sub.aclose()
-
-
-def _sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
-    return StreamingResponse(
-        generator,
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable nginx response buffering
-        },
-    )
-
-
-# ---------------------------------------------------------------------------
-# Route handlers
-# ---------------------------------------------------------------------------
-
-
-@router.get("/sse/global")
-async def sse_global(request: Request) -> StreamingResponse:
-    """Cross-job lifecycle + HIL events."""
-    pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
-    events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
-    root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
-    return _sse_response(
-        _event_stream(request, "global", pubsub, root, _parse_last_event_id(request), events_pubsub)
-    )
+    last_ping = 0
+    while True:
+        if await request.is_disconnected():
+            return
+        try:
+            current = snapshot()
+            changed = [p for p, m in current.items() if seen.get(p, 0) != m]
+            now = time.monotonic()
+            for path in changed:
+                rel = os.path.relpath(path, job_dir)
+                kind = classify(rel)
+                if kind is None:
+                    continue
+                event_type, node_id = kind
+                key = (event_type, node_id)
+                last = last_emit.get(key, 0.0)
+                if now - last < _COALESCE_S:
+                    continue
+                last_emit[key] = now
+                payload: dict[str, Any] = {"slug": slug}
+                if node_id is not None:
+                    payload["node_id"] = node_id
+                yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+            seen = current
+            last_ping += 1
+            if last_ping >= 30:
+                yield "event: ping\ndata: \n\n"
+                last_ping = 0
+        except Exception as exc:
+            log.exception("sse watcher error: %s", exc)
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+        await asyncio.sleep(0.5)
 
 
-@router.get("/sse/job/{job_slug}")
-async def sse_job(request: Request, job_slug: str) -> StreamingResponse:
-    """Job-scoped events — stage transitions, cost deltas, HIL opens."""
-    pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
-    events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
-    root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
-    return _sse_response(
-        _event_stream(
-            request, f"job:{job_slug}", pubsub, root, _parse_last_event_id(request), events_pubsub
-        )
-    )
-
-
-@router.get("/sse/node/{job_slug}/{node_id}")
-async def sse_node(request: Request, job_slug: str, node_id: str) -> StreamingResponse:
-    """Node-scoped events — drilldown stream for one node-execution."""
-    pubsub: InProcessPubSub[CacheChange] = request.app.state.pubsub  # type: ignore[attr-defined]
-    events_pubsub: InProcessPubSub[Event] = request.app.state.events_pubsub  # type: ignore[attr-defined]
-    root: Path = request.app.state.settings.root  # type: ignore[attr-defined]
-    return _sse_response(
-        _event_stream(
-            request,
-            f"node:{job_slug}/{node_id}",
-            pubsub,
-            root,
-            _parse_last_event_id(request),
-            events_pubsub,
-        )
-    )
+@router.get("/jobs/{slug}")
+async def stream_job(slug: str, request: Request) -> StreamingResponse:
+    return StreamingResponse(_watch(slug, request), media_type="text/event-stream")

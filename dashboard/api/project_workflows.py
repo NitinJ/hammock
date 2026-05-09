@@ -1,205 +1,262 @@
-"""Project-scoped workflow listing — Stage 5.
+"""Per-project workflows + prompts CRUD.
 
-Returns the union of bundled workflows + the project's local workflows
-under ``<repo_path>/.hammock/workflows/``. Each entry carries a
-``valid`` flag and an ``error`` reason when the workflow fails
-verification (missing prompt files, malformed yaml, unsupported
-``schema_version``).
+Workflows are listed from three tiers (bundled, custom, this project).
+Project-specific shadows custom shadows bundled when names collide. The
+picker on the job-submit form uses this listing.
 
-The submit form's dropdown reads from this endpoint when the operator
-has selected a project; the engine compile path resolves project-local
-before bundled (see ``dashboard/compiler/compile.py``).
+Prompts: bundled (``hammock/prompts/``) + project-local under
+``<repo_path>/.hammock-v2/prompts/<name>.md``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import re
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
-from engine.v1.loader import WorkflowLoadError, load_workflow
-from shared.v1.workflow import ArtifactNode, CodeNode, LoopNode, Workflow
+from dashboard import projects as proj
+from dashboard import workflows as wf_lib
+from dashboard.settings import load_settings
+from hammock.engine.runner import (
+    PROMPTS_DIR as BUNDLED_PROMPTS_DIR,
+)
+from hammock.engine.runner import (
+    WORKFLOWS_DIR as BUNDLED_WORKFLOWS_DIR,
+)
+from hammock.engine.workflow import (
+    WorkflowError,
+    load_workflow,
+    workflow_summary,
+)
 
 log = logging.getLogger(__name__)
 
+router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Response model
-# ---------------------------------------------------------------------------
-
-
-class ProjectWorkflowItem(BaseModel):
-    """One entry in ``GET /api/projects/{slug}/workflows``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    job_type: str
-    """Workflow folder name. Used as the submit identifier."""
-
-    workflow_name: str | None
-    """The yaml's ``workflow:`` field. ``None`` when the yaml failed
-    to load (so we have no name to show)."""
-
-    source: str  # "bundled" | "custom"
-    valid: bool
-    error: str | None = None
-    """Verification error, when ``valid is False``. Names the file
-    path or the missing prompt(s) so the operator can fix in their
-    editor."""
+_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 
-# ---------------------------------------------------------------------------
-# Discovery
-# ---------------------------------------------------------------------------
+def _validate_name(name: str) -> None:
+    if not _NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="name must be 1-64 chars, alphanumeric with `.`, `_`, `-`",
+        )
 
 
-_BUNDLED_DIR = Path(__file__).parent.parent.parent / "hammock" / "templates" / "workflows"
+def _project_or_404(slug: str) -> tuple[str, Path]:
+    settings = load_settings()
+    try:
+        slug = proj.normalize_slug(slug)
+    except proj.ProjectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    data = proj.read_project(slug, settings.root)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"project {slug!r} not found")
+    return slug, Path(data["repo_path"])
 
 
-def _agent_actor_node_ids(workflow: Workflow) -> list[str]:
-    """Walk the DAG (including loop bodies) and collect every node
-    whose ``actor == 'agent'`` — these are the nodes that need a
-    ``prompts/<id>.md`` file."""
-    out: list[str] = []
-
-    def visit(nodes: list[ArtifactNode | CodeNode | LoopNode]) -> None:
-        for n in nodes:
-            if isinstance(n, LoopNode):
-                visit(n.body)
-                continue
-            # n is ArtifactNode | CodeNode here (LoopNode handled above).
-            if n.actor == "agent":
-                out.append(n.id)
-
-    visit(workflow.nodes)
-    return out
+def _project_workflows_dir(repo_path: Path) -> Path:
+    return repo_path / ".hammock-v2" / "workflows"
 
 
-def verify_workflow_folder(folder: Path) -> tuple[Workflow | None, str | None]:
-    """Validate a single workflow folder.
+def _project_prompts_dir(repo_path: Path) -> Path:
+    return repo_path / ".hammock-v2" / "prompts"
 
-    Returns ``(workflow, None)`` on success, ``(None, error_reason)`` or
-    ``(workflow, error_reason)`` on failure (workflow returned when
-    yaml loaded but prompts are missing — caller may still want the
-    name).
+
+# -------------------- Workflows --------------------
+
+
+class WorkflowBody(BaseModel):
+    name: str = Field(..., min_length=1)
+    yaml: str = Field(..., min_length=1)
+
+
+class WorkflowUpdateBody(BaseModel):
+    yaml: str = Field(..., min_length=1)
+
+
+def _validate_yaml(yaml_text: str, expected_name: str | None = None) -> None:
+    try:
+        with NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+            tmp.write(yaml_text)
+            tmp_path = Path(tmp.name)
+        try:
+            wf = load_workflow(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except WorkflowError as exc:
+        raise HTTPException(status_code=400, detail=f"workflow validation: {exc}") from exc
+    if expected_name is not None and wf.name != expected_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"workflow yaml `name:` ({wf.name!r}) does not match url path ({expected_name!r})",
+        )
+
+
+@router.get("/projects/{slug}/workflows")
+def list_project_workflows(slug: str) -> dict[str, Any]:
+    """Bundled + custom + project-specific. Shadowing applied:
+    project-specific > custom > bundled when names collide.
+
+    Each entry carries `source` (bundled / custom / <project_slug>) so
+    the picker can show a pill. `bundled` field retained for back-compat.
     """
-    yaml_path = folder / "workflow.yaml"
-    if not yaml_path.is_file():
-        return None, f"missing workflow.yaml in {folder}"
-    try:
-        wf = load_workflow(yaml_path)
-    except WorkflowLoadError as exc:
-        return None, str(exc)
+    project_slug, _repo_path = _project_or_404(slug)
+    settings = load_settings()
+    entries = wf_lib.list_for_project(project_slug, settings.root)
+    return {"workflows": [e.to_dict() for e in entries]}
 
-    prompts_dir = folder / "prompts"
-    missing: list[str] = []
-    for node_id in _agent_actor_node_ids(wf):
-        if not (prompts_dir / f"{node_id}.md").is_file():
-            missing.append(node_id)
-    if missing:
-        return wf, (
-            f"missing prompts for agent-actor node(s) {missing}: expected "
-            f"{prompts_dir}/<node_id>.md"
+
+@router.post("/projects/{slug}/workflows", status_code=201)
+def create_project_workflow(slug: str, body: WorkflowBody) -> dict[str, Any]:
+    _validate_name(body.name)
+    _, repo_path = _project_or_404(slug)
+    user_dir = _project_workflows_dir(repo_path)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    target = user_dir / f"{body.name}.yaml"
+    if target.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail=f"project workflow {body.name!r} already exists; use PUT to update",
         )
-    return wf, None
+    _validate_yaml(body.yaml, expected_name=body.name)
+    target.write_text(body.yaml)
+    return {"name": body.name, "path": str(target)}
 
 
-def _list_bundled() -> list[ProjectWorkflowItem]:
-    """Enumerate ``hammock/templates/workflows/<name>/workflow.yaml``."""
-    items: list[ProjectWorkflowItem] = []
-    if not _BUNDLED_DIR.is_dir():
-        return items
-    for folder in sorted(p for p in _BUNDLED_DIR.iterdir() if p.is_dir()):
-        wf, error = verify_workflow_folder(folder)
-        items.append(
-            ProjectWorkflowItem(
-                job_type=folder.name,
-                workflow_name=wf.workflow if wf is not None else None,
-                source="bundled",
-                valid=error is None,
-                error=error,
-            )
-        )
-    return items
+@router.put("/projects/{slug}/workflows/{name}")
+def update_project_workflow(slug: str, name: str, body: WorkflowUpdateBody) -> dict[str, Any]:
+    _validate_name(name)
+    _, repo_path = _project_or_404(slug)
+    target = _project_workflows_dir(repo_path) / f"{name}.yaml"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"project workflow {name!r} not found")
+    _validate_yaml(body.yaml, expected_name=name)
+    target.write_text(body.yaml)
+    return {"name": name, "path": str(target)}
 
 
-def _list_project_local(repo_path: Path) -> list[ProjectWorkflowItem]:
-    """Enumerate ``<repo_path>/.hammock/workflows/<name>/workflow.yaml``."""
-    items: list[ProjectWorkflowItem] = []
-    workflows_dir = repo_path / ".hammock" / "workflows"
-    if not workflows_dir.is_dir():
-        return items
-    for folder in sorted(p for p in workflows_dir.iterdir() if p.is_dir()):
-        wf, error = verify_workflow_folder(folder)
-        items.append(
-            ProjectWorkflowItem(
-                job_type=folder.name,
-                workflow_name=wf.workflow if wf is not None else None,
-                source="custom",
-                valid=error is None,
-                error=error,
-            )
-        )
-    return items
+@router.delete("/projects/{slug}/workflows/{name}")
+def delete_project_workflow(slug: str, name: str) -> dict[str, Any]:
+    _validate_name(name)
+    _, repo_path = _project_or_404(slug)
+    target = _project_workflows_dir(repo_path) / f"{name}.yaml"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"project workflow {name!r} not found")
+    target.unlink()
+    return {"name": name, "deleted": True}
 
 
-def list_workflows_for_project(root: Path, project_slug: str) -> list[ProjectWorkflowItem] | None:
-    """Return bundled + project-local for the given project, or
-    ``None`` if the project does not exist.
+@router.get("/projects/{slug}/workflows/{name}")
+def get_project_workflow(slug: str, name: str) -> dict[str, Any]:
+    """Resolve in project context: project-specific > custom > bundled.
 
-    Custom workflows are listed first so they shadow bundled entries
-    sharing the same ``job_type`` (the compile path resolves
-    project-local before bundled — same precedence here for UI
-    consistency).
+    The returned `source` field tells the caller which tier the yaml
+    came from.
     """
-    pj = root / "projects" / project_slug / "project.json"
-    if not pj.is_file():
-        return None
+    _validate_name(name)
+    project_slug, repo_path = _project_or_404(slug)
+    settings = load_settings()
+    # Walk priorities in order
+    project_path = wf_lib.project_workflows_dir(repo_path) / f"{name}.yaml"
+    if project_path.is_file():
+        path = project_path
+        source = project_slug
+        bundled = False
+    elif (custom_path := wf_lib.custom_workflows_dir(settings.root) / f"{name}.yaml").is_file():
+        path = custom_path
+        source = wf_lib.SOURCE_CUSTOM
+        bundled = False
+    elif (bundled_path := BUNDLED_WORKFLOWS_DIR / f"{name}.yaml").is_file():
+        path = bundled_path
+        source = wf_lib.SOURCE_BUNDLED
+        bundled = True
+    else:
+        raise HTTPException(status_code=404, detail=f"workflow {name!r} not found")
+    yaml_text = path.read_text()
     try:
-        data = json.loads(pj.read_text())
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        log.warning("project %s has malformed project.json: %s", project_slug, exc)
-        return None
-    repo_path = Path(data.get("repo_path", ""))
-
-    custom = _list_project_local(repo_path)
-    bundled = _list_bundled()
-
-    # Dedupe: custom wins over bundled when job_type collides.
-    custom_names = {c.job_type for c in custom}
-    merged = custom + [b for b in bundled if b.job_type not in custom_names]
-    return merged
-
-
-def resolve_project_local_workflow(repo_path: Path, job_type: str) -> Path | None:
-    """Return the workflow.yaml path inside ``repo_path/.hammock/`` for
-    a given ``job_type``, or ``None`` if no such project-local
-    workflow exists. Used by the compile path to prefer project-local
-    over bundled."""
-    candidate = repo_path / ".hammock" / "workflows" / job_type / "workflow.yaml"
-    return candidate if candidate.is_file() else None
+        wf = load_workflow(path)
+    except WorkflowError as exc:
+        return {
+            "name": name,
+            "description": f"INVALID: {exc}",
+            "nodes": [],
+            "yaml": yaml_text,
+            "bundled": bundled,
+            "source": source,
+        }
+    summary = workflow_summary(wf)
+    return {
+        "name": summary["name"],
+        "description": summary.get("description"),
+        "nodes": summary["nodes"],
+        "yaml": yaml_text,
+        "bundled": bundled,
+        "source": source,
+    }
 
 
-def resolve_bundled_source(name: str) -> Path | None:
-    """Return the bundled workflow folder for ``name``, or ``None`` if
-    no such bundled workflow exists. Used by the copy endpoint."""
-    candidate = _BUNDLED_DIR / name
-    return candidate if (candidate / "workflow.yaml").is_file() else None
+# -------------------- Prompts --------------------
 
 
-def project_repo_path(root: Path, project_slug: str) -> Path | None:
-    """Return the registered project's ``repo_path`` from project.json,
-    or ``None`` if the project does not exist or its record is malformed."""
-    pj = root / "projects" / project_slug / "project.json"
-    if not pj.is_file():
-        return None
-    try:
-        data = json.loads(pj.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    rp = data.get("repo_path")
-    if not isinstance(rp, str):
-        return None
-    return Path(rp)
+class PromptBody(BaseModel):
+    name: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1)
+
+
+@router.get("/projects/{slug}/prompts")
+def list_project_prompts(slug: str) -> dict[str, Any]:
+    _, repo_path = _project_or_404(slug)
+    out: dict[str, dict[str, Any]] = {}
+    if BUNDLED_PROMPTS_DIR.is_dir():
+        for p in sorted(BUNDLED_PROMPTS_DIR.glob("*.md")):
+            out[p.stem] = {"name": p.stem, "bundled": True}
+    user_dir = _project_prompts_dir(repo_path)
+    if user_dir.is_dir():
+        for p in sorted(user_dir.glob("*.md")):
+            out[p.stem] = {"name": p.stem, "bundled": False}
+    return {"prompts": list(out.values())}
+
+
+@router.get("/projects/{slug}/prompts/{name}")
+def get_project_prompt(slug: str, name: str) -> dict[str, Any]:
+    _validate_name(name)
+    _, repo_path = _project_or_404(slug)
+    user_path = _project_prompts_dir(repo_path) / f"{name}.md"
+    if user_path.is_file():
+        return {"name": name, "content": user_path.read_text(), "bundled": False}
+    bundled_path = BUNDLED_PROMPTS_DIR / f"{name}.md"
+    if bundled_path.is_file():
+        return {"name": name, "content": bundled_path.read_text(), "bundled": True}
+    raise HTTPException(status_code=404, detail=f"prompt {name!r} not found")
+
+
+@router.post("/projects/{slug}/prompts", status_code=201)
+def save_project_prompt(slug: str, body: PromptBody) -> dict[str, Any]:
+    _validate_name(body.name)
+    _, repo_path = _project_or_404(slug)
+    user_dir = _project_prompts_dir(repo_path)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    target = user_dir / f"{body.name}.md"
+    target.write_text(body.content)
+    return {"name": body.name, "path": str(target)}
+
+
+@router.delete("/projects/{slug}/prompts/{name}")
+def delete_project_prompt(slug: str, name: str) -> dict[str, Any]:
+    _validate_name(name)
+    _, repo_path = _project_or_404(slug)
+    target = _project_prompts_dir(repo_path) / f"{name}.md"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"project prompt {name!r} not found")
+    target.unlink()
+    return {"name": name, "deleted": True}
+
+
+__all__ = ["router"]

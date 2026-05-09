@@ -1,4 +1,0 @@
-{"type": "system", "subtype": "init", "session_id": "sess_mal01", "cwd": "/tmp/project", "tools": [], "mcp_servers": [], "model": "claude-sonnet-4-6"}
-{"type": "assistant", "message": {"id": "msg_mal01", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "Starting work."}], "model": "claude-sonnet-4-6", "stop_reason": "end_turn", "stop_sequence": null, "usage": {"input_tokens": 80, "output_tokens": 8}}, "session_id": "sess_mal01", "parent_tool_use_id": null}
-{MALFORMED JSON LINE — should be skipped by extractor
-{"type": "result", "subtype": "success", "session_id": "sess_mal01", "is_error": false, "num_turns": 1, "duration_ms": 600, "duration_api_ms": 550, "result": "Starting work.", "total_cost_usd": 0.00020, "usage": {"input_tokens": 80, "output_tokens": 8, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}

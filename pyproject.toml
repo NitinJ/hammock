@@ -19,9 +19,6 @@ dependencies = [
     "watchfiles>=0.21",
 ]
 
-[project.optional-dependencies]
-# Stages add deps as they need them; Stage 0 only requires pydantic.
-
 [dependency-groups]
 dev = [
     "pytest>=8",
@@ -29,7 +26,6 @@ dev = [
     "pytest-cov>=5",
     "pytest-timeout>=2.3",
     "hypothesis>=6",
-    "factory-boy>=3.3",
     "pyright>=1.1.350",
     "ruff>=0.4",
     "pre-commit>=3.7",
@@ -41,15 +37,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# ``hammock`` ships bundled assets (Stop-hook script, job templates,
-# UI templates) that the runtime resolves via importlib.resources;
-# include it in the wheel so installed runs find them. Without this,
-# ``job_driver/__main__._BUNDLED_STOP_HOOK`` would crash on a wheel
-# install (the source-tree layout hides the issue in dev).
-packages = ["shared", "dashboard", "cli", "job_driver", "hammock"]
-
-[project.scripts]
-hammock = "cli.__main__:app"
+# Hammock ships bundled prompts + workflows that the runtime resolves via
+# importlib.resources; include both packages so installed runs find them.
+packages = ["dashboard", "hammock"]
 
 # ---------------------------------------------------------------------------
 # Ruff
@@ -75,7 +65,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["B", "SIM"]  # tests are allowed assertions / patterns ruff dislikes
+"**/tests/**" = ["B", "SIM"]  # tests are allowed assertions / patterns ruff dislikes
 
 [tool.ruff.format]
 quote-style = "double"
@@ -85,7 +75,8 @@ indent-style = "space"
 # Pyright
 # ---------------------------------------------------------------------------
 [tool.pyright]
-include = ["shared", "dashboard", "cli", "job_driver", "tests"]
+include = ["dashboard", "hammock"]
+exclude = ["**/__pycache__", "**/node_modules", "**/frontend/dist", "**/frontend/node_modules"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = "none"
@@ -99,27 +90,10 @@ reportUnknownArgumentType = "none"
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["tests"]
-# Default norecursedirs is `('*.egg', '.*', '_darcs', 'build', 'CVS', 'dist',
-# 'node_modules', 'venv', '{arguments}')`; we keep those plus exclude
-# `tests/fixtures` (Stage 16 ships a synthetic project under there whose
-# tests are part of the dogfood target, not the hammock suite).
-norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "tests/fixtures", "tests/e2e/seed_test_repo"]
+testpaths = ["dashboard/tests", "hammock/tests"]
 addopts = ["-q", "--strict-markers", "--strict-config"]
 asyncio_mode = "auto"
-markers = [
-    "real_claude: opt-in marker for the real-claude e2e test (gates collection alongside HAMMOCK_E2E_REAL_CLAUDE=1; see docs/specs/2026-05-03-real-claude-e2e-test-design.md)",
-]
 filterwarnings = [
     "error",
-    "ignore::DeprecationWarning:factory.*",
-    # asyncio's BaseSubprocessTransport emits an unraisable warning at
-    # GC time when a subprocess is reaped just before transport teardown
-    # (notably: tests that cancel a RealStageRunner mid-claude). The
-    # warning is captured by pytest's `unraisableexception` plugin in
-    # *its* teardown phase and re-raised against the *next* test, so a
-    # per-test marker can't catch it. The actual contract is asserted
-    # in tests/job_driver/test_real_runner_cancel_cleanup.py; the
-    # warning itself is benign noise from asyncio bookkeeping.
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]

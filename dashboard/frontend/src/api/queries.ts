@@ -1,115 +1,394 @@
-/**
- * vue-query bindings for the v1 dashboard API.
- *
- * URL surface (mirrors `dashboard/api/*.py`):
- *
- *   GET  /api/health
- *   GET  /api/jobs                                 — list (?repo_slug, ?state)
- *   GET  /api/jobs/{slug}                          — detail with NodeListEntry list
- *   POST /api/jobs                                 — submit (returns job_slug)
- *   GET  /api/jobs/{slug}/nodes/{id}?iter=<token>  — node detail (envelopes)
- *   GET  /api/jobs/{slug}/nodes/{id}/iter/{token}/chat?attempt=<n>
- *                                                  — per-(node,iter,attempt) chat tail
- *   GET  /api/hil                                  — all pending HIL across jobs
- *   GET  /api/hil/{slug}                           — pending for one job
- *   GET  /api/hil/{slug}/{node}                    — explicit pending detail
- *   POST /api/hil/{slug}/{node}/answer
- *   GET  /api/hil/{slug}/asks/{call_id}
- *   POST /api/hil/{slug}/asks/{call_id}/answer
- *   GET  /api/settings
- */
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import { computed, type Ref } from "vue";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/vue-query";
-import { computed, toValue } from "vue";
-import type { MaybeRefOrGetter } from "vue";
 import { api } from "./client";
-import { iterToken } from "./paths";
 import type {
-  AgentChatResponse,
-  AskAnswerRequest,
-  HealthResponse,
-  HilAnswerRequest,
-  HilQueueItem,
-  JobDetail,
-  JobListItem,
-  JobState,
-  JobSubmitRequest,
-  JobSubmitResponse,
+  ChatResponse,
+  JobSummary,
   NodeDetail,
-  CopyWorkflowRequest,
-  CopyWorkflowResponse,
-  ProjectDetail,
-  ProjectListItem,
-  ProjectWorkflowItem,
-  RegisterProjectRequest,
-  RegisterProjectResponse,
-  SettingsResponse,
-  WorkflowListItem,
-} from "./schema.d";
+  OrchestratorMessage,
+  Project,
+  ProjectPrompt,
+  PromptDetail,
+  PromptEntry,
+  WorkflowDetail,
+  WorkflowSummary,
+} from "./types";
 
 export const QUERY_KEYS = {
-  health: ["health"] as const,
-  projects: ["projects"] as const,
+  workflows: () => ["workflows"] as const,
+  workflow: (name: string) => ["workflows", name] as const,
+  jobs: () => ["jobs"] as const,
+  job: (slug: string) => ["jobs", slug] as const,
+  node: (slug: string, nodeId: string) => ["jobs", slug, "nodes", nodeId] as const,
+  chat: (slug: string, nodeId: string) => ["jobs", slug, "nodes", nodeId, "chat"] as const,
+  orchestratorChat: (slug: string) => ["jobs", slug, "orchestrator", "chat"] as const,
+  orchestratorMessages: (slug: string) => ["jobs", slug, "orchestrator", "messages"] as const,
+  orchestratorEvents: (slug: string) => ["jobs", slug, "orchestrator", "events"] as const,
+  projects: () => ["projects"] as const,
   project: (slug: string) => ["projects", slug] as const,
-  workflows: ["workflows"] as const,
-  jobs: (repoSlug?: string | null, state?: JobState | null) =>
-    ["jobs", "list", repoSlug ?? null, state ?? null] as const,
-  job: (jobSlug: string) => ["jobs", "detail", jobSlug] as const,
-  /** Per-(node, iter_path) detail key. iterToken is folded into the
-   *  key so vue-query refetches automatically when the iter changes. */
-  node: (jobSlug: string, nodeId: string, iterPath: readonly number[] = []) =>
-    ["jobs", jobSlug, "nodes", nodeId, "iter", iterToken(iterPath)] as const,
-  /** Per-(node, iter_path, attempt) chat tail key. Mirrors the chat
-   *  endpoint URL — same axes carried in the key so subscribing to
-   *  `chat_jsonl` SSE events can target a single chat-tail cache. */
-  agentChat: (
-    jobSlug: string,
-    nodeId: string,
-    iterPath: readonly number[] = [],
-    attempt: number = 1,
-  ) => ["jobs", jobSlug, "nodes", nodeId, "iter", iterToken(iterPath), "chat", attempt] as const,
-  hil: (jobSlug?: string | null) => ["hil", jobSlug ?? "all"] as const,
-  settings: ["settings"] as const,
+  projectWorkflows: (slug: string) => ["projects", slug, "workflows"] as const,
+  projectPrompts: (slug: string) => ["projects", slug, "prompts"] as const,
+  projectPrompt: (slug: string, name: string) => ["projects", slug, "prompts", name] as const,
+  prompts: (source?: string | null) => ["prompts", source ?? "all"] as const,
+  promptDetail: (source: string, name: string) => ["prompts", source, name] as const,
+  builderSession: (id: string) => ["workflow-builder", "sessions", id] as const,
 };
 
-export function useWorkflows() {
-  return useQuery({
-    queryKey: QUERY_KEYS.workflows,
-    queryFn: () => api.get<WorkflowListItem[]>("/workflows"),
+export interface BuilderMessage {
+  id: string;
+  from: "user" | "agent";
+  timestamp: string;
+  text: string;
+  proposed_yaml?: string;
+}
+
+export interface BuilderSession {
+  session_id: string;
+  meta?: Record<string, unknown>;
+  messages: BuilderMessage[];
+  current_yaml: string;
+}
+
+export interface BuilderTurnResponse {
+  user_message: BuilderMessage;
+  agent_message: BuilderMessage;
+}
+
+export function useCreateBuilderSession() {
+  return useMutation({
+    mutationFn: (body: {
+      project_slug?: string | null;
+      workflow_name?: string | null;
+      starting_yaml?: string | null;
+    }) =>
+      api.post<BuilderSession>("/api/workflow-builder/sessions", {
+        project_slug: body.project_slug ?? null,
+        workflow_name: body.workflow_name ?? null,
+        starting_yaml: body.starting_yaml ?? null,
+      }),
   });
 }
 
-/** Stage 5 — per-project workflow listing (bundled + project-local). */
-export function useProjectWorkflows(slug: MaybeRefOrGetter<string>) {
+export function useBuilderSession(sessionId: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.builderSession(sessionId.value ?? ""));
   return useQuery({
-    queryKey: computed(() => ["projects", toValue(slug), "workflows"] as const),
-    queryFn: () => api.get<ProjectWorkflowItem[]>(`/projects/${toValue(slug)}/workflows`),
-    enabled: computed(() => Boolean(toValue(slug))),
+    queryKey,
+    queryFn: () => api.get<BuilderSession>(`/api/workflow-builder/sessions/${sessionId.value}`),
+    enabled: computed(() => !!sessionId.value),
+  });
+}
+
+export function useSendBuilderMessage(sessionId: Ref<string | null>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { text: string }) => {
+      if (!sessionId.value) throw new Error("no active builder session");
+      return api.post<BuilderTurnResponse>(
+        `/api/workflow-builder/sessions/${sessionId.value}/messages`,
+        body,
+      );
+    },
+    onSuccess: () => {
+      if (!sessionId.value) return;
+      void qc.invalidateQueries({
+        queryKey: QUERY_KEYS.builderSession(sessionId.value),
+      });
+    },
+  });
+}
+
+export function useApplyBuilderProposal(sessionId: Ref<string | null>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { proposed_yaml: string }) => {
+      if (!sessionId.value) throw new Error("no active builder session");
+      return api.post<{ ok: string; current_yaml: string }>(
+        `/api/workflow-builder/sessions/${sessionId.value}/apply`,
+        body,
+      );
+    },
+    onSuccess: () => {
+      if (!sessionId.value) return;
+      void qc.invalidateQueries({
+        queryKey: QUERY_KEYS.builderSession(sessionId.value),
+      });
+    },
+  });
+}
+
+export function useDeleteBuilderSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      api.del<{ ok: string }>(`/api/workflow-builder/sessions/${sessionId}`),
+  });
+}
+
+export function useWorkflows() {
+  return useQuery({
+    queryKey: QUERY_KEYS.workflows(),
+    queryFn: () => api.get<{ workflows: WorkflowSummary[] }>("/api/workflows"),
+  });
+}
+
+export function useWorkflow(name: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.workflow(name.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<WorkflowDetail>(`/api/workflows/${name.value}`),
+    enabled: computed(() => !!name.value),
+  });
+}
+
+export function useCreateWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; yaml: string }) =>
+      api.post<{ name: string }>("/api/workflows", body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useUpdateWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, yaml }: { name: string; yaml: string }) =>
+      api.put<{ name: string }>(`/api/workflows/${name}`, { yaml }),
+    onSuccess: (_, { name }) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflow(name) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useDeleteWorkflow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.del<{ name: string }>(`/api/workflows/${name}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export async function validateWorkflowYaml(yaml: string): Promise<{
+  valid: boolean;
+  error?: string;
+  name?: string;
+  description?: string | null;
+  nodes?: import("./types").WorkflowNode[];
+}> {
+  return api.post("/api/workflows/validate", { yaml });
+}
+
+export function useJobs() {
+  return useQuery({
+    queryKey: QUERY_KEYS.jobs(),
+    queryFn: async () => {
+      const r = await api.get<{ jobs: JobSummary[] }>("/api/jobs");
+      return r.jobs;
+    },
+    refetchInterval: 5000,
+  });
+}
+
+export function useJob(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.job(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<JobSummary>(`/api/jobs/${slug.value}`),
+    enabled: computed(() => !!slug.value),
+    refetchInterval: 2000,
+  });
+}
+
+// -------------------- Job lifecycle (pause / resume / stop / delete) --------------------
+
+interface LifecycleResponse {
+  slug: string;
+  controlled_state?: string;
+  killed?: string;
+  deleted?: string;
+}
+
+function _invalidateJob(qc: ReturnType<typeof useQueryClient>, slug: string): void {
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug) });
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.jobs() });
+}
+
+export function usePauseJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<LifecycleResponse>(`/api/jobs/${slug}/pause`, {}),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useResumeJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<LifecycleResponse>(`/api/jobs/${slug}/resume`, {}),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useStopJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<LifecycleResponse>(`/api/jobs/${slug}/stop`, {}),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useDeleteJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.del<LifecycleResponse>(`/api/jobs/${slug}`),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useNode(slug: Ref<string>, nodeId: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.node(slug.value, nodeId.value ?? ""));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<NodeDetail>(`/api/jobs/${slug.value}/nodes/${nodeId.value}`),
+    enabled: computed(() => !!slug.value && !!nodeId.value),
+    refetchInterval: 2000,
+  });
+}
+
+export function useNodeChat(slug: Ref<string>, nodeId: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.chat(slug.value, nodeId.value ?? ""));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<ChatResponse>(`/api/jobs/${slug.value}/nodes/${nodeId.value}/chat`),
+    enabled: computed(() => !!slug.value && !!nodeId.value),
+    refetchInterval: 3000,
+  });
+}
+
+export function useOrchestratorChat(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.orchestratorChat(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<ChatResponse>(`/api/jobs/${slug.value}/orchestrator/chat`),
+    enabled: computed(() => !!slug.value),
+    refetchInterval: 2000,
+    refetchIntervalInBackground: true,
+  });
+}
+
+interface OrchestratorEvent {
+  kind: string;
+  at: string;
+  detail: string;
+  node_id?: string;
+}
+
+export function useOrchestratorEvents(slug: Ref<string>) {
+  // SSE invalidates this on node_state_changed / job_state_changed /
+  // awaiting_human / human_decision_received. The 5s safety-net
+  // refetchInterval covers SSE drops; primary path is event-driven.
+  const queryKey = computed(() => QUERY_KEYS.orchestratorEvents(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ events: OrchestratorEvent[] }>(`/api/jobs/${slug.value}/orchestrator/events`),
+    enabled: computed(() => !!slug.value),
+    refetchInterval: 2000,
+    refetchIntervalInBackground: true,
+  });
+}
+
+export function useOrchestratorMessages(slug: Ref<string>) {
+  // SSE invalidates this on orchestrator_message_appended. The polling
+  // is a safety net for cases where SSE drops or the tab is backgrounded
+  // (browsers throttle/pause SSE delivery in inactive tabs). We keep
+  // the interval tight and let it run even in background — chat-style
+  // UX expects messages to appear within a couple seconds, period.
+  const queryKey = computed(() => QUERY_KEYS.orchestratorMessages(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ messages: OrchestratorMessage[] }>(`/api/jobs/${slug.value}/orchestrator/messages`),
+    enabled: computed(() => !!slug.value),
+    refetchInterval: 1500,
+    refetchIntervalInBackground: true,
+  });
+}
+
+export function useSendOrchestratorMessage(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { text: string }) =>
+      api.post<{ ok: string }>(`/api/jobs/${slug.value}/orchestrator/messages`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorMessages(slug.value) });
+    },
+  });
+}
+
+export function useSubmitJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      workflow: string;
+      request: string;
+      project_slug?: string;
+      artifacts?: File[];
+    }) => {
+      if (body.artifacts && body.artifacts.length > 0) {
+        const fd = new FormData();
+        fd.append("workflow", body.workflow);
+        fd.append("request", body.request);
+        if (body.project_slug) fd.append("project_slug", body.project_slug);
+        for (const f of body.artifacts) {
+          fd.append("artifacts", f, f.name);
+        }
+        return api.postForm<{ slug: string; pid: number }>("/api/jobs", fd);
+      }
+      const payload: Record<string, string> = {
+        workflow: body.workflow,
+        request: body.request,
+      };
+      if (body.project_slug) payload.project_slug = body.project_slug;
+      return api.post<{ slug: string; pid: number }>("/api/jobs", payload);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.jobs() });
+    },
   });
 }
 
 export function useProjects() {
   return useQuery({
-    queryKey: QUERY_KEYS.projects,
-    queryFn: () => api.get<ProjectListItem[]>("/projects"),
+    queryKey: QUERY_KEYS.projects(),
+    queryFn: async () => {
+      const r = await api.get<{ projects: Project[] }>("/api/projects");
+      return r.projects;
+    },
   });
 }
 
-export function useProject(slug: MaybeRefOrGetter<string>) {
+export function useProject(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.project(slug.value));
   return useQuery({
-    queryKey: computed(() => QUERY_KEYS.project(toValue(slug))),
-    queryFn: () => api.get<ProjectDetail>(`/projects/${toValue(slug)}`),
-    enabled: computed(() => Boolean(toValue(slug))),
+    queryKey,
+    queryFn: () => api.get<Project>(`/api/projects/${slug.value}`),
+    enabled: computed(() => !!slug.value),
   });
 }
 
 export function useRegisterProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: RegisterProjectRequest) =>
-      api.post<RegisterProjectResponse>("/projects", body),
+    mutationFn: (body: { repo_path: string; slug?: string; name?: string }) =>
+      api.post<Project>("/api/projects", body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects"] });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projects() });
     },
   });
 }
@@ -117,168 +396,203 @@ export function useRegisterProject() {
 export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (slug: string) => api.del<void>(`/projects/${slug}`),
+    mutationFn: (slug: string) => api.del<{ slug: string }>(`/api/projects/${slug}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects"] });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projects() });
     },
   });
 }
 
-export function useReverifyProject() {
+export function useVerifyProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (slug: string) => api.post<RegisterProjectResponse>(`/projects/${slug}/verify`, {}),
-    onSuccess: (_data, slug) => {
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      qc.invalidateQueries({ queryKey: ["projects", slug] });
+    mutationFn: (slug: string) => api.post<Project>(`/api/projects/${slug}/verify`, {}),
+    onSuccess: (_, slug) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.project(slug) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projects() });
     },
   });
 }
 
-/** Stage 6 — fork a bundled workflow into the project's repo. */
-export function useCopyWorkflow(projectSlug: MaybeRefOrGetter<string>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CopyWorkflowRequest) =>
-      api.post<CopyWorkflowResponse>(`/projects/${toValue(projectSlug)}/workflows/copy`, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["projects", toValue(projectSlug), "workflows"] });
-    },
+export function useProjectWorkflows(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.projectWorkflows(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ workflows: WorkflowSummary[] }>(`/api/projects/${slug.value}/workflows`),
+    enabled: computed(() => !!slug.value),
   });
 }
 
-export function useHealth() {
+export function useProjectPrompts(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.projectPrompts(slug.value));
   return useQuery({
-    queryKey: QUERY_KEYS.health,
-    queryFn: () => api.get<HealthResponse>("/health"),
+    queryKey,
+    queryFn: () => api.get<{ prompts: ProjectPrompt[] }>(`/api/projects/${slug.value}/prompts`),
+    enabled: computed(() => !!slug.value),
   });
 }
 
-export function useJobs(
-  repoSlug?: MaybeRefOrGetter<string | null | undefined>,
-  state?: MaybeRefOrGetter<JobState | null | undefined>,
-) {
+export function useProjectPrompt(slug: Ref<string>, name: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.projectPrompt(slug.value, name.value ?? ""));
   return useQuery({
-    queryKey: computed(() => QUERY_KEYS.jobs(toValue(repoSlug) ?? null, toValue(state) ?? null)),
-    queryFn: () => {
-      const r = toValue(repoSlug);
-      const s = toValue(state);
-      const params = new URLSearchParams();
-      if (r) params.set("repo_slug", r);
-      if (s) params.set("state", s);
-      const qs = params.toString();
-      return api.get<JobListItem[]>(qs ? `/jobs?${qs}` : "/jobs");
-    },
-  });
-}
-
-export function useJob(jobSlug: MaybeRefOrGetter<string>) {
-  return useQuery({
-    queryKey: computed(() => QUERY_KEYS.job(toValue(jobSlug))),
-    queryFn: () => api.get<JobDetail>(`/jobs/${toValue(jobSlug)}`),
-    enabled: computed(() => Boolean(toValue(jobSlug))),
-  });
-}
-
-export function useNodeDetail(
-  jobSlug: MaybeRefOrGetter<string>,
-  nodeId: MaybeRefOrGetter<string | null | undefined>,
-  iterPath?: MaybeRefOrGetter<readonly number[] | null | undefined>,
-) {
-  const iterArr = computed<readonly number[]>(() => toValue(iterPath) ?? []);
-  return useQuery({
-    queryKey: computed(() =>
-      QUERY_KEYS.node(toValue(jobSlug), toValue(nodeId) ?? "", iterArr.value),
-    ),
-    queryFn: () => {
-      const token = iterToken(iterArr.value);
-      return api.get<NodeDetail>(
-        `/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}?iter=${token}`,
-      );
-    },
-    enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
-    // 404 is the common failure mode (node not dispatched yet). Don't
-    // retry — the JobOverview surface treats 404 as "not started".
-    retry: false,
-  });
-}
-
-export function useAgentChat(
-  jobSlug: MaybeRefOrGetter<string>,
-  nodeId: MaybeRefOrGetter<string | null | undefined>,
-  iterPath?: MaybeRefOrGetter<readonly number[] | null | undefined>,
-  attempt?: MaybeRefOrGetter<number | null | undefined>,
-) {
-  const iterArr = computed<readonly number[]>(() => toValue(iterPath) ?? []);
-  return useQuery({
-    queryKey: computed(() =>
-      QUERY_KEYS.agentChat(
-        toValue(jobSlug),
-        toValue(nodeId) ?? "",
-        iterArr.value,
-        toValue(attempt) ?? 1,
+    queryKey,
+    queryFn: () =>
+      api.get<{ name: string; content: string; bundled: boolean }>(
+        `/api/projects/${slug.value}/prompts/${name.value}`,
       ),
-    ),
+    enabled: computed(() => !!slug.value && !!name.value),
+  });
+}
+
+export function useSaveProjectPrompt(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; content: string }) =>
+      api.post(`/api/projects/${slug.value}/prompts`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(slug.value) });
+    },
+  });
+}
+
+export function useSaveProjectWorkflow(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; yaml: string }) =>
+      api.post(`/api/projects/${slug.value}/workflows`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useUpdateProjectWorkflow(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, yaml }: { name: string; yaml: string }) =>
+      api.put(`/api/projects/${slug.value}/workflows/${name}`, { yaml }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useDeleteProjectWorkflow(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.del(`/api/projects/${slug.value}/workflows/${name}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+/** Aggregate prompts list across bundled + every registered project. */
+export function usePrompts(source?: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.prompts(source?.value));
+  return useQuery({
+    queryKey,
     queryFn: () => {
-      const a = toValue(attempt) ?? 1;
-      const token = iterToken(iterArr.value);
-      return api.get<AgentChatResponse>(
-        `/jobs/${toValue(jobSlug)}/nodes/${toValue(nodeId)}/iter/${token}/chat?attempt=${a}`,
+      const q = source?.value ? `?source=${encodeURIComponent(source.value)}` : "";
+      return api.get<{ prompts: PromptEntry[] }>(`/api/prompts${q}`);
+    },
+  });
+}
+
+/** Detail (content) for any source. Bundled uses /api/prompts/bundled/{name};
+ *  per-project uses /api/projects/{slug}/prompts/{name}. */
+export function usePromptDetail(source: Ref<string | null>, name: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.promptDetail(source.value ?? "", name.value ?? ""));
+  return useQuery({
+    queryKey,
+    queryFn: async () => {
+      const s = source.value!;
+      const n = name.value!;
+      if (s === "bundled") {
+        return api.get<PromptDetail>(`/api/prompts/bundled/${n}`);
+      }
+      const body = await api.get<{ name: string; content: string; bundled: boolean }>(
+        `/api/projects/${s}/prompts/${n}`,
       );
+      return { name: body.name, source: s, content: body.content } satisfies PromptDetail;
     },
-    enabled: computed(() => Boolean(toValue(jobSlug)) && Boolean(toValue(nodeId))),
-    retry: false,
+    enabled: computed(() => !!source.value && !!name.value),
   });
 }
 
-export function useHilQueue(jobSlug?: MaybeRefOrGetter<string | null | undefined>) {
-  return useQuery({
-    queryKey: computed(() => QUERY_KEYS.hil(toValue(jobSlug) ?? null)),
-    queryFn: () => {
-      const slug = toValue(jobSlug);
-      return api.get<HilQueueItem[]>(slug ? `/hil/${slug}` : "/hil");
-    },
-  });
-}
-
-export function useSettings() {
-  return useQuery({
-    queryKey: QUERY_KEYS.settings,
-    queryFn: () => api.get<SettingsResponse>("/settings"),
-  });
-}
-
-// ── Mutations ──────────────────────────────────────────────────────────
-
-export function useSubmitJob() {
+/** Save a prompt to a project. Source must be a project slug, never "bundled". */
+export function useSavePrompt() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: JobSubmitRequest) => api.post<JobSubmitResponse>("/jobs", body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["jobs"] });
+    mutationFn: (body: { source: string; name: string; content: string }) => {
+      if (body.source === "bundled") {
+        throw new Error("bundled prompts are read-only — pick a project");
+      }
+      return api.post(`/api/projects/${body.source}/prompts`, {
+        name: body.name,
+        content: body.content,
+      });
+    },
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts(vars.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(vars.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.promptDetail(vars.source, vars.name) });
     },
   });
 }
 
-export function useAnswerExplicitHil(jobSlug: MaybeRefOrGetter<string>) {
+export function useDeletePrompt() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { node_id: string; body: HilAnswerRequest }) =>
-      api.post(`/hil/${toValue(jobSlug)}/${vars.node_id}/answer`, vars.body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["hil"] });
-      qc.invalidateQueries({ queryKey: ["jobs", "detail", toValue(jobSlug)] });
+    mutationFn: (body: { source: string; name: string }) => {
+      if (body.source === "bundled") {
+        throw new Error("bundled prompts cannot be deleted");
+      }
+      return api.del(`/api/projects/${body.source}/prompts/${body.name}`);
+    },
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts(vars.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(vars.source) });
     },
   });
 }
 
-export function useAnswerImplicitHil(jobSlug: MaybeRefOrGetter<string>) {
+/** Composite: read a bundled prompt's content + write it to a project as a
+ *  new prompt (under the same name unless renamed). */
+export function useCopyBundledPromptToProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { call_id: string; body: AskAnswerRequest }) =>
-      api.post(`/hil/${toValue(jobSlug)}/asks/${vars.call_id}/answer`, vars.body),
+    mutationFn: async (body: { fromName: string; toProject: string; toName?: string }) => {
+      const detail = await api.get<PromptDetail>(`/api/prompts/bundled/${body.fromName}`);
+      const targetName = body.toName ?? body.fromName;
+      await api.post(`/api/projects/${body.toProject}/prompts`, {
+        name: targetName,
+        content: detail.content,
+      });
+      return { source: body.toProject, name: targetName };
+    },
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts(data.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(data.source) });
+    },
+  });
+}
+
+export function useSubmitDecision(slug: Ref<string>, nodeId: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { decision: "approved" | "needs-revision"; comment?: string }) =>
+      api.post(`/api/jobs/${slug.value}/nodes/${nodeId.value}/human_decision`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["hil"] });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.node(slug.value, nodeId.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug.value) });
     },
   });
 }
