@@ -25,8 +25,11 @@
           </button>
         </div>
       </div>
-      <div v-if="projectSlug" class="mb-2 text-[11px] uppercase tracking-wider text-accent">
-        project: {{ projectSlug }}
+      <div class="mb-2 text-[11px] uppercase tracking-wider text-text-tertiary">
+        saves to:
+        <span :class="projectSlug ? 'text-state-succeeded' : 'text-accent'">
+          {{ projectSlug ? `project · ${projectSlug}` : "custom (cross-project)" }}
+        </span>
       </div>
       <div v-if="isCreate" class="space-y-1.5">
         <label for="wf-name" class="text-xs uppercase tracking-wider text-text-tertiary">

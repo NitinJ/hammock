@@ -71,9 +71,7 @@ def test_list_workflows_includes_custom_after_create(
     assert (hammock_v2_root / "workflows" / "team-flow.yaml").is_file()
 
 
-def test_list_workflows_includes_project_specific(
-    client: TestClient, tmp_path: Path
-) -> None:
+def test_list_workflows_includes_project_specific(client: TestClient, tmp_path: Path) -> None:
     repo = tmp_path / "team-app"
     _register_project(client, "team-app", repo)
     _seed_project_workflow(repo, "team-app-flow", "tied to this project")
@@ -170,9 +168,7 @@ def test_project_workflows_shadowing(client: TestClient, tmp_path: Path) -> None
 # -------------------- Resolution at submit --------------------
 
 
-def test_resolve_at_submit_project_specific_wins(
-    hammock_v2_root: Path, tmp_path: Path
-) -> None:
+def test_resolve_at_submit_project_specific_wins(hammock_v2_root: Path, tmp_path: Path) -> None:
     """Direct unit test of the resolver: project-specific > custom > bundled."""
     from dashboard_v2 import projects as proj
     from dashboard_v2 import workflows as wf_lib
@@ -230,7 +226,10 @@ def test_resolve_at_submit_falls_back_to_bundled(hammock_v2_root: Path) -> None:
 def test_resolve_at_submit_returns_none_when_unknown(hammock_v2_root: Path) -> None:
     from dashboard_v2 import workflows as wf_lib
 
-    assert wf_lib.resolve_at_submit("nonexistent-flow", root=hammock_v2_root, project_slug=None) is None
+    assert (
+        wf_lib.resolve_at_submit("nonexistent-flow", root=hammock_v2_root, project_slug=None)
+        is None
+    )
 
 
 # -------------------- Custom CRUD permissions --------------------
