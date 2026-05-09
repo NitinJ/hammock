@@ -1,252 +1,299 @@
-"""Job endpoints: list, detail, and submit.
-
-Per impl-patch §Stage 3: every handler reads disk directly via the
-pure-function projections in ``dashboard.state.projections``. No cache.
-"""
+"""Job + node + chat + HIL endpoints for v2 dashboard."""
 
 from __future__ import annotations
 
+import datetime as _dt
+import json
 import logging
-import subprocess
-from pathlib import Path
-from typing import Annotated, Any
+import re
+import secrets
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, Field
 
-from dashboard.code.branches import create_job_branch
-from dashboard.compiler.compile import compile_job
-from dashboard.driver.lifecycle import spawn_driver
-from dashboard.state import projections
-from dashboard.state.chat import read_agent_chat
-from dashboard.state.projections import JobDetail, JobListItem, NodeDetail
-from shared import paths
-from shared.models import ProjectConfig
-from shared.v1 import paths as v1_paths
-from shared.v1.job import JobState
+from dashboard import projects as proj
+from dashboard import workflows as wf_lib
+from dashboard.api.artifacts import save_artifacts
+from dashboard.api.projections import (
+    append_orchestrator_message,
+    job_summary,
+    list_jobs,
+    load_workflow_or_none,
+    node_chat,
+    node_detail,
+    orchestrator_chat,
+    orchestrator_events,
+    orchestrator_messages,
+    write_human_decision,
+)
+from dashboard.jobs import lifecycle as lifecycle_lib
+from dashboard.runner.spawn import spawn_orchestrator
+from dashboard.settings import load_settings
+from hammock.engine import paths
+from hammock.engine.runner import JobConfig
+from hammock.engine.runner import submit_job as _submit_job_setup
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+router = APIRouter()
+
+_SLUG_SAFE_RE = re.compile(r"[^a-z0-9-]+")
 
 
-# ---------------------------------------------------------------------------
-# Submit (POST /api/jobs) — request / response shapes
-# ---------------------------------------------------------------------------
+def _derive_slug(workflow_name: str, request_text: str) -> str:
+    stamp = _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%d")
+    head = request_text.strip().lower()[:60]
+    head_slug = _SLUG_SAFE_RE.sub("-", head).strip("-") or "job"
+    suffix = secrets.token_hex(3)
+    return f"{stamp}-{workflow_name}-{head_slug}-{suffix}"
+
+
+# -------------------- Models --------------------
 
 
 class JobSubmitRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project_slug: str = ""
-    """v0-compat field. v1 derives repo identity from the workflow's
-    first code-kind node, so for artifact-only workflows this can stay
-    empty. When set, the dashboard reads ``<root>/projects/<slug>/
-    project.json`` to locate the repo for branch creation."""
-
-    job_type: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    request_text: str = Field(min_length=1)
-    dry_run: bool = False
-
-
-class CompileFailureOut(BaseModel):
-    kind: str
-    stage_id: str | None
-    message: str
+    workflow: str = Field(..., min_length=1)
+    request: str = Field(..., min_length=1)
 
 
 class JobSubmitResponse(BaseModel):
-    job_slug: str
-    dry_run: bool
-    stages: list[dict[str, Any]] | None = None
+    slug: str
+    pid: int
 
 
-class AgentChatResponse(BaseModel):
-    """Per-node chat transcript response.
+class HumanDecisionRequest(BaseModel):
+    decision: str
+    comment: str | None = None
 
-    ``turns`` is the raw list of stream-json objects (system / assistant
-    / user / result) the agent emitted on this attempt. ``has_chat`` is
-    False when ``chat.jsonl`` doesn't exist on disk — old jobs (with
-    plain-text ``stdout.log``) and not-yet-run nodes both look the same
-    to the frontend, which surfaces "no transcript" in either case.
+
+# -------------------- Endpoints --------------------
+
+
+@router.post("/jobs", response_model=JobSubmitResponse)
+async def submit_job(
+    request: Request,
+    workflow: str | None = Form(default=None),
+    request_text: str | None = Form(default=None, alias="request"),
+    project_slug_form: str | None = Form(default=None, alias="project_slug"),
+    artifacts: list[UploadFile] = File(default_factory=list),  # noqa: B008  fastapi default
+) -> JobSubmitResponse:
+    """Submit a job. Accepts either:
+
+    - ``application/json`` with ``{workflow, request, project_slug?}`` (no artifacts).
+    - ``multipart/form-data`` with ``workflow``, ``request``,
+      ``project_slug?``, and any number of ``artifacts`` files.
+
+    ``project_slug`` is preferred over the env-var fallback. When
+    supplied, the runner clones the project's ``repo_path`` into
+    ``<job_dir>/repo`` and prefers project-local workflows
+    (``<repo>/.hammock-v2/workflows/<name>.yaml``) over bundled.
     """
-
-    model_config = ConfigDict(extra="forbid")
-    turns: list[dict[str, Any]] = Field(default_factory=list)
-    attempt: int
-    has_chat: bool
-
-
-@router.get("", response_model=list[JobListItem])
-async def list_jobs(
-    request: Request,
-    repo_slug: Annotated[str | None, Query(description="filter by repo slug (owner/repo)")] = None,
-    state: Annotated[JobState | None, Query(description="filter by job state")] = None,
-) -> list[JobListItem]:
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    return projections.job_list(settings.root, repo_slug=repo_slug, state=state)
-
-
-@router.get("/{job_slug}", response_model=JobDetail)
-async def get_job(request: Request, job_slug: str) -> JobDetail:
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    detail = projections.job_detail(settings.root, job_slug)
-    if detail is None:
-        raise HTTPException(status_code=404, detail=f"job {job_slug!r} not found")
-    return detail
-
-
-@router.get(
-    "/{job_slug}/nodes/{node_id}/iter/{iter_token}/chat",
-    response_model=AgentChatResponse,
-)
-async def get_node_chat_at_iter(
-    request: Request,
-    job_slug: str,
-    node_id: str,
-    iter_token: str,
-    attempt: Annotated[int, Query(ge=1, description="attempt number (default 1)")] = 1,
-) -> AgentChatResponse:
-    """Per-(node, iter_path, attempt) chat transcript.
-
-    With v2 keying, every (node_id, iter_path) execution has its own
-    chat.jsonl under ``nodes/<id>/<iter_token>/runs/<attempt>/``.
-    Top-level executions use ``iter_token='top'``; loop body executions
-    use ``i<...>``. Bad token -> 400.
-
-    Always 200; the file's absence is signalled via ``has_chat=False``
-    so the frontend distinguishes 'no transcript yet' from 'job/node
-    not found'.
-    """
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    try:
-        iter_path = v1_paths.parse_iter_token(iter_token)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"bad iter_token: {exc}") from exc
-    turns = read_agent_chat(settings.root, job_slug, node_id, iter_path, attempt=attempt)
-    has_chat = (
-        v1_paths.node_attempt_dir(job_slug, node_id, attempt, iter_path, root=settings.root)
-        / "chat.jsonl"
-    ).is_file()
-    return AgentChatResponse(turns=turns, attempt=attempt, has_chat=has_chat)
-
-
-@router.get("/{job_slug}/nodes/{node_id}", response_model=NodeDetail)
-async def get_node(
-    request: Request,
-    job_slug: str,
-    node_id: str,
-    iter: Annotated[
-        str,
-        Query(description="iter_token (e.g. 'top', 'i0', 'i0_1'); default 'top'"),
-    ] = "top",
-) -> NodeDetail:
-    """Per-(node, iter_path) drilldown.
-
-    With v2 keying every node-execution has its own state.json under
-    ``nodes/<id>/<iter_token>/state.json`` and outputs at
-    ``variables/<var>__<iter_token>.json``. The optional ``?iter=<token>``
-    query parameter selects the iteration; default ``top`` means the
-    top-level execution."""
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-    try:
-        iter_path = v1_paths.parse_iter_token(iter)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"bad iter_token: {exc}") from exc
-    detail = projections.node_detail(settings.root, job_slug, node_id, iter_path)
-    if detail is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(f"no node {node_id!r} (iter={iter!r}) on disk for job {job_slug!r}"),
-        )
-    return detail
-
-
-@router.post("", response_model=JobSubmitResponse, status_code=201)
-async def submit_job(body: JobSubmitRequest, request: Request) -> JobSubmitResponse:
-    settings = request.app.state.settings  # type: ignore[attr-defined]
-
-    result = compile_job(
-        project_slug=body.project_slug,
-        job_type=body.job_type,
-        title=body.title,
-        request_text=body.request_text,
-        root=settings.root,
-        dry_run=body.dry_run,
-    )
-
-    if isinstance(result, list):
-        raise HTTPException(
-            status_code=422,
-            detail=[{"kind": f.kind, "stage_id": f.stage_id, "message": f.message} for f in result],
-        )
-
-    if not result.dry_run:
+    content_type = request.headers.get("content-type", "")
+    body_workflow = workflow
+    body_request = request_text
+    body_project_slug = project_slug_form
+    files: list[tuple[str, bytes]] = []
+    if content_type.startswith("application/json"):
         try:
-            _create_job_branch_best_effort(
-                project_slug=body.project_slug,
-                job_slug=result.job_slug,
-                root=settings.root,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"failed to create hammock/jobs/{result.job_slug} in "
-                    f"{body.project_slug!r}: {exc}. The job dir is on disk "
-                    "but no driver was spawned. Investigate the git error and "
-                    "either re-submit or spawn the driver manually."
-                ),
-            ) from exc
-        await spawn_driver(
-            result.job_slug,
-            root=settings.root,
-            fake_fixtures_dir=settings.fake_fixtures_dir,
-            claude_binary=settings.claude_binary,
+            payload = await request.json()
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
+        body_workflow = payload.get("workflow")
+        body_request = payload.get("request")
+        body_project_slug = payload.get("project_slug") or body_project_slug
+    elif content_type.startswith("multipart/form-data") or content_type.startswith(
+        "application/x-www-form-urlencoded"
+    ):
+        for upload in artifacts:
+            content = await upload.read()
+            files.append((upload.filename or "artifact", content))
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail="content-type must be application/json or multipart/form-data",
         )
-        return JobSubmitResponse(job_slug=result.job_slug, dry_run=False)
+    if not body_workflow:
+        raise HTTPException(status_code=400, detail="workflow is required")
+    if not body_request or not body_request.strip():
+        raise HTTPException(status_code=400, detail="request is required")
+    settings = load_settings()
+    project_repo_path = settings.project_repo_path
+    if body_project_slug:
+        try:
+            project_slug = proj.normalize_slug(body_project_slug)
+        except proj.ProjectError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        project_data = proj.read_project(project_slug, settings.root)
+        if project_data is None:
+            raise HTTPException(status_code=400, detail=f"project {project_slug!r} not registered")
+        from pathlib import Path as _P
 
-    stages_out = [s.model_dump(mode="json") for s in result.stages]
-    return JobSubmitResponse(job_slug=result.job_slug, dry_run=True, stages=stages_out)
+        project_repo_path = _P(project_data["repo_path"])
+    workflow_path = wf_lib.resolve_at_submit(
+        body_workflow,
+        root=settings.root,
+        project_slug=body_project_slug if body_project_slug else None,
+    )
+    if workflow_path is None:
+        raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} not found")
+    wf = load_workflow_or_none(body_workflow, override_path=workflow_path)
+    if wf is None:
+        raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} failed to load")
+    slug = _derive_slug(body_workflow, body_request)
+    if files:
+        try:
+            save_artifacts(slug=slug, files=files, root=settings.root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Set up job dir synchronously so the dashboard sees the layout
+    # immediately on POST return (clone the project repo, snapshot the
+    # workflow, write job.md). The orchestrator subprocess will skip
+    # re-submission since the dir exists.
+    _submit_job_setup(
+        job=JobConfig(
+            slug=slug,
+            workflow_name=body_workflow,
+            request_text=body_request,
+            project_repo_path=project_repo_path,
+        ),
+        workflow_path=workflow_path,
+        root=settings.root,
+    )
+    pid = spawn_orchestrator(
+        slug=slug,
+        workflow_name=body_workflow,
+        request_text=body_request,
+        root=settings.root,
+        project_repo_path=project_repo_path,
+        claude_binary=settings.claude_binary,
+        runner_mode=settings.runner_mode,
+        workflow_path=workflow_path,
+    )
+    return JobSubmitResponse(slug=slug, pid=pid)
 
 
-def _create_job_branch_best_effort(
-    *,
-    project_slug: str,
-    job_slug: str,
-    root: Path | None,
-) -> None:
-    """Read project.json + create ``hammock/jobs/<slug>`` in the repo.
+@router.get("/jobs")
+def get_jobs() -> dict[str, Any]:
+    settings = load_settings()
+    return {"jobs": list_jobs(settings.root)}
 
-    Silenced (logged, not raised):
-    - project.json missing or unreadable.
-    - repo_path doesn't exist on disk.
-    - repo_path isn't a git repo (no ``.git/``).
 
-    Propagates:
-    - Any ``CalledProcessError`` from ``git branch`` against an
-      otherwise-valid registered repo.
-    """
+@router.get("/jobs/{slug}")
+def get_job(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    summary = job_summary(slug, root=settings.root)
+    if summary is None:
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    return summary
+
+
+@router.get("/jobs/{slug}/nodes/{node_id}")
+def get_node(slug: str, node_id: str) -> dict[str, Any]:
+    settings = load_settings()
+    detail = node_detail(slug, node_id, root=settings.root)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"node {node_id!r} of job {slug!r} not found")
+    return detail
+
+
+@router.get("/jobs/{slug}/nodes/{node_id}/chat")
+def get_node_chat(slug: str, node_id: str) -> dict[str, Any]:
+    settings = load_settings()
+    turns = node_chat(slug, node_id, root=settings.root)
+    return {"turns": turns, "has_chat": bool(turns)}
+
+
+@router.get("/jobs/{slug}/orchestrator/chat")
+def get_orchestrator_chat(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    turns = orchestrator_chat(slug, root=settings.root)
+    return {"turns": turns, "has_chat": bool(turns)}
+
+
+@router.get("/jobs/{slug}/orchestrator/events")
+def get_orchestrator_events(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    if not paths.job_dir(slug, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    return {"events": orchestrator_events(slug, root=settings.root)}
+
+
+class OrchestratorMessageRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+
+
+@router.get("/jobs/{slug}/orchestrator/messages")
+def get_orchestrator_messages(slug: str) -> dict[str, Any]:
+    settings = load_settings()
+    if not paths.job_dir(slug, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
+    return {"messages": orchestrator_messages(slug, root=settings.root)}
+
+
+@router.post("/jobs/{slug}/orchestrator/messages")
+def post_orchestrator_message(slug: str, body: OrchestratorMessageRequest) -> dict[str, Any]:
+    settings = load_settings()
+    if not paths.job_dir(slug, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail=f"job {slug!r} not found")
     try:
-        project = ProjectConfig.model_validate_json(
-            paths.project_json(project_slug, root=root).read_text()
+        msg = append_orchestrator_message(
+            slug=slug, text=body.text, sender="operator", root=settings.root
         )
-    except (FileNotFoundError, ValueError) as exc:
-        log.warning(
-            "could not read project.json for %s: %s — skipping job-branch creation",
-            project_slug,
-            exc,
-        )
-        return
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": "true", "message": msg}
 
-    repo = Path(project.repo_path)
-    if not (repo / ".git").exists():
-        log.warning(
-            "%s is not a git repo — skipping job-branch creation for %s",
-            repo,
-            job_slug,
-        )
-        return
 
-    create_job_branch(repo, job_slug, base=project.default_branch)
+@router.post("/jobs/{slug}/pause")
+def post_pause(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.pause_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/jobs/{slug}/resume")
+def post_resume(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.resume_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/jobs/{slug}/stop")
+def post_stop(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.stop_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.delete("/jobs/{slug}")
+def delete_job(slug: str) -> dict[str, str]:
+    settings = load_settings()
+    try:
+        return lifecycle_lib.delete_job(slug, root=settings.root)
+    except lifecycle_lib.LifecycleError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/jobs/{slug}/nodes/{node_id}/human_decision")
+def post_human_decision(slug: str, node_id: str, body: HumanDecisionRequest) -> dict[str, str]:
+    settings = load_settings()
+    if not paths.node_dir(slug, node_id, root=settings.root).is_dir():
+        raise HTTPException(status_code=404, detail="node not found")
+    try:
+        target = write_human_decision(
+            slug=slug,
+            node_id=node_id,
+            decision=body.decision,
+            comment=body.comment,
+            root=settings.root,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"path": str(target), "ok": "true"}

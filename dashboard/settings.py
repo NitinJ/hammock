@@ -1,62 +1,38 @@
-"""Dashboard process settings — env-driven via pydantic-settings.
-
-Environment variables (prefix ``HAMMOCK_``):
-
-- ``HAMMOCK_ROOT``               — hammock root directory (default: ``~/.hammock``)
-- ``HAMMOCK_HOST``               — bind host (default: ``127.0.0.1``)
-- ``HAMMOCK_PORT``               — bind port (default: ``8765``)
-- ``HAMMOCK_FAKE_FIXTURES_DIR``  — when set, dashboard spawns drivers
-                                    in fake-runner mode using fixtures
-                                    from this dir; when unset, drivers
-                                    use ``RealStageRunner`` (real
-                                    ``claude`` subprocess)
-- ``HAMMOCK_CLAUDE_BINARY``      — override the ``claude`` CLI path
-                                    used by ``RealStageRunner``
-                                    (default: ``claude`` from ``$PATH``)
-- ``HAMMOCK_RUN_BACKGROUND_TASKS`` — start watcher / supervisor /
-                                    MCP-manager background tasks in
-                                    the lifespan? Default ``True``.
-                                    Tests set ``False`` so they don't
-                                    race the supervisor's first scan.
-"""
+"""Dashboard settings — kept tiny."""
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from shared import paths
-
-RunnerMode = Literal["fake", "real"]
+from hammock.engine.paths import DEFAULT_ROOT, resolve_root
 
 
-class Settings(BaseSettings):
-    """Runtime configuration derived from environment + defaults."""
+@dataclass
+class AppSettings:
+    root: Path
+    project_repo_path: Path | None
+    claude_binary: str
+    runner_mode: str  # "real" or "fake"
+    static_dist: Path  # path to dashboard/frontend/dist
 
-    model_config = SettingsConfigDict(env_prefix="HAMMOCK_")
 
-    root: Path = paths.HAMMOCK_ROOT
-    host: str = "127.0.0.1"
-    port: int = 8765
-    # Optional path to FakeStageRunner fixture directory; passed to
-    # spawn_driver when set. When unset, the dashboard spawns drivers
-    # in real-claude mode. Set via HAMMOCK_FAKE_FIXTURES_DIR.
-    fake_fixtures_dir: Path | None = None
-    # Path to the `claude` CLI used by RealStageRunner (only consulted
-    # when fake_fixtures_dir is None). Defaults to `claude` from $PATH;
-    # override with HAMMOCK_CLAUDE_BINARY.
-    claude_binary: str = "claude"
-    # Start watcher / supervisor / MCP-manager background tasks in the
-    # lifespan. Default True for production. Tests that pre-seed jobs
-    # would race the supervisor's first scan and pass False.
-    run_background_tasks: bool = True
+def load_settings() -> AppSettings:
+    root = resolve_root(Path(os.environ["HAMMOCK_ROOT"]) if "HAMMOCK_ROOT" in os.environ else None)
+    project = os.environ.get("HAMMOCK_PROJECT_REPO_PATH")
+    project_path = Path(project) if project else None
+    claude_binary = os.environ.get("HAMMOCK_CLAUDE_BINARY", "claude")
+    runner_mode = os.environ.get("HAMMOCK_RUNNER_MODE", "real")
+    here = Path(__file__).resolve().parent
+    static_dist = here / "frontend" / "dist"
+    return AppSettings(
+        root=root,
+        project_repo_path=project_path,
+        claude_binary=claude_binary,
+        runner_mode=runner_mode,
+        static_dist=static_dist,
+    )
 
-    @property
-    def runner_mode(self) -> RunnerMode:
-        """Which stage runner the dashboard will pick when spawning a
-        driver. Derived from `fake_fixtures_dir` so the source of truth
-        stays a single field — operators don't have to keep two flags
-        in sync."""
-        return "fake" if self.fake_fixtures_dir is not None else "real"
+
+__all__ = ["DEFAULT_ROOT", "AppSettings", "load_settings"]

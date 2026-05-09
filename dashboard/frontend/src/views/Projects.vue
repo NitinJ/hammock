@@ -1,112 +1,63 @@
 <template>
-  <section class="space-y-4">
+  <section class="space-y-5">
     <header class="flex items-center justify-between">
-      <h1 class="text-xl font-semibold text-text-primary">Projects</h1>
-      <RouterLink
-        :to="{ name: 'project-add' }"
-        class="rounded-md border border-border bg-surface-raised px-3 py-1.5 text-sm hover:bg-surface-highlight"
+      <div>
+        <h1 class="text-2xl font-semibold text-text-primary">Projects</h1>
+        <p class="text-sm text-text-secondary mt-1">
+          Registered local git checkouts. Workflows run against a project; jobs clone the project
+          repo per run.
+        </p>
+      </div>
+      <RouterLink :to="{ name: 'project-new' }" class="btn-accent text-sm"
+        >+ New project</RouterLink
       >
-        ＋ Add Project
-      </RouterLink>
     </header>
 
-    <p class="text-sm text-text-secondary">
-      Registered local checkouts. Code-kind workflows submit against these — the engine copies the
-      project directory into
-      <code class="rounded bg-surface-highlight px-1">jobs/&lt;slug&gt;/repo</code>
-      per job.
-    </p>
-
-    <div v-if="projects.isPending.value" class="text-text-secondary">Loading…</div>
-    <div v-else-if="projects.isError.value" class="text-red-400">
-      Failed to load projects: {{ projects.error.value?.message }}
-    </div>
+    <div v-if="projects.isPending.value" class="text-text-tertiary">Loading…</div>
+    <div v-else-if="projects.isError.value" class="text-state-failed">Failed to load projects.</div>
     <div
-      v-else-if="!projects.data.value || projects.data.value.length === 0"
-      class="rounded-md border border-border bg-surface-raised p-4 text-sm text-text-secondary"
+      v-else-if="(projects.data.value ?? []).length === 0"
+      class="surface p-8 text-center text-text-tertiary"
     >
-      No projects yet. Add one to start submitting code-kind workflows.
+      No projects yet. Register one to get started.
     </div>
-
-    <table v-else class="w-full text-sm">
-      <thead class="text-left text-xs uppercase text-text-secondary">
-        <tr class="border-b border-border">
-          <th class="py-2 pr-3">Slug</th>
-          <th class="py-2 pr-3">Repo path</th>
-          <th class="py-2 pr-3">Default branch</th>
-          <th class="py-2 pr-3">Open jobs</th>
-          <th class="py-2 pr-3">Health</th>
-          <th class="py-2 pr-3"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="p in projects.data.value"
-          :key="p.slug"
-          class="cursor-pointer border-b border-border/50 hover:bg-surface-highlight"
-          @click="open(p.slug)"
-        >
-          <td class="py-2 pr-3 font-mono text-xs text-text-primary">{{ p.slug }}</td>
-          <td class="py-2 pr-3 font-mono text-xs text-text-secondary">{{ p.repo_path }}</td>
-          <td class="py-2 pr-3 text-text-secondary">{{ p.default_branch ?? "—" }}</td>
-          <td class="py-2 pr-3 text-text-secondary">{{ p.open_jobs }}</td>
-          <td class="py-2 pr-3">
-            <span
-              v-if="p.last_health_check_status"
-              :class="healthClass(p.last_health_check_status)"
-              class="rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset"
-            >
-              {{ p.last_health_check_status }}
-            </span>
-            <span v-else class="text-text-secondary">—</span>
-          </td>
-          <td class="py-2 pr-3 text-right">
-            <button
-              type="button"
-              class="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/20"
-              :disabled="deletingSlug === p.slug"
-              @click.stop="confirmDelete(p.slug)"
-            >
-              {{ deletingSlug === p.slug ? "…" : "Delete" }}
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <RouterLink
+        v-for="p in projects.data.value ?? []"
+        :key="p.slug"
+        :to="{ name: 'project-detail', params: { slug: p.slug } }"
+        class="surface p-5 hover:border-border-strong transition-colors block"
+      >
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-semibold text-text-primary">{{ p.name }}</h3>
+          <span
+            :class="[
+              'size-2 rounded-full',
+              p.health.path_exists && p.health.is_git_repo
+                ? 'bg-state-succeeded'
+                : 'bg-state-failed',
+            ]"
+            :title="
+              p.health.path_exists && p.health.is_git_repo
+                ? 'Healthy'
+                : 'Path missing or not a git repo'
+            "
+          />
+        </div>
+        <p class="text-xs text-text-tertiary font-mono mb-3 truncate">{{ p.repo_path }}</p>
+        <div class="flex items-center gap-3 text-[10px] text-text-tertiary">
+          <span v-if="p.default_branch">branch: {{ p.default_branch }}</span>
+          <span class="truncate">slug: {{ p.slug }}</span>
+        </div>
+      </RouterLink>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import { RouterLink, useRouter } from "vue-router";
-import { useDeleteProject, useProjects } from "@/api/queries";
-import type { HealthCheckStatus } from "@/api/schema.d";
+import { RouterLink } from "vue-router";
 
-const router = useRouter();
+import { useProjects } from "@/api/queries";
+
 const projects = useProjects();
-const deleteProject = useDeleteProject();
-const deletingSlug = ref<string | null>(null);
-
-function open(slug: string): void {
-  router.push({ name: "project-detail", params: { slug } });
-}
-
-async function confirmDelete(slug: string): Promise<void> {
-  if (
-    !window.confirm(`Delete project ${slug}? This removes the registration; jobs are unaffected.`)
-  )
-    return;
-  deletingSlug.value = slug;
-  try {
-    await deleteProject.mutateAsync(slug);
-  } finally {
-    deletingSlug.value = null;
-  }
-}
-
-function healthClass(status: HealthCheckStatus): string {
-  if (status === "pass") return "bg-green-500/20 text-green-300 ring-green-500/30";
-  if (status === "warn") return "bg-amber-500/20 text-amber-300 ring-amber-500/30";
-  return "bg-red-500/20 text-red-300 ring-red-500/30";
-}
 </script>

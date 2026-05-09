@@ -1,9 +1,0 @@
-{
-  "name": "ask-default-form",
-  "description": "Default form for ask-kind HIL items.",
-  "hil_kinds": ["ask"],
-  "instructions": "Please answer the question below.",
-  "fields": {
-    "submit_label": "Submit Answer"
-  }
-}
