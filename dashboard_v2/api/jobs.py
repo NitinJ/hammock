@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from dashboard_v2 import projects as proj
 from dashboard_v2.api.artifacts import save_artifacts
 from dashboard_v2.api.projections import (
     job_summary,
@@ -20,11 +21,14 @@ from dashboard_v2.api.projections import (
     node_chat,
     node_detail,
     orchestrator_chat,
+    resolve_workflow_path,
     write_human_decision,
 )
 from dashboard_v2.runner.spawn import spawn_orchestrator
 from dashboard_v2.settings import load_settings
 from hammock_v2.engine import paths
+from hammock_v2.engine.runner import JobConfig
+from hammock_v2.engine.runner import submit_job as _submit_job_setup
 
 log = logging.getLogger(__name__)
 
@@ -67,17 +71,24 @@ async def submit_job(
     request: Request,
     workflow: str | None = Form(default=None),
     request_text: str | None = Form(default=None, alias="request"),
+    project_slug_form: str | None = Form(default=None, alias="project_slug"),
     artifacts: list[UploadFile] = File(default_factory=list),  # noqa: B008  fastapi default
 ) -> JobSubmitResponse:
     """Submit a job. Accepts either:
 
-    - ``application/json`` with ``{workflow, request}`` (no artifacts).
-    - ``multipart/form-data`` with ``workflow``, ``request``, and any
-      number of ``artifacts`` files.
+    - ``application/json`` with ``{workflow, request, project_slug?}`` (no artifacts).
+    - ``multipart/form-data`` with ``workflow``, ``request``,
+      ``project_slug?``, and any number of ``artifacts`` files.
+
+    ``project_slug`` is preferred over the env-var fallback. When
+    supplied, the runner clones the project's ``repo_path`` into
+    ``<job_dir>/repo`` and prefers project-local workflows
+    (``<repo>/.hammock-v2/workflows/<name>.yaml``) over bundled.
     """
     content_type = request.headers.get("content-type", "")
     body_workflow = workflow
     body_request = request_text
+    body_project_slug = project_slug_form
     files: list[tuple[str, bytes]] = []
     if content_type.startswith("application/json"):
         try:
@@ -86,6 +97,7 @@ async def submit_job(
             raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
         body_workflow = payload.get("workflow")
         body_request = payload.get("request")
+        body_project_slug = payload.get("project_slug") or body_project_slug
     elif content_type.startswith("multipart/form-data") or content_type.startswith(
         "application/x-www-form-urlencoded"
     ):
@@ -102,23 +114,55 @@ async def submit_job(
     if not body_request or not body_request.strip():
         raise HTTPException(status_code=400, detail="request is required")
     settings = load_settings()
-    wf = load_workflow_or_none(body_workflow, root=settings.root)
-    if wf is None:
+    project_repo_path = settings.project_repo_path
+    if body_project_slug:
+        try:
+            project_slug = proj.normalize_slug(body_project_slug)
+        except proj.ProjectError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        project_data = proj.read_project(project_slug, settings.root)
+        if project_data is None:
+            raise HTTPException(status_code=400, detail=f"project {project_slug!r} not registered")
+        from pathlib import Path as _P
+
+        project_repo_path = _P(project_data["repo_path"])
+    workflow_path = resolve_workflow_path(
+        body_workflow, root=settings.root, project_repo_path=project_repo_path
+    )
+    if workflow_path is None:
         raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} not found")
+    wf = load_workflow_or_none(body_workflow, override_path=workflow_path)
+    if wf is None:
+        raise HTTPException(status_code=400, detail=f"workflow {body_workflow!r} failed to load")
     slug = _derive_slug(body_workflow, body_request)
     if files:
         try:
             save_artifacts(slug=slug, files=files, root=settings.root)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Set up job dir synchronously so the dashboard sees the layout
+    # immediately on POST return (clone the project repo, snapshot the
+    # workflow, write job.md). The orchestrator subprocess will skip
+    # re-submission since the dir exists.
+    _submit_job_setup(
+        job=JobConfig(
+            slug=slug,
+            workflow_name=body_workflow,
+            request_text=body_request,
+            project_repo_path=project_repo_path,
+        ),
+        workflow_path=workflow_path,
+        root=settings.root,
+    )
     pid = spawn_orchestrator(
         slug=slug,
         workflow_name=body_workflow,
         request_text=body_request,
         root=settings.root,
-        project_repo_path=settings.project_repo_path,
+        project_repo_path=project_repo_path,
         claude_binary=settings.claude_binary,
         runner_mode=settings.runner_mode,
+        workflow_path=workflow_path,
     )
     return JobSubmitResponse(slug=slug, pid=pid)
 

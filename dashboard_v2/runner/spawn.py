@@ -25,6 +25,7 @@ def spawn_orchestrator(
     project_repo_path: Path | None,
     claude_binary: str,
     runner_mode: str = "real",
+    workflow_path: Path | None = None,
 ) -> int:
     """Detach a python child that runs hammock_v2.engine.runner.run_job.
 
@@ -51,6 +52,8 @@ def spawn_orchestrator(
     ]
     if project_repo_path is not None:
         args += ["--project-repo-path", str(project_repo_path)]
+    if workflow_path is not None:
+        args += ["--workflow-path", str(workflow_path)]
     log.info("spawning orchestrator subprocess for %s", slug)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")

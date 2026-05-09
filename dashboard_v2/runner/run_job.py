@@ -41,11 +41,13 @@ def main() -> int:
     p.add_argument("--request", required=True)
     p.add_argument("--root", required=True)
     p.add_argument("--project-repo-path", default=None)
+    p.add_argument("--workflow-path", default=None)
     p.add_argument("--claude-binary", default="claude")
     p.add_argument("--runner-mode", default="real", choices=["real", "fake"])
     args = p.parse_args()
 
     project = Path(args.project_repo_path) if args.project_repo_path else None
+    workflow_path = Path(args.workflow_path) if args.workflow_path else None
     job = JobConfig(
         slug=args.slug,
         workflow_name=args.workflow,
@@ -54,9 +56,14 @@ def main() -> int:
     )
     runner = _fake_runner if args.runner_mode == "fake" else None
     if runner is None:
-        rc = run_job(job=job, root=Path(args.root), claude_binary=args.claude_binary)
+        rc = run_job(
+            job=job,
+            workflow_path=workflow_path,
+            root=Path(args.root),
+            claude_binary=args.claude_binary,
+        )
     else:
-        rc = run_job(job=job, root=Path(args.root), runner=runner)
+        rc = run_job(job=job, workflow_path=workflow_path, root=Path(args.root), runner=runner)
     log.info("orchestrator subprocess returned rc=%s for %s", rc, args.slug)
     return rc
 

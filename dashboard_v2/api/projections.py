@@ -211,14 +211,37 @@ def workflow_yaml_path_for_name(name: str, root: Path | None = None) -> Path | N
     return None
 
 
-def load_workflow_or_none(name: str, root: Path | None = None) -> Workflow | None:
+def load_workflow_or_none(
+    name: str,
+    root: Path | None = None,
+    *,
+    override_path: Path | None = None,
+) -> Workflow | None:
     try:
-        path = workflow_yaml_path_for_name(name, root=root)
+        path = (
+            override_path
+            if override_path is not None
+            else workflow_yaml_path_for_name(name, root=root)
+        )
         if path is None:
             return None
         return load_workflow(path)
     except WorkflowError:
         return None
+
+
+def resolve_workflow_path(
+    name: str,
+    root: Path | None = None,
+    *,
+    project_repo_path: Path | None = None,
+) -> Path | None:
+    """Resolve the on-disk path for a workflow, preferring per-project."""
+    if project_repo_path is not None:
+        candidate = project_repo_path / ".hammock-v2" / "workflows" / f"{name}.yaml"
+        if candidate.is_file():
+            return candidate
+    return workflow_yaml_path_for_name(name, root=root)
 
 
 def list_user_workflow_paths(root: Path) -> list[Path]:

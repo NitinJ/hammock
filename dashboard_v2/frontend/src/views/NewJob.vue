@@ -11,15 +11,32 @@
     <form @submit.prevent="onSubmit" class="surface p-6 space-y-5">
       <div>
         <label class="block text-xs uppercase tracking-wider text-text-tertiary mb-2">
+          Project
+        </label>
+        <select v-model="projectSlug" class="input">
+          <option value="">— No project (use submit-time env) —</option>
+          <option v-for="p in projects.data.value ?? []" :key="p.slug" :value="p.slug">
+            {{ p.name }} — {{ p.repo_path }}
+          </option>
+        </select>
+        <p
+          v-if="(projects.data.value ?? []).length === 0"
+          class="text-[11px] text-text-tertiary mt-1"
+        >
+          No projects registered yet.
+          <RouterLink :to="{ name: 'project-new' }" class="text-accent">Register one</RouterLink>
+          to use per-project workflows.
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-xs uppercase tracking-wider text-text-tertiary mb-2">
           Workflow
         </label>
         <select v-model="workflowName" class="input">
-          <option
-            v-for="wf in workflows.data.value?.workflows ?? []"
-            :key="wf.name"
-            :value="wf.name"
-          >
-            {{ wf.name }} — {{ wf.description ?? "" }}
+          <option v-for="wf in availableWorkflows" :key="wf.name" :value="wf.name">
+            {{ wf.name }}{{ wf.bundled ? " (bundled)" : " (project)" }} —
+            {{ wf.description ?? "" }}
           </option>
         </select>
       </div>
@@ -100,19 +117,39 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref, toRef, watch } from "vue";
 import { useRoute, useRouter, RouterLink } from "vue-router";
 
-import { useSubmitJob, useWorkflows } from "@/api/queries";
+import { useProjectWorkflows, useProjects, useSubmitJob, useWorkflows } from "@/api/queries";
 
 const router = useRouter();
 const route = useRoute();
+const projects = useProjects();
 const workflows = useWorkflows();
 const submit = useSubmitJob();
+
+const projectSlug = ref(typeof route.query.project === "string" ? route.query.project : "");
+const projectSlugRef = toRef(projectSlug);
+const projectWorkflows = useProjectWorkflows(projectSlugRef);
+
+const availableWorkflows = computed(() => {
+  if (projectSlug.value && projectWorkflows.data.value) {
+    return projectWorkflows.data.value.workflows;
+  }
+  return workflows.data.value?.workflows ?? [];
+});
 
 const workflowName = ref(
   typeof route.query.workflow === "string" ? route.query.workflow : "fix-bug",
 );
+watch(availableWorkflows, (list) => {
+  if (list.length === 0) return;
+  if (!list.some((w) => w.name === workflowName.value)) {
+    const first = list[0];
+    if (first) workflowName.value = first.name;
+  }
+});
+
 const requestText = ref("");
 const error = ref<string | null>(null);
 const files = ref<File[]>([]);
@@ -157,6 +194,7 @@ async function onSubmit(): Promise<void> {
     const r = await submit.mutateAsync({
       workflow: workflowName.value,
       request: requestText.value.trim(),
+      project_slug: projectSlug.value || undefined,
       artifacts: files.value.length > 0 ? files.value : undefined,
     });
     await router.push({ name: "job-detail", params: { slug: r.slug } });
