@@ -53,7 +53,12 @@ export interface WorkflowSummary {
   name: string;
   description: string | null;
   nodes: WorkflowNode[];
+  /** "bundled", "custom", or a project slug. */
+  source: string;
+  /** Back-compat alias for source === "bundled". */
   bundled?: boolean;
+  node_count?: number;
+  modified_at?: string | null;
 }
 
 export interface WorkflowDetail extends WorkflowSummary {

@@ -34,11 +34,18 @@
           Workflow
         </label>
         <select v-model="workflowName" class="input">
-          <option v-for="wf in availableWorkflows" :key="wf.name" :value="wf.name">
-            {{ wf.name }}{{ wf.bundled ? " (bundled)" : " (project)" }} —
-            {{ wf.description ?? "" }}
+          <option
+            v-for="wf in availableWorkflows"
+            :key="`${wf.source}-${wf.name}`"
+            :value="wf.name"
+          >
+            {{ wf.name }} [{{ wf.source }}]{{ wf.description ? " — " + wf.description : "" }}
           </option>
         </select>
+        <p class="text-[11px] text-text-tertiary mt-1">
+          Source priority at submit: <code class="font-mono">project</code> &gt;
+          <code class="font-mono">custom</code> &gt; <code class="font-mono">bundled</code>.
+        </p>
       </div>
 
       <div>
