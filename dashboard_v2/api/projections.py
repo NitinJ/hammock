@@ -51,6 +51,27 @@ def _safe_read(path: Path) -> str:
         return ""
 
 
+def _ordered_node_ids_from_workflow(slug: str, root: Path) -> list[str]:
+    """Topo-ordered node ids from the job's workflow.yaml snapshot.
+
+    Returns [] if the snapshot is missing or unparseable; caller falls
+    back to filesystem-alphabetical order for resilience. The job's
+    snapshot lives at <job_dir>/workflow.yaml — durable for the lifetime
+    of the job, so this works across page refreshes and after the job
+    completes.
+    """
+    snapshot = paths.workflow_yaml(slug, root=root)
+    if not snapshot.is_file():
+        return []
+    try:
+        from hammock_v2.engine.workflow import load_workflow, topological_order
+
+        wf = load_workflow(snapshot)
+        return [n.id for n in topological_order(wf)]
+    except Exception:
+        return []
+
+
 def job_summary(slug: str, root: Path) -> dict[str, Any] | None:
     job_md = paths.job_md(slug, root=root)
     if not job_md.is_file():
@@ -60,9 +81,24 @@ def job_summary(slug: str, root: Path) -> dict[str, Any] | None:
     nodes_overview: list[dict[str, Any]] = []
     nodes_dir = paths.nodes_dir(slug, root=root)
     if nodes_dir.is_dir():
-        for node_dir_path in sorted(nodes_dir.iterdir()):
-            if not node_dir_path.is_dir():
-                continue
+        # Issue: previously sorted alphabetically by folder name, which
+        # rendered nodes in the wrong DAG order in the UI. Resolve via
+        # the workflow snapshot's topological order; missing folders
+        # for not-yet-dispatched nodes still surface as pending.
+        ordered_ids = _ordered_node_ids_from_workflow(slug, root)
+        on_disk = {p.name: p for p in nodes_dir.iterdir() if p.is_dir()}
+        # Topo-ordered first, then any stragglers on disk (defensive).
+        seen: set[str] = set()
+        ordered_paths: list[Path] = []
+        for nid in ordered_ids:
+            seen.add(nid)
+            # Even if no folder yet, surface a pending placeholder so
+            # the timeline shows the full workflow shape from t=0.
+            ordered_paths.append(on_disk.get(nid) or (nodes_dir / nid))
+        for nid, p in sorted(on_disk.items()):
+            if nid not in seen:
+                ordered_paths.append(p)
+        for node_dir_path in ordered_paths:
             state_path = node_dir_path / "state.md"
             state_front, _ = parse_frontmatter(_safe_read(state_path))
             awaiting = (node_dir_path / "awaiting_human.md").is_file()
