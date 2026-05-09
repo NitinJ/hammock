@@ -6,6 +6,8 @@ import type {
   ChatResponse,
   JobSummary,
   NodeDetail,
+  Project,
+  ProjectPrompt,
   WorkflowDetail,
   WorkflowSummary,
 } from "./types";
@@ -18,6 +20,13 @@ export const QUERY_KEYS = {
   node: (slug: string, nodeId: string) => ["jobs", slug, "nodes", nodeId] as const,
   chat: (slug: string, nodeId: string) => ["jobs", slug, "nodes", nodeId, "chat"] as const,
   orchestratorChat: (slug: string) => ["jobs", slug, "orchestrator", "chat"] as const,
+  orchestratorMessages: (slug: string) => ["jobs", slug, "orchestrator", "messages"] as const,
+  orchestratorEvents: (slug: string) => ["jobs", slug, "orchestrator", "events"] as const,
+  projects: () => ["projects"] as const,
+  project: (slug: string) => ["projects", slug] as const,
+  projectWorkflows: (slug: string) => ["projects", slug, "workflows"] as const,
+  projectPrompts: (slug: string) => ["projects", slug, "prompts"] as const,
+  projectPrompt: (slug: string, name: string) => ["projects", slug, "prompts", name] as const,
 };
 
 export function useWorkflows() {
@@ -150,6 +159,134 @@ export function useSubmitJob() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.jobs() });
+    },
+  });
+}
+
+export function useProjects() {
+  return useQuery({
+    queryKey: QUERY_KEYS.projects(),
+    queryFn: async () => {
+      const r = await api.get<{ projects: Project[] }>("/api/projects");
+      return r.projects;
+    },
+  });
+}
+
+export function useProject(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.project(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<Project>(`/api/projects/${slug.value}`),
+    enabled: computed(() => !!slug.value),
+  });
+}
+
+export function useRegisterProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { repo_path: string; slug?: string; name?: string }) =>
+      api.post<Project>("/api/projects", body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projects() });
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.del<{ slug: string }>(`/api/projects/${slug}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projects() });
+    },
+  });
+}
+
+export function useVerifyProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<Project>(`/api/projects/${slug}/verify`, {}),
+    onSuccess: (_, slug) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.project(slug) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projects() });
+    },
+  });
+}
+
+export function useProjectWorkflows(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.projectWorkflows(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ workflows: WorkflowSummary[] }>(`/api/projects/${slug.value}/workflows`),
+    enabled: computed(() => !!slug.value),
+  });
+}
+
+export function useProjectPrompts(slug: Ref<string>) {
+  const queryKey = computed(() => QUERY_KEYS.projectPrompts(slug.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<{ prompts: ProjectPrompt[] }>(`/api/projects/${slug.value}/prompts`),
+    enabled: computed(() => !!slug.value),
+  });
+}
+
+export function useProjectPrompt(slug: Ref<string>, name: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.projectPrompt(slug.value, name.value ?? ""));
+  return useQuery({
+    queryKey,
+    queryFn: () =>
+      api.get<{ name: string; content: string; bundled: boolean }>(
+        `/api/projects/${slug.value}/prompts/${name.value}`,
+      ),
+    enabled: computed(() => !!slug.value && !!name.value),
+  });
+}
+
+export function useSaveProjectPrompt(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; content: string }) =>
+      api.post(`/api/projects/${slug.value}/prompts`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(slug.value) });
+    },
+  });
+}
+
+export function useSaveProjectWorkflow(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; yaml: string }) =>
+      api.post(`/api/projects/${slug.value}/workflows`, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useUpdateProjectWorkflow(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, yaml }: { name: string; yaml: string }) =>
+      api.put(`/api/projects/${slug.value}/workflows/${name}`, { yaml }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+export function useDeleteProjectWorkflow(slug: Ref<string>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.del(`/api/projects/${slug.value}/workflows/${name}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
     },
   });
 }

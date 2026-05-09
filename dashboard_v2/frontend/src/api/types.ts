@@ -70,3 +70,30 @@ export interface ChatResponse {
   turns: ChatTurn[];
   has_chat: boolean;
 }
+
+export interface ProjectHealth {
+  path_exists: boolean;
+  is_git_repo: boolean;
+  default_branch: string | null;
+}
+
+export interface Project {
+  slug: string;
+  name: string;
+  repo_path: string;
+  registered_at: string;
+  default_branch: string | null;
+  health: ProjectHealth;
+}
+
+export interface ProjectPrompt {
+  name: string;
+  bundled: boolean;
+}
+
+export interface OrchestratorMessage {
+  id: string;
+  from: "operator" | "orchestrator";
+  timestamp: string;
+  text: string;
+}

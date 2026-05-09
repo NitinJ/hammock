@@ -32,6 +32,17 @@
           >
             Workflows
           </RouterLink>
+          <RouterLink
+            :to="{ name: 'projects' }"
+            :class="[
+              'px-3 py-1.5 rounded-md transition-colors',
+              isProjectsActive
+                ? 'bg-bg-elevated text-text-primary'
+                : 'text-text-tertiary hover:text-text-secondary',
+            ]"
+          >
+            Projects
+          </RouterLink>
         </nav>
         <div class="ml-auto flex items-center gap-2">
           <RouterLink
@@ -62,6 +73,16 @@ const isJobsActive = computed(() =>
   ["jobs", "job-detail", "orchestrator", "new-job"].includes(String(route.name)),
 );
 const isWorkflowsActive = computed(() =>
-  ["workflows", "workflow-detail", "workflow-edit", "workflow-new"].includes(String(route.name)),
+  [
+    "workflows",
+    "workflow-detail",
+    "workflow-edit",
+    "workflow-new",
+    "project-workflow-new",
+    "project-workflow-edit",
+  ].includes(String(route.name)),
+);
+const isProjectsActive = computed(() =>
+  ["projects", "project-detail", "project-new"].includes(String(route.name)),
 );
 </script>

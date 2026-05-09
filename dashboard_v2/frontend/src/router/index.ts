@@ -4,6 +4,9 @@ import JobsList from "@/views/JobsList.vue";
 import JobDetail from "@/views/JobDetail.vue";
 import NewJob from "@/views/NewJob.vue";
 import OrchestratorView from "@/views/OrchestratorView.vue";
+import ProjectAdd from "@/views/ProjectAdd.vue";
+import ProjectDetail from "@/views/ProjectDetail.vue";
+import Projects from "@/views/Projects.vue";
 import Workflows from "@/views/Workflows.vue";
 import WorkflowDetail from "@/views/WorkflowDetail.vue";
 import WorkflowEditor from "@/views/WorkflowEditor.vue";
@@ -33,6 +36,29 @@ export const router = createRouter({
       name: "workflow-edit",
       component: WorkflowEditor,
       props: true,
+    },
+    { path: "/projects", name: "projects", component: Projects },
+    { path: "/projects/new", name: "project-new", component: ProjectAdd },
+    {
+      path: "/projects/:slug",
+      name: "project-detail",
+      component: ProjectDetail,
+      props: true,
+    },
+    {
+      path: "/projects/:slug/workflows/new",
+      name: "project-workflow-new",
+      component: WorkflowEditor,
+      props: (route) => ({ projectSlug: route.params.slug, name: "" }),
+    },
+    {
+      path: "/projects/:slug/workflows/:name/edit",
+      name: "project-workflow-edit",
+      component: WorkflowEditor,
+      props: (route) => ({
+        projectSlug: route.params.slug,
+        name: route.params.name,
+      }),
     },
   ],
 });
