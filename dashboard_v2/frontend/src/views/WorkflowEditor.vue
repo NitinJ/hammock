@@ -105,9 +105,18 @@
             <input v-model="editId" class="input font-mono text-sm w-full" />
           </div>
           <div>
-            <label class="text-xs uppercase tracking-wider text-text-tertiary block mb-1">
-              Prompt
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-xs uppercase tracking-wider text-text-tertiary"> Prompt </label>
+              <RouterLink
+                :to="{ name: 'prompt-new' }"
+                target="_blank"
+                rel="noopener"
+                class="text-[11px] text-accent hover:underline"
+                title="Open the prompt editor in a new tab"
+              >
+                + New prompt
+              </RouterLink>
+            </div>
             <select v-model="editPrompt" class="input text-sm w-full">
               <option v-for="p in promptOptions" :key="p" :value="p">{{ p }}</option>
             </select>
