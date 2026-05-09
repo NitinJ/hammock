@@ -220,17 +220,105 @@ def append_orchestrator_message(
     return payload
 
 
+def _chat_derived_events(slug: str, root: Path) -> list[dict[str, Any]]:
+    """Extract durable events from the orchestrator's own stream-json
+    transcript.
+
+    Two event kinds emerge here:
+    - `subagent_dispatched`: an `assistant` turn issued a `tool_use`
+      with `name: "Task"`. The Task's `description` typically includes
+      the node id (e.g. "Run write-bug-report").
+    - `subagent_completed`: a `user` turn carries a matching
+      `tool_use_result`.
+
+    Both come from `orchestrator.jsonl` which the runner persists for
+    the lifetime of the job, so a page refresh recomputes the same
+    events from the same file.
+    """
+    out: list[dict[str, Any]] = []
+    transcript_path = paths.orchestrator_jsonl(slug, root=root)
+    if not transcript_path.is_file():
+        return out
+    pending: dict[str, str] = {}  # tool_use_id -> node_id
+    for entry in parse_jsonl(transcript_path):
+        ts = entry.get("timestamp") or ""
+        msg = entry.get("message") or {}
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        if entry.get("type") == "assistant":
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_use":
+                    continue
+                if block.get("name") != "Task":
+                    continue
+                tool_use_id = block.get("id") or ""
+                inp = block.get("input") or {}
+                desc = inp.get("description") if isinstance(inp, dict) else None
+                node_id = _node_id_from_description(desc)
+                pending[tool_use_id] = node_id or ""
+                out.append(
+                    {
+                        "kind": "subagent_dispatched",
+                        "at": ts,
+                        "node_id": node_id,
+                        "detail": f"orchestrator dispatched Task: {desc or '(no description)'}",
+                    }
+                )
+        elif entry.get("type") == "user":
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_result":
+                    continue
+                tool_use_id = block.get("tool_use_id") or ""
+                node_id = pending.pop(tool_use_id, "") or None
+                detail = "subagent returned"
+                if node_id:
+                    detail = f"subagent {node_id} returned"
+                out.append(
+                    {
+                        "kind": "subagent_completed",
+                        "at": ts,
+                        "node_id": node_id,
+                        "detail": detail,
+                    }
+                )
+    return out
+
+
+def _node_id_from_description(desc: object) -> str | None:
+    """Best-effort: pull a node id out of a Task description string.
+
+    Conventional shape we instruct the orchestrator to emit:
+    `"Run <node-id>"`. Fall back to the whole string trimmed.
+    """
+    if not isinstance(desc, str):
+        return None
+    s = desc.strip()
+    if s.lower().startswith("run "):
+        candidate = s[4:].strip()
+        return candidate or None
+    return None
+
+
 def orchestrator_events(slug: str, root: Path) -> list[dict[str, Any]]:
     """Build a chronological events list for the orchestrator pseudo-node.
 
-    Sources:
+    Sources (all durable on disk — refresh re-derives the same list):
     - job.md (state transitions)
     - nodes/<id>/state.md (per-node started_at / finished_at)
     - awaiting_human.md / human_decision.md presence
     - validation.md attempts
+    - orchestrator.jsonl Task tool_use / tool_result pairs (via
+      ``_chat_derived_events``)
 
-    The orchestrator's own chat.jsonl is rendered separately; this is
-    the human-readable timeline.
+    The orchestrator's own chat.jsonl is rendered separately on the
+    "Log" tab; this is the human-readable timeline.
     """
     events: list[dict[str, Any]] = []
     job_md_path = paths.job_md(slug, root=root)
@@ -322,6 +410,14 @@ def orchestrator_events(slug: str, root: Path) -> list[dict[str, Any]]:
                         "detail": f"validation failed (attempt {v_front.get('attempt', '?')})",
                     }
                 )
+    # Merge in chat-derived events (Task dispatches + completions).
+    events.extend(_chat_derived_events(slug, root))
+    # Coerce all timestamps to strings (YAML parses ISO timestamps as
+    # datetime objects, which break str-comparison in sort) and ensure
+    # JSON-serializable shape.
+    for ev in events:
+        at = ev.get("at")
+        ev["at"] = "" if at is None else str(at)
     # Stable chronological ordering — empty timestamps sort first.
     events.sort(key=lambda e: e.get("at") or "")
     return events
