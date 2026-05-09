@@ -1,0 +1,50 @@
+name: fix-bug
+description: |
+  Standard bug-fix workflow. Reads a request, drafts a bug report,
+  designs a fix, gets human approval, implements it on a branch,
+  opens a PR, and writes a summary.
+
+nodes:
+  - id: write-bug-report
+    prompt: write-bug-report
+    description: Translate the user's request into a structured bug report grounded in the codebase.
+    requires: [output.md]
+
+  - id: write-design-spec
+    prompt: write-design-spec
+    after: [write-bug-report]
+    description: Design the fix in terms of concrete code changes.
+    requires: [output.md]
+
+  - id: review-design-spec
+    prompt: review
+    after: [write-design-spec]
+    human_review: true
+    description: Operator approves the design before implementation begins.
+    requires: [output.md]
+
+  - id: write-impl-spec
+    prompt: write-impl-spec
+    after: [review-design-spec]
+    description: Pin down the per-file edits the implementer will execute.
+    requires: [output.md]
+
+  - id: implement
+    prompt: implement
+    after: [write-impl-spec]
+    description: Make the code changes on a fresh branch and commit.
+    requires: [output.md, branch.txt]
+    worktree: true
+
+  - id: open-pr
+    prompt: pr-create
+    after: [implement]
+    description: Push the branch and open a PR via gh.
+    requires: [output.md]
+    worktree: true
+
+  - id: write-summary
+    prompt: write-summary
+    after: [open-pr]
+    description: Operator-facing wrap-up.
+    requires: [output.md]
