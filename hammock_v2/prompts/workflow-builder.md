@@ -16,6 +16,9 @@ description: |              # optional, one paragraph
 nodes:
   - id: <node-id>           # required, [a-zA-Z0-9_-]
     prompt: <prompt-name>   # required, references prompts/<name>.md
+    kind: agent             # optional, default "agent".
+                            # set to "workflow_expander" if this node
+                            # should author a runtime sub-DAG (see below).
     after: [other-node-id]  # optional, list of upstream nodes
     human_review: true      # optional, default false. Pauses for operator approval.
     requires:               # optional, default ["output.md"]. Files agent must produce.
@@ -23,11 +26,12 @@ nodes:
       - branch.txt          # e.g., implementer must write its branch name here
     worktree: true          # optional, default false. Code-bearing nodes need this
                             # so the subagent gets its own git worktree.
+                            # Forbidden on workflow_expander nodes.
     description: |          # optional. Short note shown in dashboard tooltips.
       ...
 ```
 
-**Do NOT invent fields.** That's the entire schema. No loops, no conditionals, no retry counts (the orchestrator handles retries internally). No `kind:` field — every node is an agent.
+**Do NOT invent fields.** That's the entire schema. No loops, no conditionals, no retry counts (the orchestrator handles retries internally). The only valid `kind:` values are `agent` (default) and `workflow_expander`.
 
 ## Common patterns
 
@@ -35,6 +39,55 @@ nodes:
 - **code-bearing node**: any node that edits files / runs `gh` should have `worktree: true`. The implementer node produces `branch.txt` so a downstream `pr-create` knows which branch to push.
 - **first node has no `after:`**: it receives the user's request + any attached artifacts.
 - **last node typically writes a summary**: an operator-facing wrap-up.
+- **dynamic shape via `kind: workflow_expander`** — see next section.
+
+## When to suggest a workflow_expander
+
+Use `kind: workflow_expander` when the user describes work whose **shape depends on parsing a runtime artifact** — not knowable at workflow-definition time. Concrete signals from the user:
+
+- "the implementation plan has stages and each stage has tasks"
+- "process every bug in this list"
+- "review every file the PR touches"
+- "iterate over the test failures"
+- "for each repo / customer / record, do X"
+
+If the user's "next step" is "iterate over <something only available at runtime>", suggest a workflow_expander.
+
+### Contract
+
+A workflow_expander node:
+
+- Has a custom `prompt:` whose subagent reads upstream output and writes BOTH `output.md` and `expansion.yaml`.
+- Auto-includes `expansion.yaml` in `requires:` (the schema injects it; you can list it explicitly for clarity).
+- Cannot have `worktree: true` (the expander doesn't edit code; its expanded children might).
+- Cannot be nested — its expansion.yaml cannot itself contain a `kind: workflow_expander` node. Single-shot, single-level.
+
+The orchestrator merges the expander's `expansion.yaml` into the runtime DAG. Each expanded child becomes a regular node. Static nodes downstream of the expander wait for ALL expanded children to terminate (aggregation barrier).
+
+### Canonical pattern: stage/task plans
+
+```yaml
+nodes:
+  - id: read-plan
+    prompt: read-impl-plan
+    requires: [output.md]
+    description: Read user's request + attached impl plan; emit structured stages table.
+
+  - id: execute-plan
+    kind: workflow_expander
+    after: [read-plan]
+    prompt: execute-plan-expander   # the expander subagent's own prompt
+    requires: [output.md, expansion.yaml]
+    description: Author per-stage / per-task DAG from the plan.
+
+  - id: write-summary
+    after: [execute-plan]
+    prompt: write-summary
+    requires: [output.md]
+    description: Aggregate after every expanded child terminates.
+```
+
+The bundled `stage-implementation` workflow is exactly this shape. When suggesting it, reference the bundled prompts: `read-impl-plan`, `execute-plan-expander`, `stage-checkpoint`.
 
 ## Reference: bundled fix-bug workflow
 
