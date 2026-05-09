@@ -117,7 +117,7 @@ def test_stop_finalize_is_idempotent_for_terminal_job_md(tmp_path: Path) -> None
     _seed_job(tmp_path, "j-done", state="completed")
     # Stop is rejected at the outer guard (terminal state); the
     # finalizer itself should also no-op even if reached.
-    lc._finalize_job_md_cancelled("j-done", root=tmp_path)
+    lc._finalize_job_md_cancelled("j-done", root=tmp_path)  # pyright: ignore[reportPrivateUsage]
     text = paths.job_md("j-done", root=tmp_path).read_text()
     assert "state: completed" in text
     assert "state: cancelled" not in text

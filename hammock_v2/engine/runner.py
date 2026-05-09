@@ -45,10 +45,26 @@ def render_orchestrator_prompt(
     request_text: str,
     prompts_dir: Path = PROMPTS_DIR,
 ) -> str:
-    """Read the orchestrator template and substitute job context."""
+    """Read the orchestrator template and substitute job context.
+
+    Substitutes $JOB_DIR, $WORKFLOW_PATH, $REQUEST_TEXT, $PROMPTS_DIR,
+    and $HELPERS_DIR into the orchestrator template. $HELPERS_DIR
+    resolves to `<prompts_dir>/helpers/`, the directory containing
+    helper Task templates (prepare-node-input, process-expansion, etc.).
+    """
     template_path = prompts_dir / "orchestrator.md"
     template = template_path.read_text()
+    helpers_dir = prompts_dir / "helpers"
+    if not helpers_dir.is_dir():
+        log.warning(
+            "v2 runner: helpers directory not found at %s; orchestrator "
+            "helper Task spawning will fail",
+            helpers_dir,
+        )
     substitutions = {
+        # Order matters: $HELPERS_DIR before $PROMPTS_DIR so the longer
+        # variable name doesn't get partially substituted.
+        "$HELPERS_DIR": str(helpers_dir),
         "$JOB_DIR": str(job_dir),
         "$WORKFLOW_PATH": str(workflow_path),
         "$REQUEST_TEXT": request_text,

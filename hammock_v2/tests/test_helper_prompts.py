@@ -46,7 +46,9 @@ def test_helpers_forbid_writing_to_orchestrator_state() -> None:
     exclusive surface."""
     for name in EXPECTED_HELPERS:
         text = (HELPERS_DIR / f"{name}.md").read_text()
-        assert "orchestrator_state.json" in text, f"{name}: missing forbid-write for orchestrator_state.json"
+        assert "orchestrator_state.json" in text, (
+            f"{name}: missing forbid-write for orchestrator_state.json"
+        )
         assert "job.md" in text, f"{name}: missing forbid-write for job.md"
         assert "control.md" in text, f"{name}: missing forbid-write for control.md"
         assert "orchestrator_messages.jsonl" in text, (

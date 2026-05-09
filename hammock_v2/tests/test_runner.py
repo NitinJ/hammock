@@ -143,6 +143,45 @@ def test_render_orchestrator_substitutes_context(tmp_path: Path) -> None:
     assert "$JOB_DIR" not in prompt  # all substitutions complete
     assert "$WORKFLOW_PATH" not in prompt
     assert "$REQUEST_TEXT" not in prompt
+    assert "$PROMPTS_DIR" not in prompt
+    assert "$HELPERS_DIR" not in prompt
+
+
+def test_render_orchestrator_substitutes_helpers_dir() -> None:
+    """$HELPERS_DIR must resolve to <PROMPTS_DIR>/helpers/ so the
+    orchestrator can read helper templates by name."""
+    prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/some/job"),
+        workflow_path=Path("/some/job/workflow.yaml"),
+        request_text="r",
+        prompts_dir=prompts_dir,
+    )
+    expected_helpers = str(prompts_dir / "helpers")
+    assert expected_helpers in prompt
+    assert "$HELPERS_DIR" not in prompt
+
+
+def test_render_orchestrator_warns_when_helpers_dir_missing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """If the helpers directory is missing, the runner should log a
+    warning at startup so the operator can debug helper-spawn failures."""
+    import logging as _logging
+
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "orchestrator.md").write_text("HELLO $HELPERS_DIR\n")
+    # No helpers/ subdir — should warn.
+    with caplog.at_level(_logging.WARNING, logger="hammock_v2.engine.runner"):
+        rendered = render_orchestrator_prompt(
+            job_dir=Path("/x"),
+            workflow_path=Path("/x/workflow.yaml"),
+            request_text="r",
+            prompts_dir=prompts_dir,
+        )
+    assert str(prompts_dir / "helpers") in rendered
+    assert any("helpers directory not found" in r.message for r in caplog.records)
 
 
 def test_run_rejects_unknown_workflow(tmp_path: Path) -> None:
@@ -191,10 +230,7 @@ def test_helper_owns_artifact_handling() -> None:
     prepare-node-input helper — the orchestrator references it but does
     not inline the size-threshold rules."""
     helper = (
-        Path(__file__).resolve().parent.parent
-        / "prompts"
-        / "helpers"
-        / "prepare-node-input.md"
+        Path(__file__).resolve().parent.parent / "prompts" / "helpers" / "prepare-node-input.md"
     ).read_text()
     assert "Attached artifacts" in helper
     assert "inputs/" in helper
@@ -315,19 +351,14 @@ def test_orchestrator_prompt_handles_workflow_expander() -> None:
     assert "process-expansion" in prompt
     # ID prefixing convention is documented in either orchestrator or helper.
     helper = (
-        Path(__file__).resolve().parent.parent
-        / "prompts"
-        / "helpers"
-        / "process-expansion.md"
+        Path(__file__).resolve().parent.parent / "prompts" / "helpers" / "process-expansion.md"
     ).read_text()
     assert "__" in prompt
     assert "prefix" in helper.lower() or "<expander_id>__" in helper or "<EXPANDER_ID>__" in helper
     # The validation rules — including no-nesting — live in the helper.
     helper_lower = helper.lower()
     assert (
-        "no nested" in helper_lower
-        or "no nesting" in helper_lower
-        or "single-shot" in helper_lower
+        "no nested" in helper_lower or "no nesting" in helper_lower or "single-shot" in helper_lower
     )
 
 
@@ -365,10 +396,7 @@ def test_process_expansion_helper_rejects_nested_expanders_explicitly() -> None:
     process-expansion helper template under the thin-router architecture.
     Nested workflow_expander must be rejected (single-shot, single-level)."""
     helper = (
-        Path(__file__).resolve().parent.parent
-        / "prompts"
-        / "helpers"
-        / "process-expansion.md"
+        Path(__file__).resolve().parent.parent / "prompts" / "helpers" / "process-expansion.md"
     ).read_text()
     lower = helper.lower()
     assert "no nested" in lower or "no nesting" in lower or "single-shot" in lower
