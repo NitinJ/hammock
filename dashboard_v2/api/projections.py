@@ -65,17 +65,76 @@ def _read_orchestrator_state(slug: str, root: Path) -> dict[str, Any]:
 
 
 def expanded_nodes_for(slug: str, root: Path) -> dict[str, dict[str, Any]]:
-    """Return the orchestrator's `expanded_nodes` map (prefixed_id →
-    metadata including parent_expander). Empty dict when none."""
+    """Return the runtime `expanded_nodes` map (prefixed_id → metadata).
+
+    Filesystem-first: any subfolder under `nodes/<expander_id>/` that
+    contains a `state.md` is surfaced as an expanded child, regardless
+    of whether the orchestrator has finished writing
+    `orchestrator_state.json`. State.json acts as enrichment (carries
+    `prompt`, `after:`, etc.); when present we merge it onto the
+    filesystem-derived skeleton. This makes the dashboard tolerant of
+    the materialize-children/persist-state race during a
+    workflow_expander merge.
+    """
     state = _read_orchestrator_state(slug, root)
-    expanded = state.get("expanded_nodes") or {}
-    if not isinstance(expanded, dict):
-        return {}
-    # Defensive: normalize to dict[str, dict]
+    state_expanded_raw = state.get("expanded_nodes") or {}
+    state_expanded: dict[str, dict[str, Any]] = {}
+    if isinstance(state_expanded_raw, dict):
+        for k, v in state_expanded_raw.items():
+            if isinstance(k, str) and isinstance(v, dict):
+                state_expanded[k] = v
+
     out: dict[str, dict[str, Any]] = {}
-    for k, v in expanded.items():
-        if isinstance(k, str) and isinstance(v, dict):
+
+    # Determine which top-level nodes are workflow_expanders by reading
+    # the workflow snapshot. Walk those folders for child subfolders.
+    nodes_dir_path = paths.nodes_dir(slug, root=root)
+    if nodes_dir_path.is_dir():
+        snapshot = paths.workflow_yaml(slug, root=root)
+        expander_ids: set[str] = set()
+        if snapshot.is_file():
+            try:
+                wf = load_workflow(snapshot)
+                expander_ids = {n.id for n in wf.nodes if n.kind == "workflow_expander"}
+            except Exception:
+                expander_ids = set()
+
+        for expander_id in expander_ids:
+            expander_folder = nodes_dir_path / expander_id
+            if not expander_folder.is_dir():
+                continue
+            for child in sorted(expander_folder.iterdir()):
+                if not child.is_dir():
+                    continue
+                if not (child / "state.md").is_file():
+                    continue
+                prefixed_id = f"{expander_id}__{child.name}"
+                # Filesystem skeleton — defaults that match the schema.
+                base: dict[str, Any] = {
+                    "parent_expander": expander_id,
+                    "kind": "agent",
+                    "prompt": "",
+                    "after": [],
+                    "human_review": False,
+                    "requires": ["output.md"],
+                    "worktree": False,
+                    "description": None,
+                }
+                # Merge state.json enrichment when present.
+                state_meta = state_expanded.get(prefixed_id)
+                if isinstance(state_meta, dict):
+                    base.update(state_meta)
+                    # Always re-pin parent_expander to the on-disk parent.
+                    base["parent_expander"] = expander_id
+                out[prefixed_id] = base
+
+    # Carry over any state.json entries that don't have a folder yet
+    # (orchestrator persisted state but materialization is still in
+    # flight). Filesystem-derived entries win on duplicate keys.
+    for k, v in state_expanded.items():
+        if k not in out:
             out[k] = v
+
     return out
 
 

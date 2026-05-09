@@ -186,20 +186,21 @@ def test_orchestrator_prompt_contains_strict_validation_instructions() -> None:
     assert "validation.md" in prompt
 
 
-def test_orchestrator_prompt_contains_artifact_handling() -> None:
-    """Orchestrator must build an `# Attached artifacts` section for
-    the first node when `inputs/` contains files."""
-    prompt = render_orchestrator_prompt(
-        job_dir=Path("/x"),
-        workflow_path=Path("/x/workflow.yaml"),
-        request_text="r",
-    )
-    assert "attached artifacts" in prompt.lower()
-    assert "inputs/" in prompt
-    assert "first 40 lines" in prompt.lower()
-    # Threshold rules present
-    assert "2KB" in prompt or "2kb" in prompt.lower()
-    assert "40KB" in prompt or "40kb" in prompt.lower()
+def test_helper_owns_artifact_handling() -> None:
+    """Artifact section construction is now delegated to the
+    prepare-node-input helper — the orchestrator references it but does
+    not inline the size-threshold rules."""
+    helper = (
+        Path(__file__).resolve().parent.parent
+        / "prompts"
+        / "helpers"
+        / "prepare-node-input.md"
+    ).read_text()
+    assert "Attached artifacts" in helper
+    assert "inputs/" in helper
+    assert "first 40 lines" in helper.lower()
+    assert "2KB" in helper
+    assert "40KB" in helper
 
 
 def test_orchestrator_prompt_contains_revision_loop() -> None:
@@ -246,11 +247,15 @@ def test_orchestrator_prompt_checks_messages_each_loop_iteration() -> None:
 
 def test_orchestrator_prompt_says_all_work_through_task() -> None:
     """The orchestrator must route ALL node work through Task and reserve
-    its own time for orchestration + responsiveness, per the user's
-    'all work through Tasks' directive."""
+    its own time for orchestration + responsiveness. Under the
+    thin-router architecture this is restated as the orchestrator being
+    a thin router that delegates to helper Tasks."""
     prompt = _orchestrator_prompt()
-    assert "all work goes through task" in prompt.lower() or (
-        "workflow nodes get one task each" in prompt.lower()
+    lower = prompt.lower()
+    assert (
+        "all work goes through task" in lower
+        or "workflow nodes get one task each" in lower
+        or "thin router" in lower
     )
 
 
@@ -268,7 +273,13 @@ def test_orchestrator_prompt_uses_non_blocking_task_pattern() -> None:
     # block=False on poll calls.
     assert "block=False" in prompt or "block: False" in prompt or "block:false" in prompt.lower()
     # Concurrency cap.
-    assert "10 concurrent" in prompt.lower() or "ten concurrent" in prompt.lower()
+    lower = prompt.lower()
+    assert (
+        "10 concurrent" in lower
+        or "ten concurrent" in lower
+        or "10-task cap" in lower
+        or "< 10" in lower
+    )
 
 
 def test_orchestrator_prompt_polls_in_single_loop() -> None:
@@ -290,25 +301,33 @@ def test_orchestrator_prompt_polls_in_single_loop() -> None:
 
 
 def test_orchestrator_prompt_handles_workflow_expander() -> None:
-    """The prompt must explain how to handle nodes with kind: workflow_expander."""
+    """The prompt must explain how to handle nodes with kind:
+    workflow_expander. Validation rules now live in the
+    `process-expansion` helper template; the orchestrator references
+    the helper and the surrounding state-machine semantics."""
     prompt = render_orchestrator_prompt(
         job_dir=Path("/x"),
         workflow_path=Path("/x/workflow.yaml"),
         request_text="r",
     )
-    # Mentioned by kind name
+    # Mentioned by kind name + helper.
     assert "workflow_expander" in prompt
-    # Step E.2 (or equivalent) section is present
-    assert "expansion.yaml" in prompt
-    # Validation rules are stated
+    assert "process-expansion" in prompt
+    # ID prefixing convention is documented in either orchestrator or helper.
+    helper = (
+        Path(__file__).resolve().parent.parent
+        / "prompts"
+        / "helpers"
+        / "process-expansion.md"
+    ).read_text()
+    assert "__" in prompt
+    assert "prefix" in helper.lower() or "<expander_id>__" in helper or "<EXPANDER_ID>__" in helper
+    # The validation rules — including no-nesting — live in the helper.
+    helper_lower = helper.lower()
     assert (
-        "no nested" in prompt.lower()
-        or "no nesting" in prompt.lower()
-        or "single-shot" in prompt.lower()
-    )
-    # ID prefixing convention is documented
-    assert "__" in prompt and (
-        "prefix" in prompt.lower() or "<N.id>__" in prompt or "<expander_id>__" in prompt
+        "no nested" in helper_lower
+        or "no nesting" in helper_lower
+        or "single-shot" in helper_lower
     )
 
 
@@ -341,13 +360,15 @@ def test_orchestrator_prompt_describes_expanded_nodes_state() -> None:
     assert "parent_expander" in prompt
 
 
-def test_orchestrator_prompt_rejects_nested_expanders_explicitly() -> None:
-    """The validation rules in the prompt must explicitly state that
-    nested workflow_expander is forbidden (single-shot, single-level)."""
-    prompt = render_orchestrator_prompt(
-        job_dir=Path("/x"),
-        workflow_path=Path("/x/workflow.yaml"),
-        request_text="r",
-    )
-    lower = prompt.lower()
+def test_process_expansion_helper_rejects_nested_expanders_explicitly() -> None:
+    """The validation rules — including no-nesting — live in the
+    process-expansion helper template under the thin-router architecture.
+    Nested workflow_expander must be rejected (single-shot, single-level)."""
+    helper = (
+        Path(__file__).resolve().parent.parent
+        / "prompts"
+        / "helpers"
+        / "process-expansion.md"
+    ).read_text()
+    lower = helper.lower()
     assert "no nested" in lower or "no nesting" in lower or "single-shot" in lower

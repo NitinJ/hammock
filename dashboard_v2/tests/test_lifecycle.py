@@ -89,6 +89,40 @@ def test_stop_skips_kill_when_pid_already_dead(tmp_path: Path) -> None:
     assert res["killed"] == "already_dead"
 
 
+def test_stop_finalizes_job_md_on_dead_orchestrator(tmp_path: Path) -> None:
+    """When the orchestrator pid is gone, control.md alone won't move
+    job.md to a terminal state — nothing left to honor it. The stop
+    endpoint must close the loop by writing job.md state=cancelled."""
+    _seed_job(tmp_path, "j-dead")
+    paths.orchestrator_pid_file("j-dead", root=tmp_path).write_text("999999")
+    lc.stop_job("j-dead", root=tmp_path, grace_seconds=0.5, sleep=0.1)
+    job_md_text = paths.job_md("j-dead", root=tmp_path).read_text()
+    assert "state: cancelled" in job_md_text
+    assert "finished_at:" in job_md_text
+    assert "cancelled by operator" in job_md_text
+
+
+def test_stop_finalizes_job_md_when_no_pidfile(tmp_path: Path) -> None:
+    """No pidfile at all — same closing-the-loop requirement."""
+    _seed_job(tmp_path, "j-nopid")
+    lc.stop_job("j-nopid", root=tmp_path)
+    job_md_text = paths.job_md("j-nopid", root=tmp_path).read_text()
+    assert "state: cancelled" in job_md_text
+    assert "cancelled by operator" in job_md_text
+
+
+def test_stop_finalize_is_idempotent_for_terminal_job_md(tmp_path: Path) -> None:
+    """If job.md already says completed/failed/cancelled, finalize must
+    not overwrite — a finished job is sacred."""
+    _seed_job(tmp_path, "j-done", state="completed")
+    # Stop is rejected at the outer guard (terminal state); the
+    # finalizer itself should also no-op even if reached.
+    lc._finalize_job_md_cancelled("j-done", root=tmp_path)
+    text = paths.job_md("j-done", root=tmp_path).read_text()
+    assert "state: completed" in text
+    assert "state: cancelled" not in text
+
+
 def test_stop_rejects_terminal_job(tmp_path: Path) -> None:
     _seed_job(tmp_path, "j-6", state="failed")
     with pytest.raises(lc.LifecycleError):

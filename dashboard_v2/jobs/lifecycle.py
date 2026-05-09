@@ -81,6 +81,55 @@ def resume_job(slug: str, *, root: Path | None = None) -> dict[str, str]:
     return {"slug": slug, "controlled_state": "running", "requested_at": _now()}
 
 
+def _finalize_job_md_cancelled(slug: str, root: Path | None = None) -> None:
+    """Write `state: cancelled` to job.md if it is not already terminal.
+
+    Used when the stop endpoint discovers the orchestrator subprocess
+    is no longer alive — control.md alone won't move job.md (no
+    orchestrator left to honor it), so we close the loop here.
+    Idempotent: leaves completed/failed/cancelled job.md alone.
+    """
+    job_md_path = paths.job_md(slug, root=root)
+    if not job_md_path.is_file():
+        return
+    text = job_md_path.read_text()
+    # Cheap frontmatter probe — avoid pulling in projections (cycle).
+    front: dict[str, str] = {}
+    body_start = 0
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            for line in text[4:end].splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    front[k.strip()] = v.strip()
+            body_start = end + len("\n---\n")
+    current_state = front.get("state", "submitted")
+    if current_state in TERMINAL_STATES:
+        return
+    front["state"] = "cancelled"
+    front["finished_at"] = _now()
+    front["error"] = "cancelled by operator"
+    body = text[body_start:].lstrip("\n")
+    lines = ["---"]
+    for k in (
+        "slug",
+        "workflow",
+        "state",
+        "submitted_at",
+        "started_at",
+        "finished_at",
+        "error",
+    ):
+        if front.get(k):
+            lines.append(f"{k}: {front[k]}")
+    lines.append("---")
+    lines.append("")
+    if body:
+        lines.append(body.rstrip() + "\n")
+    job_md_path.write_text("\n".join(lines))
+
+
 def _signal_pgroup(pid: int, sig: signal.Signals) -> None:
     """Send a signal to the process group of *pid*. Best-effort —
     swallow ESRCH (process gone) and EPERM (someone else's pid)."""
@@ -124,14 +173,21 @@ def stop_job(
 
     pid_path = paths.orchestrator_pid_file(slug, root=root)
     if not pid_path.is_file():
+        # No orchestrator subprocess on record. control.md says cancelled,
+        # but nothing left to honor it — finalize job.md ourselves.
+        _finalize_job_md_cancelled(slug, root=root)
         return {"slug": slug, "controlled_state": "cancelled", "killed": "no_pidfile"}
 
     try:
         pid = int(pid_path.read_text().strip())
     except (OSError, ValueError):
+        _finalize_job_md_cancelled(slug, root=root)
         return {"slug": slug, "controlled_state": "cancelled", "killed": "bad_pidfile"}
 
     if not _is_alive(pid):
+        # Orchestrator already gone (crash, shell kill, prior stop) — its
+        # job.md never got the cancelled state written. Close the loop.
+        _finalize_job_md_cancelled(slug, root=root)
         return {"slug": slug, "controlled_state": "cancelled", "killed": "already_dead"}
 
     _signal_pgroup(pid, signal.SIGTERM)

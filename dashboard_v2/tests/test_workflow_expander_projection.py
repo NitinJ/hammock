@@ -197,3 +197,101 @@ def test_node_detail_endpoint_resolves_expanded_child(
     assert r.status_code == 200
     body = r.json()
     assert body["state"] == "succeeded"
+
+
+def test_expanded_nodes_for_filesystem_first_when_state_json_missing(
+    hammock_v2_root: Path,
+) -> None:
+    """The orchestrator may have materialized child folders before
+    persisting state.json (race during merge). The projection should
+    surface those children from the filesystem regardless."""
+    slug = "fs-first"
+    job_dir = hammock_v2_root / "jobs" / slug
+    nodes_dir = job_dir / "nodes"
+    nodes_dir.mkdir(parents=True)
+    (job_dir / "job.md").write_text(
+        "---\n"
+        f"slug: {slug}\n"
+        "workflow: stage-implementation\n"
+        "state: running\n"
+        "---\n\n## Request\n\nstaged\n"
+    )
+    (job_dir / "workflow.yaml").write_text(
+        "name: stage-implementation\n"
+        "nodes:\n"
+        "  - id: read-plan\n"
+        "    prompt: read-impl-plan\n"
+        "  - id: execute-plan\n"
+        "    kind: workflow_expander\n"
+        "    after: [read-plan]\n"
+        "    prompt: execute-plan-expander\n"
+        "    requires: [output.md, expansion.yaml]\n"
+    )
+    # Top-level expander folder.
+    expander_dir = nodes_dir / "execute-plan"
+    expander_dir.mkdir()
+    (expander_dir / "state.md").write_text("---\nstate: running\n---\n")
+    # Children materialized on disk.
+    for cid in ("alpha", "beta"):
+        cdir = expander_dir / cid
+        cdir.mkdir()
+        (cdir / "state.md").write_text("---\nstate: pending\n---\n")
+    # Deliberately: NO orchestrator_state.json on disk.
+
+    expanded = expanded_nodes_for(slug, hammock_v2_root)
+    assert "execute-plan__alpha" in expanded
+    assert "execute-plan__beta" in expanded
+    assert expanded["execute-plan__alpha"]["parent_expander"] == "execute-plan"
+    assert expanded["execute-plan__beta"]["parent_expander"] == "execute-plan"
+
+
+def test_expanded_nodes_for_merges_state_json_enrichment(hammock_v2_root: Path) -> None:
+    """When both filesystem children AND state.json metadata exist, the
+    projection merges enrichment (prompt, after) onto the filesystem
+    skeleton."""
+    slug = "fs-and-state"
+    job_dir = hammock_v2_root / "jobs" / slug
+    nodes_dir = job_dir / "nodes"
+    nodes_dir.mkdir(parents=True)
+    (job_dir / "job.md").write_text(
+        f"---\nslug: {slug}\nworkflow: stage-implementation\nstate: running\n---\n"
+    )
+    (job_dir / "workflow.yaml").write_text(
+        "name: stage-implementation\n"
+        "nodes:\n"
+        "  - id: execute-plan\n"
+        "    kind: workflow_expander\n"
+        "    prompt: execute-plan-expander\n"
+        "    requires: [output.md, expansion.yaml]\n"
+    )
+    expander_dir = nodes_dir / "execute-plan"
+    expander_dir.mkdir()
+    (expander_dir / "state.md").write_text("---\nstate: running\n---\n")
+    (expander_dir / "alpha").mkdir()
+    (expander_dir / "alpha" / "state.md").write_text("---\nstate: pending\n---\n")
+
+    (job_dir / "orchestrator_state.json").write_text(
+        json.dumps(
+            {
+                "expanded_nodes": {
+                    "execute-plan__alpha": {
+                        "parent_expander": "execute-plan",
+                        "kind": "agent",
+                        "prompt": "implement-task",
+                        "after": [],
+                        "human_review": True,
+                        "requires": ["output.md"],
+                        "worktree": True,
+                        "description": "first task",
+                    }
+                }
+            }
+        )
+    )
+
+    expanded = expanded_nodes_for(slug, hammock_v2_root)
+    entry = expanded["execute-plan__alpha"]
+    assert entry["prompt"] == "implement-task"
+    assert entry["human_review"] is True
+    assert entry["worktree"] is True
+    assert entry["description"] == "first task"
