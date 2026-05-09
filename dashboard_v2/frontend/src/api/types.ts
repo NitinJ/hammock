@@ -17,6 +17,12 @@ export interface NodeOverview {
   started_at: string | null;
   finished_at: string | null;
   awaiting_human: boolean;
+  /** When set, this node is an expanded child of the named expander.
+   *  Frontend groups children under their parent in the timeline. */
+  parent_expander?: string | null;
+  /** Static workflow node kind. Top-level: "agent" or "workflow_expander".
+   *  Expanded children are always "agent" (validator forbids nesting). */
+  kind?: "agent" | "workflow_expander";
 }
 
 export interface JobSummary {
@@ -59,6 +65,8 @@ export interface WorkflowNode {
   human_review: boolean;
   description: string | null;
   requires?: string[];
+  worktree?: boolean;
+  kind?: "agent" | "workflow_expander";
 }
 
 export interface WorkflowSummary {

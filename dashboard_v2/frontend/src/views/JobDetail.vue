@@ -125,13 +125,14 @@
           </li>
           <li v-for="(node, i) in job.data.value.nodes" :key="node.id" class="relative">
             <span
-              v-if="i < job.data.value.nodes.length - 1"
+              v-if="i < job.data.value.nodes.length - 1 && !node.parent_expander"
               class="absolute left-[14px] top-7 bottom-0 w-px bg-border pointer-events-none"
             />
             <button
               type="button"
               :class="[
                 'w-full text-left px-2 py-2 rounded-lg flex items-start gap-3 group transition-colors',
+                node.parent_expander ? 'pl-7' : '',
                 selectedNodeId === node.id
                   ? 'bg-bg-elevated border border-border-strong'
                   : 'hover:bg-bg-raised border border-transparent',
@@ -140,7 +141,22 @@
             >
               <span :class="['size-2 mt-1.5 rounded-full shrink-0', dotColor(node)]" />
               <span class="flex-1 min-w-0">
-                <span class="block text-sm text-text-primary truncate">{{ node.id }}</span>
+                <span class="flex items-center gap-1.5">
+                  <span class="block text-sm text-text-primary truncate">{{
+                    displayName(node)
+                  }}</span>
+                  <span
+                    v-if="node.kind === 'workflow_expander'"
+                    class="text-[10px] uppercase tracking-wider px-1 py-0.5 rounded bg-accent/15 text-accent border border-accent/30 shrink-0"
+                    title="This node authors a runtime sub-DAG via expansion.yaml"
+                    >EXPANDER</span
+                  >
+                  <span
+                    v-else-if="node.parent_expander"
+                    class="text-[10px] uppercase tracking-wider text-text-tertiary shrink-0"
+                    >└ child</span
+                  >
+                </span>
                 <span class="text-xs text-text-tertiary"
                   >{{ node.state }}<span v-if="node.awaiting_human"> · awaiting human</span></span
                 >
@@ -268,5 +284,18 @@ function dotColor(node: NodeOverview): string {
     default:
       return "bg-state-pending";
   }
+}
+
+/** Human-readable label for a node row.
+ *
+ *  Top-level node: just the id.
+ *  Expanded child (`<parent>__<child>`): show the child portion only —
+ *  the indent + parent grouping above already conveys context, and the
+ *  full prefixed id is noisy in a narrow timeline. */
+function displayName(node: NodeOverview): string {
+  if (node.parent_expander && node.id.includes("__")) {
+    return node.id.split("__", 2)[1] ?? node.id;
+  }
+  return node.id;
 }
 </script>

@@ -54,18 +54,23 @@
             :fill="
               selectedId === box.id
                 ? 'rgba(124, 58, 237, 0.25)'
-                : box.humanReview
-                  ? 'rgba(245, 158, 11, 0.08)'
-                  : 'rgba(124, 58, 237, 0.08)'
+                : box.isExpander
+                  ? 'rgba(56, 189, 248, 0.08)'
+                  : box.humanReview
+                    ? 'rgba(245, 158, 11, 0.08)'
+                    : 'rgba(124, 58, 237, 0.08)'
             "
             :stroke="
               selectedId === box.id
                 ? 'rgba(124, 58, 237, 0.95)'
-                : box.humanReview
-                  ? 'rgba(245, 158, 11, 0.5)'
-                  : 'rgba(124, 58, 237, 0.4)'
+                : box.isExpander
+                  ? 'rgba(56, 189, 248, 0.6)'
+                  : box.humanReview
+                    ? 'rgba(245, 158, 11, 0.5)'
+                    : 'rgba(124, 58, 237, 0.4)'
             "
-            :stroke-width="selectedId === box.id ? '2' : '1.5'"
+            :stroke-width="selectedId === box.id || box.isExpander ? '2' : '1.5'"
+            :stroke-dasharray="box.isExpander ? '4 3' : undefined"
           />
           <text
             :x="box.w / 2"
@@ -88,6 +93,18 @@
             font-weight="600"
           >
             HIL
+          </text>
+          <text
+            v-if="box.isExpander"
+            :x="6"
+            :y="14"
+            text-anchor="start"
+            font-family="ui-sans-serif, system-ui"
+            font-size="9"
+            fill="rgb(56, 189, 248)"
+            font-weight="600"
+          >
+            EXPANDER
           </text>
           <!-- Hidden index for tests + future tooling -->
           <title>{{ box.id }}{{ box.description ? ` — ${box.description}` : "" }}</title>
@@ -127,6 +144,7 @@ interface BoxLayout {
   h: number;
   humanReview: boolean;
   description: string | null;
+  isExpander: boolean;
 }
 
 interface EdgeLayout {
@@ -222,6 +240,7 @@ const layout = computed<DagLayout>(() => {
       h: BOX_H,
       humanReview: n.human_review,
       description: n.description ?? null,
+      isExpander: n.kind === "workflow_expander",
     };
   });
 

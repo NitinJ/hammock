@@ -153,6 +153,26 @@
           </div>
           <div>
             <label class="text-xs uppercase tracking-wider text-text-tertiary block mb-1">
+              Kind
+            </label>
+            <select v-model="editKind" class="input text-sm w-full">
+              <option value="agent">agent (default — runs one Task subagent)</option>
+              <option value="workflow_expander">
+                workflow_expander (subagent emits expansion.yaml; orchestrator merges children)
+              </option>
+            </select>
+            <p
+              v-if="editKind === 'workflow_expander'"
+              class="text-[11px] text-text-tertiary mt-1 leading-relaxed"
+            >
+              Expander nodes auto-include `expansion.yaml` in <code>requires</code>. The agent
+              authoring this node must write both <code>output.md</code> and
+              <code>expansion.yaml</code>. Static nodes downstream of an expander wait for ALL
+              expanded children to terminate.
+            </p>
+          </div>
+          <div>
+            <label class="text-xs uppercase tracking-wider text-text-tertiary block mb-1">
               After (deps; comma-separated)
             </label>
             <input v-model="editAfter" class="input font-mono text-xs w-full" />
@@ -263,6 +283,7 @@ const selectedNode = computed<WorkflowNode | null>(() => {
 const editId = ref("");
 const editPrompt = ref("");
 const editHumanReview = ref(false);
+const editKind = ref<"agent" | "workflow_expander">("agent");
 const editAfter = ref("");
 const editRequires = ref("");
 const editDescription = ref("");
@@ -412,6 +433,7 @@ function onNodeSelect(id: string): void {
   editId.value = node.id;
   editPrompt.value = node.prompt;
   editHumanReview.value = node.human_review;
+  editKind.value = node.kind === "workflow_expander" ? "workflow_expander" : "agent";
   editAfter.value = node.after.join(", ");
   editRequires.value = (node.requires ?? ["output.md"]).join(", ");
   editDescription.value = node.description ?? "";
@@ -451,19 +473,25 @@ function onApplyNodeEdits(): void {
   if (!selectedNodeId.value || !liveNodes.value) return;
   const updated = liveNodes.value.map((n) => {
     if (n.id !== selectedNodeId.value) return n;
+    const kind = editKind.value;
+    let requires = editRequires.value
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => !!s);
+    if (kind === "workflow_expander" && !requires.includes("expansion.yaml")) {
+      requires = [...requires, "expansion.yaml"];
+    }
     return {
       ...n,
       id: editId.value.trim() || n.id,
       prompt: editPrompt.value || n.prompt,
       human_review: editHumanReview.value,
+      kind,
       after: editAfter.value
         .split(",")
         .map((s) => s.trim())
         .filter((s) => !!s),
-      requires: editRequires.value
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => !!s),
+      requires,
       description: editDescription.value || null,
     };
   });
@@ -502,6 +530,9 @@ function serializeNodes(nodes: WorkflowNode[], header: string): string {
   for (const n of nodes) {
     out.push(`  - id: ${n.id}`);
     out.push(`    prompt: ${n.prompt}`);
+    if (n.kind && n.kind !== "agent") {
+      out.push(`    kind: ${n.kind}`);
+    }
     if (n.after && n.after.length > 0) {
       out.push(`    after: [${n.after.join(", ")}]`);
     }
