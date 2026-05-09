@@ -435,6 +435,21 @@ nodes:
     assert nodes[1].after == ["task-a"]
 
 
+def test_bundled_stage_implementation_workflow_loads() -> None:
+    """The bundled stage-implementation workflow validates and exposes the
+    workflow_expander node correctly."""
+    here = Path(__file__).resolve().parent.parent / "workflows" / "stage-implementation.yaml"
+    wf = load_workflow(here)
+    by_id = {n.id: n for n in wf.nodes}
+    assert "read-plan" in by_id
+    assert "execute-plan" in by_id
+    assert "write-summary" in by_id
+    assert by_id["read-plan"].kind == "agent"
+    assert by_id["execute-plan"].kind == "workflow_expander"
+    assert "expansion.yaml" in by_id["execute-plan"].requires
+    assert by_id["execute-plan"].worktree is False
+
+
 def test_workflow_summary_exposes_kind(tmp_path: Path) -> None:
     """Summary projection includes the new kind field for the dashboard."""
     p = _write(

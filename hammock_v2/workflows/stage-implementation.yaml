@@ -1,0 +1,39 @@
+name: stage-implementation
+description: |
+  Takes an implementation plan as input + attached artifacts. The expander
+  reads the plan and emits expansion.yaml describing the stage/task DAG.
+  Summary aggregates after all expanded children complete.
+
+  Demo / canonical pattern for the workflow_expander node kind. The
+  agent itself authors the per-stage / per-task DAG at runtime; the
+  workflow author only sketches the outer skeleton.
+
+nodes:
+  - id: read-plan
+    prompt: read-impl-plan
+    requires: [output.md]
+    description: |
+      Read $REQUEST_TEXT and any attached artifacts (the implementation
+      plan). Emit a structured output.md that lists the stages and per-stage
+      tasks the expander will materialize. This node validates the plan
+      shape before the expander tries to author the runtime DAG.
+
+  - id: execute-plan
+    kind: workflow_expander
+    after: [read-plan]
+    prompt: execute-plan-expander
+    requires: [output.md, expansion.yaml]
+    description: |
+      Read read-plan/output.md. For every stage in the plan, emit a
+      stage-checkpoint node and one task node per task in that stage.
+      The expansion's after: edges encode stage ordering and the per-stage
+      checkpoint's HIL gate.
+
+  - id: write-summary
+    after: [execute-plan]
+    prompt: write-summary
+    requires: [output.md]
+    description: |
+      Read every expanded child's output.md (orchestrator surfaces them
+      under nodes/execute-plan/). Write an operator-facing wrap-up
+      naming each stage's outcome, every PR opened, and any failed tasks.
