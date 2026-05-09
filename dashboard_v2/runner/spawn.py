@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from hammock_v2.engine import paths
+
 log = logging.getLogger(__name__)
 
 
@@ -65,4 +67,9 @@ def spawn_orchestrator(
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    # Persist the wrapper pid so the stop endpoint can SIGTERM the
+    # process group. The wrapper cleans this up on its own exit.
+    pid_path = paths.orchestrator_pid_file(slug, root=root)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(proc.pid))
     return proc.pid

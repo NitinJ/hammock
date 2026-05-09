@@ -108,6 +108,18 @@ def orchestrator_state_json(slug: str, root: Path | None = None) -> Path:
     return job_dir(slug, root) / "orchestrator_state.json"
 
 
+def control_md(slug: str, root: Path | None = None) -> Path:
+    """Operator-controlled lifecycle gate. The orchestrator polls this
+    between iterations: state ∈ {running, paused, cancelled}."""
+    return job_dir(slug, root) / "control.md"
+
+
+def orchestrator_pid_file(slug: str, root: Path | None = None) -> Path:
+    """The runner writes the orchestrator subprocess pid here on spawn,
+    cleans up on exit. Used by stop endpoint to send SIGTERM."""
+    return job_dir(slug, root) / "orchestrator.pid"
+
+
 def ensure_job_layout(slug: str, root: Path | None = None) -> Path:
     """Create the job dir + nodes/ skeleton. Idempotent."""
     jd = job_dir(slug, root)

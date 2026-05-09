@@ -112,10 +112,18 @@ def job_summary(slug: str, root: Path) -> dict[str, Any] | None:
                     "awaiting_human": awaiting and not decision,
                 }
             )
+    # Lifecycle control gate (operator pause/resume/stop). Disk-derived
+    # so it survives refresh; orchestrator polls the same file.
+    control_path = paths.control_md(slug, root=root)
+    controlled_state = "running"
+    if control_path.is_file():
+        ctrl_front, _ = parse_frontmatter(control_path.read_text())
+        controlled_state = ctrl_front.get("state", "running")
     return {
         "slug": slug,
         "workflow_name": workflow_name,
         "state": front.get("state", "submitted"),
+        "controlled_state": controlled_state,
         "submitted_at": front.get("submitted_at"),
         "started_at": front.get("started_at"),
         "finished_at": front.get("finished_at"),

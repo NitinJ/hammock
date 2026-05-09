@@ -7,10 +7,12 @@ spawn helper can detach a subprocess that survives the request cycle.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import subprocess
 from pathlib import Path
 
+from hammock_v2.engine import paths
 from hammock_v2.engine.runner import JobConfig, run_job
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -55,17 +57,23 @@ def main() -> int:
         project_repo_path=project,
     )
     runner = _fake_runner if args.runner_mode == "fake" else None
-    if runner is None:
-        rc = run_job(
-            job=job,
-            workflow_path=workflow_path,
-            root=Path(args.root),
-            claude_binary=args.claude_binary,
-        )
-    else:
-        rc = run_job(job=job, workflow_path=workflow_path, root=Path(args.root), runner=runner)
-    log.info("orchestrator subprocess returned rc=%s for %s", rc, args.slug)
-    return rc
+    try:
+        if runner is None:
+            rc = run_job(
+                job=job,
+                workflow_path=workflow_path,
+                root=Path(args.root),
+                claude_binary=args.claude_binary,
+            )
+        else:
+            rc = run_job(job=job, workflow_path=workflow_path, root=Path(args.root), runner=runner)
+        log.info("orchestrator subprocess returned rc=%s for %s", rc, args.slug)
+        return rc
+    finally:
+        # Always clean up the pid file so the stop endpoint doesn't try
+        # to kill a stale pid (or another process that recycled the pid).
+        with contextlib.suppress(FileNotFoundError, OSError):
+            paths.orchestrator_pid_file(args.slug, root=Path(args.root)).unlink()
 
 
 if __name__ == "__main__":

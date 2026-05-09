@@ -153,6 +153,18 @@ def submit_job(
         dest = paths.repo_dir(job.slug, root=root)
         if not dest.exists():
             shutil.copytree(job.project_repo_path, dest, symlinks=False)
+
+    # Initial control.md — operator-controlled lifecycle gate. The
+    # orchestrator polls this between iterations to honor pause/cancel.
+    control_path = paths.control_md(job.slug, root=root)
+    if not control_path.exists():
+        control_path.write_text(
+            "---\n"
+            "state: running\n"
+            f"requested_at: {now}\n"
+            "requested_by: submit\n"
+            "---\n"
+        )
     return job_dir
 
 

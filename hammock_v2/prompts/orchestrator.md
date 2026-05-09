@@ -101,6 +101,29 @@ Before doing ANY work on this node, run the message-check protocol from section 
 
 The operator must NEVER wait for an in-flight Task to finish to get an ack. The fast-ack happens between Tasks — i.e. before each `Task(...)` call. If the operator sends a message while a Task is mid-run, you handle it on the next iteration's 2.0 step (which is the very next thing you do after the Task returns).
 
+#### 2.0b ALWAYS check the lifecycle control file (pause / cancel gate)
+
+After draining messages and BEFORE preparing inputs / dispatching the next Task, read `$JOB_DIR/control.md`. It has a YAML frontmatter with a `state:` value that is one of `running`, `paused`, `cancelled`.
+
+Behavior per state:
+
+- **`running`**: proceed normally to step 2.1.
+- **`paused`**:
+  1. If this is the first iteration to observe `paused` since the last `running` (track the last-observed value in `$JOB_DIR/orchestrator_state.json` under a `last_control_state` key): append ONE `from: orchestrator` message to `orchestrator_messages.jsonl`:
+     ```json
+     {"id":"msg-<n>","from":"orchestrator","timestamp":"<UTC ISO>","text":"Paused at the operator's request. Will resume when control returns to running."}
+     ```
+     Don't spam this on every poll — only the transition into paused.
+  2. Use `Bash` — `sleep 2`.
+  3. Loop back to 2.0 (re-poll messages) then 2.0b (re-poll control). Do NOT prepare inputs, do NOT dispatch the Task.
+  4. Continue looping until control returns to `running` or `cancelled`.
+- **`cancelled`**:
+  1. Append a `from: orchestrator` message: "Cancelled by operator."
+  2. Write `$JOB_DIR/job.md` with `state: cancelled`, `finished_at: <UTC ISO>`, `error: cancelled by operator`.
+  3. Exit cleanly. Do NOT dispatch any further Tasks. Do NOT process any further nodes.
+
+**Important**: Tasks themselves cannot be interrupted mid-flight. The pause/cancel request takes effect at the next checkpoint (between Tasks). Don't try to cancel a Task in progress; just check control again at the start of the next iteration.
+
 #### 2.1 Prepare inputs
 
 - Concatenate the user request and the contents of `output.md` from each node listed in `N.after` (in order).

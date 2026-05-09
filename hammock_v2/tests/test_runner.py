@@ -20,6 +20,14 @@ from hammock_v2.engine.runner import (
 )
 
 
+def _orchestrator_prompt() -> str:
+    return render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+
+
 def _fake_runner_factory(
     *, output_lines: list[str] | None = None, returncode: int = 0
 ) -> Callable[[list[str], Path, Path, Path], subprocess.CompletedProcess[bytes]]:
@@ -51,6 +59,31 @@ def test_submit_creates_layout(tmp_path: Path) -> None:
     assert len(state_files) >= 5
     for f in state_files:
         assert "pending" in f.read_text()
+
+
+def test_submit_writes_initial_control_md(tmp_path: Path) -> None:
+    """submit_job should drop a control.md with state: running so the
+    orchestrator's lifecycle gate has something to read on first poll."""
+    job = JobConfig(slug="t-ctrl-1", workflow_name="fix-bug", request_text="fix it")
+    submit_job(job=job, root=tmp_path)
+    ctrl = paths.control_md("t-ctrl-1", root=tmp_path)
+    assert ctrl.is_file()
+    text = ctrl.read_text()
+    assert "state: running" in text
+    assert "requested_at:" in text
+
+
+def test_orchestrator_prompt_polls_control_md() -> None:
+    """The orchestrator must check control.md between iterations and
+    honor paused / cancelled states."""
+    prompt = _orchestrator_prompt()
+    assert "control.md" in prompt
+    assert "paused" in prompt.lower()
+    assert "cancelled" in prompt.lower()
+    # The pause/cancel takes effect at the next checkpoint.
+    assert "checkpoint" in prompt.lower() or "between Tasks" in prompt
+    # The cancelled state writes job.md state=cancelled.
+    assert "state: cancelled" in prompt or "state=cancelled" in prompt
 
 
 def test_submit_copies_repo(tmp_path: Path) -> None:
