@@ -29,13 +29,32 @@ export function useJobStream(slug: Ref<string>): JobStreamHandle {
   const qc = useQueryClient();
   const connected = ref(false);
   let es: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempts = 0;
 
   function close(): void {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (es) {
       es.close();
       es = null;
     }
     connected.value = false;
+  }
+
+  function scheduleReconnect(): void {
+    if (reconnectTimer) return;
+    // Exponential backoff capped at 8s. Browsers also do their own
+    // EventSource reconnect, but we re-create explicitly so a permanently
+    // closed connection (e.g. server restart) doesn't leave us silent.
+    const delay = Math.min(1000 * 2 ** reconnectAttempts, 8000);
+    reconnectAttempts += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      open();
+    }, delay);
   }
 
   function open(): void {
@@ -46,12 +65,20 @@ export function useJobStream(slug: Ref<string>): JobStreamHandle {
 
     es.addEventListener("open", () => {
       connected.value = true;
+      reconnectAttempts = 0;
     });
     es.addEventListener("error", () => {
       connected.value = false;
+      // EventSource readyState 2 = CLOSED. Browser won't reconnect on its
+      // own from CLOSED, so we schedule one. If readyState is CONNECTING
+      // (0), the browser is already retrying — leave it.
+      if (es && es.readyState === EventSource.CLOSED) {
+        scheduleReconnect();
+      }
     });
     es.addEventListener("ping", () => {
       connected.value = true;
+      reconnectAttempts = 0;
     });
 
     es.addEventListener("node_state_changed", (ev: MessageEvent) => {

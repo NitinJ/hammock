@@ -140,7 +140,8 @@ export function useOrchestratorChat(slug: Ref<string>) {
     queryKey,
     queryFn: () => api.get<ChatResponse>(`/api/jobs/${slug.value}/orchestrator/chat`),
     enabled: computed(() => !!slug.value),
-    refetchInterval: 3000,
+    refetchInterval: 2000,
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -161,20 +162,25 @@ export function useOrchestratorEvents(slug: Ref<string>) {
     queryFn: () =>
       api.get<{ events: OrchestratorEvent[] }>(`/api/jobs/${slug.value}/orchestrator/events`),
     enabled: computed(() => !!slug.value),
-    refetchInterval: 5000,
+    refetchInterval: 2000,
+    refetchIntervalInBackground: true,
   });
 }
 
 export function useOrchestratorMessages(slug: Ref<string>) {
-  // SSE invalidates this on orchestrator_message_appended. Same
-  // safety-net polling as events.
+  // SSE invalidates this on orchestrator_message_appended. The polling
+  // is a safety net for cases where SSE drops or the tab is backgrounded
+  // (browsers throttle/pause SSE delivery in inactive tabs). We keep
+  // the interval tight and let it run even in background — chat-style
+  // UX expects messages to appear within a couple seconds, period.
   const queryKey = computed(() => QUERY_KEYS.orchestratorMessages(slug.value));
   return useQuery({
     queryKey,
     queryFn: () =>
       api.get<{ messages: OrchestratorMessage[] }>(`/api/jobs/${slug.value}/orchestrator/messages`),
     enabled: computed(() => !!slug.value),
-    refetchInterval: 5000,
+    refetchInterval: 1500,
+    refetchIntervalInBackground: true,
   });
 }
 
