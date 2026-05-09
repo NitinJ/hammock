@@ -47,13 +47,7 @@ def _now() -> str:
 def _write_control(slug: str, state: str, root: Path | None = None) -> None:
     path = paths.control_md(slug, root=root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "---\n"
-        f"state: {state}\n"
-        f"requested_at: {_now()}\n"
-        "requested_by: operator\n"
-        "---\n"
-    )
+    path.write_text(f"---\nstate: {state}\nrequested_at: {_now()}\nrequested_by: operator\n---\n")
 
 
 def pause_job(slug: str, *, root: Path | None = None) -> dict[str, str]:

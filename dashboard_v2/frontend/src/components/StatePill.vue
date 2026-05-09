@@ -17,7 +17,9 @@ const props = defineProps<{
     | "awaiting"
     | "submitted"
     | "completed"
-    | "blocked_on_human";
+    | "blocked_on_human"
+    | "paused"
+    | "cancelled";
 }>();
 
 const label = computed(() => {
@@ -33,10 +35,13 @@ const dotClass = computed(() => {
     case "completed":
       return "bg-state-succeeded";
     case "failed":
+    case "cancelled":
       return "bg-state-failed";
     case "awaiting":
     case "blocked_on_human":
       return "bg-state-awaiting animate-pulse";
+    case "paused":
+      return "bg-amber-400";
     case "submitted":
       return "bg-accent-soft animate-pulse";
     default:

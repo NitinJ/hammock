@@ -159,11 +159,7 @@ def submit_job(
     control_path = paths.control_md(job.slug, root=root)
     if not control_path.exists():
         control_path.write_text(
-            "---\n"
-            "state: running\n"
-            f"requested_at: {now}\n"
-            "requested_by: submit\n"
-            "---\n"
+            f"---\nstate: running\nrequested_at: {now}\nrequested_by: submit\n---\n"
         )
     return job_dir
 

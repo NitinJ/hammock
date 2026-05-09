@@ -25,7 +25,65 @@
             title="Live updates"
           />
           <StatePill v-if="job.data.value" :state="job.data.value.state" />
+          <span
+            v-if="
+              job.data.value?.controlled_state === 'paused' &&
+              job.data.value?.state !== 'paused' &&
+              !isTerminal
+            "
+            class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30"
+          >
+            Pause requested
+          </span>
+          <span
+            v-if="
+              job.data.value?.controlled_state === 'cancelled' &&
+              job.data.value?.state !== 'cancelled' &&
+              !isTerminal
+            "
+            class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/30"
+          >
+            Cancel requested
+          </span>
         </div>
+      </div>
+      <div v-if="job.data.value" class="flex flex-wrap items-center gap-2 mb-3">
+        <button
+          v-if="canPause"
+          type="button"
+          class="btn-ghost text-xs"
+          :disabled="pause.isPending.value || job.data.value?.controlled_state === 'paused'"
+          @click="onPause"
+        >
+          {{ pause.isPending.value ? "Pausing…" : "Pause" }}
+        </button>
+        <button
+          v-if="canResume"
+          type="button"
+          class="btn-ghost text-xs"
+          :disabled="resume.isPending.value"
+          @click="onResume"
+        >
+          {{ resume.isPending.value ? "Resuming…" : "Resume" }}
+        </button>
+        <button
+          v-if="canStop"
+          type="button"
+          class="btn-ghost text-xs text-red-300 hover:bg-red-500/10"
+          :disabled="stop.isPending.value"
+          @click="onStop"
+        >
+          {{ stop.isPending.value ? "Stopping…" : "Stop" }}
+        </button>
+        <button
+          v-if="canDelete"
+          type="button"
+          class="btn-ghost text-xs text-red-300 hover:bg-red-500/10"
+          :disabled="del.isPending.value"
+          @click="onDelete"
+        >
+          {{ del.isPending.value ? "Deleting…" : "Delete" }}
+        </button>
       </div>
       <p v-if="job.data.value?.request" class="text-sm text-text-secondary line-clamp-3">
         {{ job.data.value.request }}
@@ -105,12 +163,12 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 
 import StatePill from "@/components/StatePill.vue";
 import NodePane from "@/components/NodePane.vue";
 import OrchestratorPane from "@/components/OrchestratorPane.vue";
-import { useJob } from "@/api/queries";
+import { useDeleteJob, useJob, usePauseJob, useResumeJob, useStopJob } from "@/api/queries";
 import { useJobStream } from "@/composables/useJobStream";
 import type { NodeOverview } from "@/api/types";
 
@@ -119,6 +177,71 @@ const slugRef = computed(() => props.slug);
 const job = useJob(slugRef);
 const stream = useJobStream(slugRef);
 const selectedNodeId = ref<string | null>(null);
+const router = useRouter();
+
+const pause = usePauseJob();
+const resume = useResumeJob();
+const stop = useStopJob();
+const del = useDeleteJob();
+
+const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+const isTerminal = computed(() => TERMINAL.has(job.data.value?.state ?? ""));
+const canPause = computed(() => job.data.value?.state === "running" && !isTerminal.value);
+const canResume = computed(
+  () => job.data.value?.controlled_state === "paused" && !isTerminal.value,
+);
+const canStop = computed(
+  () =>
+    !isTerminal.value &&
+    (job.data.value?.state === "running" ||
+      job.data.value?.state === "blocked_on_human" ||
+      job.data.value?.state === "paused" ||
+      job.data.value?.controlled_state === "paused"),
+);
+const canDelete = computed(() => isTerminal.value);
+
+async function onPause(): Promise<void> {
+  if (!props.slug) return;
+  try {
+    await pause.mutateAsync(props.slug);
+  } catch (e) {
+    window.alert(`Pause failed: ${(e as Error).message}`);
+  }
+}
+
+async function onResume(): Promise<void> {
+  if (!props.slug) return;
+  try {
+    await resume.mutateAsync(props.slug);
+  } catch (e) {
+    window.alert(`Resume failed: ${(e as Error).message}`);
+  }
+}
+
+async function onStop(): Promise<void> {
+  if (!props.slug) return;
+  if (!window.confirm("Stop this job? Cancellation takes effect at the next checkpoint.")) {
+    return;
+  }
+  try {
+    await stop.mutateAsync(props.slug);
+  } catch (e) {
+    window.alert(`Stop failed: ${(e as Error).message}`);
+  }
+}
+
+async function onDelete(): Promise<void> {
+  if (!props.slug) return;
+  if (!window.confirm("Delete this job and all its files? This cannot be undone.")) {
+    return;
+  }
+  try {
+    await del.mutateAsync(props.slug);
+    await router.push({ name: "jobs" });
+  } catch (e) {
+    window.alert(`Delete failed: ${(e as Error).message}`);
+  }
+}
 
 watch(
   () => job.data.value?.nodes,

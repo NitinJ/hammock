@@ -1,6 +1,14 @@
 /** Type-only mirrors of dashboard_v2/api projection shapes. */
 
-export type JobState = "submitted" | "running" | "blocked_on_human" | "completed" | "failed";
+export type JobState =
+  | "submitted"
+  | "running"
+  | "blocked_on_human"
+  | "paused"
+  | "cancelled"
+  | "completed"
+  | "failed";
+export type ControlledState = "running" | "paused" | "cancelled";
 export type NodeState = "pending" | "running" | "succeeded" | "failed";
 
 export interface NodeOverview {
@@ -15,6 +23,10 @@ export interface JobSummary {
   slug: string;
   workflow_name: string;
   state: JobState;
+  /** Operator-requested lifecycle state (running | paused | cancelled).
+   *  Lags behind the orchestrator until the next checkpoint, so the UI
+   *  can display "Pause requested..." while state is still "running". */
+  controlled_state?: ControlledState;
   submitted_at: string | null;
   started_at: string | null;
   finished_at: string | null;

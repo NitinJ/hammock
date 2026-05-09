@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from dashboard_v2 import projects as proj
 from dashboard_v2 import workflows as wf_lib
 from dashboard_v2.api.artifacts import save_artifacts
-from dashboard_v2.jobs import lifecycle as lifecycle_lib
 from dashboard_v2.api.projections import (
     append_orchestrator_message,
     job_summary,
@@ -28,6 +27,7 @@ from dashboard_v2.api.projections import (
     orchestrator_messages,
     write_human_decision,
 )
+from dashboard_v2.jobs import lifecycle as lifecycle_lib
 from dashboard_v2.runner.spawn import spawn_orchestrator
 from dashboard_v2.settings import load_settings
 from hammock_v2.engine import paths

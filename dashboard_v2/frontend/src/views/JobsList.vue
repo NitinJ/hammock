@@ -24,7 +24,7 @@
       </RouterLink>
     </div>
     <ul v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <li v-for="job in jobs.data.value" :key="job.slug">
+      <li v-for="job in jobs.data.value" :key="job.slug" class="relative">
         <RouterLink
           :to="{ name: 'job-detail', params: { slug: job.slug } }"
           class="surface surface-hover p-5 block group"
@@ -58,6 +58,15 @@
             {{ job.slug }}
           </div>
         </RouterLink>
+        <button
+          v-if="isTerminal(job.state)"
+          type="button"
+          class="absolute top-3 right-3 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 transition-colors"
+          :disabled="del.isPending.value"
+          @click.prevent.stop="onDelete(job.slug)"
+        >
+          Delete
+        </button>
       </li>
     </ul>
   </section>
@@ -66,10 +75,17 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
 import StatePill from "@/components/StatePill.vue";
-import { useJobs } from "@/api/queries";
+import { useDeleteJob, useJobs } from "@/api/queries";
 import { formatDuration } from "@/lib/format";
 
 const jobs = useJobs();
+const del = useDeleteJob();
+
+const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+
+function isTerminal(state: string): boolean {
+  return TERMINAL.has(state);
+}
 
 function nodeColor(state: string, awaiting: boolean): string {
   if (awaiting) return "bg-state-awaiting";
@@ -82,6 +98,15 @@ function nodeColor(state: string, awaiting: boolean): string {
       return "bg-state-failed";
     default:
       return "bg-state-pending";
+  }
+}
+
+async function onDelete(slug: string): Promise<void> {
+  if (!window.confirm(`Delete job ${slug}? This cannot be undone.`)) return;
+  try {
+    await del.mutateAsync(slug);
+  } catch (e) {
+    window.alert(`Delete failed: ${(e as Error).message}`);
   }
 }
 </script>

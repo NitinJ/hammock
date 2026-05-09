@@ -13,7 +13,7 @@ from dashboard_v2.jobs import lifecycle as lc
 from hammock_v2.engine import paths
 
 
-def _seed_job(root: Path, slug: str, state: str = "running") -> None:
+def _seed_job(root: Path, slug: str, state: str = "running") -> Path:
     """Lay down a minimal job dir (job.md + control.md + nodes/) so the
     projection can resolve a summary for the lifecycle helpers."""
     jd = paths.ensure_job_layout(slug, root=root)

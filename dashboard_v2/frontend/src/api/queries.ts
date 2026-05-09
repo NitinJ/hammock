@@ -204,6 +204,52 @@ export function useJob(slug: Ref<string>) {
   });
 }
 
+// -------------------- Job lifecycle (pause / resume / stop / delete) --------------------
+
+interface LifecycleResponse {
+  slug: string;
+  controlled_state?: string;
+  killed?: string;
+  deleted?: string;
+}
+
+function _invalidateJob(qc: ReturnType<typeof useQueryClient>, slug: string): void {
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug) });
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.jobs() });
+}
+
+export function usePauseJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<LifecycleResponse>(`/api/jobs/${slug}/pause`, {}),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useResumeJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<LifecycleResponse>(`/api/jobs/${slug}/resume`, {}),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useStopJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<LifecycleResponse>(`/api/jobs/${slug}/stop`, {}),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
+export function useDeleteJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.del<LifecycleResponse>(`/api/jobs/${slug}`),
+    onSuccess: (_, slug) => _invalidateJob(qc, slug),
+  });
+}
+
 export function useNode(slug: Ref<string>, nodeId: Ref<string | null>) {
   const queryKey = computed(() => QUERY_KEYS.node(slug.value, nodeId.value ?? ""));
   return useQuery({
