@@ -43,6 +43,17 @@
           >
             Projects
           </RouterLink>
+          <RouterLink
+            :to="{ name: 'prompts' }"
+            :class="[
+              'px-3 py-1.5 rounded-md transition-colors',
+              isPromptsActive
+                ? 'bg-bg-elevated text-text-primary'
+                : 'text-text-tertiary hover:text-text-secondary',
+            ]"
+          >
+            Prompts
+          </RouterLink>
         </nav>
         <div class="ml-auto flex items-center gap-2">
           <RouterLink
@@ -84,5 +95,8 @@ const isWorkflowsActive = computed(() =>
 );
 const isProjectsActive = computed(() =>
   ["projects", "project-detail", "project-new"].includes(String(route.name)),
+);
+const isPromptsActive = computed(() =>
+  ["prompts", "prompt-detail", "prompt-edit", "prompt-new"].includes(String(route.name)),
 );
 </script>

@@ -91,6 +91,22 @@ export interface ProjectPrompt {
   bundled: boolean;
 }
 
+/** Aggregate prompt entry (across bundled + every project). */
+export interface PromptEntry {
+  name: string;
+  /** "bundled" or a project slug. */
+  source: string;
+  path: string;
+  size: number;
+  modified_at: string;
+}
+
+export interface PromptDetail {
+  name: string;
+  source: string;
+  content: string;
+}
+
 export interface OrchestratorMessage {
   id: string;
   from: "operator" | "orchestrator";

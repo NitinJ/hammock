@@ -68,6 +68,14 @@ body {
     @apply px-4 py-2 rounded-lg border border-border hover:border-border-strong text-text-secondary hover:text-text-primary transition-colors;
   }
 
+  .btn-secondary {
+    @apply px-3 py-1.5 rounded-md border border-border hover:border-border-strong bg-bg-elevated text-text-secondary hover:text-text-primary transition-colors;
+  }
+
+  .btn-danger {
+    @apply px-3 py-1.5 rounded-md border border-state-failed/40 hover:border-state-failed bg-state-failed/10 text-state-failed transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
   .input {
     @apply w-full px-3 py-2 rounded-lg bg-bg-raised/40 border border-border focus:border-accent/60 focus:outline-none text-text-primary placeholder-text-tertiary;
   }

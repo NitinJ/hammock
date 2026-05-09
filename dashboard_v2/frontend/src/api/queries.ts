@@ -9,6 +9,8 @@ import type {
   OrchestratorMessage,
   Project,
   ProjectPrompt,
+  PromptDetail,
+  PromptEntry,
   WorkflowDetail,
   WorkflowSummary,
 } from "./types";
@@ -28,6 +30,8 @@ export const QUERY_KEYS = {
   projectWorkflows: (slug: string) => ["projects", slug, "workflows"] as const,
   projectPrompts: (slug: string) => ["projects", slug, "prompts"] as const,
   projectPrompt: (slug: string, name: string) => ["projects", slug, "prompts", name] as const,
+  prompts: (source?: string | null) => ["prompts", source ?? "all"] as const,
+  promptDetail: (source: string, name: string) => ["prompts", source, name] as const,
 };
 
 export function useWorkflows() {
@@ -341,6 +345,100 @@ export function useDeleteProjectWorkflow(slug: Ref<string>) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectWorkflows(slug.value) });
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.workflows() });
+    },
+  });
+}
+
+/** Aggregate prompts list across bundled + every registered project. */
+export function usePrompts(source?: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.prompts(source?.value));
+  return useQuery({
+    queryKey,
+    queryFn: () => {
+      const q = source?.value ? `?source=${encodeURIComponent(source.value)}` : "";
+      return api.get<{ prompts: PromptEntry[] }>(`/api/prompts${q}`);
+    },
+  });
+}
+
+/** Detail (content) for any source. Bundled uses /api/prompts/bundled/{name};
+ *  per-project uses /api/projects/{slug}/prompts/{name}. */
+export function usePromptDetail(source: Ref<string | null>, name: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.promptDetail(source.value ?? "", name.value ?? ""));
+  return useQuery({
+    queryKey,
+    queryFn: async () => {
+      const s = source.value!;
+      const n = name.value!;
+      if (s === "bundled") {
+        return api.get<PromptDetail>(`/api/prompts/bundled/${n}`);
+      }
+      const body = await api.get<{ name: string; content: string; bundled: boolean }>(
+        `/api/projects/${s}/prompts/${n}`,
+      );
+      return { name: body.name, source: s, content: body.content } satisfies PromptDetail;
+    },
+    enabled: computed(() => !!source.value && !!name.value),
+  });
+}
+
+/** Save a prompt to a project. Source must be a project slug, never "bundled". */
+export function useSavePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { source: string; name: string; content: string }) => {
+      if (body.source === "bundled") {
+        throw new Error("bundled prompts are read-only — pick a project");
+      }
+      return api.post(`/api/projects/${body.source}/prompts`, {
+        name: body.name,
+        content: body.content,
+      });
+    },
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts(vars.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(vars.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.promptDetail(vars.source, vars.name) });
+    },
+  });
+}
+
+export function useDeletePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { source: string; name: string }) => {
+      if (body.source === "bundled") {
+        throw new Error("bundled prompts cannot be deleted");
+      }
+      return api.del(`/api/projects/${body.source}/prompts/${body.name}`);
+    },
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts(vars.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(vars.source) });
+    },
+  });
+}
+
+/** Composite: read a bundled prompt's content + write it to a project as a
+ *  new prompt (under the same name unless renamed). */
+export function useCopyBundledPromptToProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { fromName: string; toProject: string; toName?: string }) => {
+      const detail = await api.get<PromptDetail>(`/api/prompts/bundled/${body.fromName}`);
+      const targetName = body.toName ?? body.fromName;
+      await api.post(`/api/projects/${body.toProject}/prompts`, {
+        name: targetName,
+        content: detail.content,
+      });
+      return { source: body.toProject, name: targetName };
+    },
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.prompts(data.source) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.projectPrompts(data.source) });
     },
   });
 }

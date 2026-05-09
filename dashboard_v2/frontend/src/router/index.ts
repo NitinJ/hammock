@@ -7,6 +7,9 @@ import OrchestratorView from "@/views/OrchestratorView.vue";
 import ProjectAdd from "@/views/ProjectAdd.vue";
 import ProjectDetail from "@/views/ProjectDetail.vue";
 import Projects from "@/views/Projects.vue";
+import Prompts from "@/views/Prompts.vue";
+import PromptDetail from "@/views/PromptDetail.vue";
+import PromptEditor from "@/views/PromptEditor.vue";
 import Workflows from "@/views/Workflows.vue";
 import WorkflowDetail from "@/views/WorkflowDetail.vue";
 import WorkflowEditor from "@/views/WorkflowEditor.vue";
@@ -59,6 +62,20 @@ export const router = createRouter({
         projectSlug: route.params.slug,
         name: route.params.name,
       }),
+    },
+    { path: "/prompts", name: "prompts", component: Prompts },
+    { path: "/prompts/new", name: "prompt-new", component: PromptEditor, props: true },
+    {
+      path: "/prompts/:source/:name",
+      name: "prompt-detail",
+      component: PromptDetail,
+      props: true,
+    },
+    {
+      path: "/prompts/:source/:name/edit",
+      name: "prompt-edit",
+      component: PromptEditor,
+      props: true,
     },
   ],
 });
