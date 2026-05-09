@@ -33,6 +33,7 @@ There is **no "between Tasks" framing** in this loop. The same iteration handles
 - **Don't dispatch a node whose `after:` deps aren't all `succeeded` (or `skipped`).** A node with deps `[A, B]` waits for both.
 - **Don't dispatch a node twice.** Before spawning, check `active_tasks` in `orchestrator_state.json` and the node's `state.md`. Skip if it's already running, succeeded, failed, or skipped.
 - **All work goes through Task.** Workflow nodes get one Task each. Don't try to do node-level work inline (no inline code edits, no inline `gh` calls). Your own time is for routing, validation, message-handling, and Task polling — not for work.
+- **`workflow_expander` nodes integrate with this same loop.** When an expander Task completes, you parse its `expansion.yaml`, validate it, ID-prefix the children, materialize their folders, and merge them into your runtime DAG (see Step E.2). From that point on, expanded children dispatch through the normal Step E like any other runnable node. Static nodes downstream of the expander wait until ALL expanded children are terminal — the expander acts as an aggregation barrier.
 
 ## On-disk layout you must respect
 
@@ -55,7 +56,14 @@ $JOB_DIR/
     ├── chat.jsonl             (you write a transcript snapshot here when Task completes)
     ├── validation.md          (you write when a node fails its `requires:` check)
     ├── awaiting_human.md      (you write when human_review pause begins)
-    └── human_decision.md      (the dashboard writes — you poll for it)
+    ├── human_decision.md      (the dashboard writes — you poll for it)
+    ├── expansion.yaml         (only for kind: workflow_expander — agent writes; you parse + merge)
+    └── <child_id>/            (only for expanded children of an expander)
+        ├── input.md
+        ├── prompt.md
+        ├── output.md
+        ├── state.md
+        └── ... (all the same files as a top-level node)
 ```
 
 ## Persisted state
@@ -72,9 +80,23 @@ Maintain `$JOB_DIR/orchestrator_state.json`. Shape:
   "completed_nodes": ["write-bug-report", "write-design-spec"],
   "failed_nodes": [],
   "skipped_nodes": [],
-  "human_review_iterations": {"review-design-spec": 1}
+  "human_review_iterations": {"review-design-spec": 1},
+  "expanded_nodes": {
+    "execute-plan__stage-1-task-a": {
+      "parent_expander": "execute-plan",
+      "kind": "agent",
+      "prompt": "implement-task",
+      "after": [],
+      "human_review": false,
+      "requires": ["output.md"],
+      "worktree": true,
+      "description": null
+    }
+  }
 }
 ```
+
+`expanded_nodes` is populated by Step E.2 (workflow_expander handling). Once populated, those entries are first-class members of the runtime DAG — Step E's "is this node runnable?" loop iterates `static workflow.nodes ∪ expanded_nodes.values()`.
 
 Update on every state transition. Crash recovery: if you ever restart and find an `active_tasks` entry, the corresponding Task is gone (Task lifetimes don't survive your restart). Reconcile by clearing `active_tasks` and re-dispatching any node whose state.md still says `running`.
 
@@ -302,6 +324,69 @@ After polling, check the workflow for nodes that can start:
 6. **Continue the main loop.** Don't wait for this Task. The next iteration's Step C will poll it.
 
 For `worktree: true` nodes (typically `implement` and `pr-create`): the subagent runs in an isolated git worktree off the project repo. The Task result includes the worktree path + branch name; capture them when the Task completes (Step C.1) if downstream needs them.
+
+#### Step E.2 — Special handling: `kind: workflow_expander`
+
+A `workflow_expander` node dispatches the SAME way as an agent node (Step E.1). The difference happens AFTER its Task completes — the orchestrator merges the agent's authored sub-DAG into the runtime workflow.
+
+When Step C.1's strict-existence check passes for an expander node, run this protocol BEFORE marking the node `succeeded`:
+
+1. **Read the expansion**: `Read $JOB_DIR/nodes/<N.id>/expansion.yaml`.
+
+2. **Validate** the expansion against the schema. Required rules (each one a hard rejection):
+   - Top-level is a mapping with a non-empty `nodes:` list.
+   - Every entry validates against the same Node schema you use for static workflow nodes (id alphanumeric+`-`+`_`, prompt non-empty, requires defaults to `["output.md"]`, etc.).
+   - **No nested expanders**: any node with `kind: workflow_expander` → reject. Single-shot, single-level.
+   - **No reaching out**: every `after:` reference must resolve to another id WITHIN this expansion. Static workflow ids are off-limits.
+   - **No duplicate ids** within the expansion.
+   - **No cycles** in the expansion's `after:` edges.
+
+   If any rule fails: treat as validation failure (Step C.1's retry-once path). Re-spawn the expander Task with prompt extended by:
+   ```markdown
+   ---
+   ## EXPANSION VALIDATION FAILURE — RETRY
+   Your expansion.yaml was invalid: <error message>. Rules: nodes must be a non-empty list; no kind: workflow_expander allowed; after: edges must reference other ids in this expansion only; ids must be unique; no cycles. Re-emit a valid expansion.yaml using `Write`.
+   ```
+   After two failures, mark the expander `failed` and abort the job (same hard-fail path as a missing required output).
+
+3. **Prefix expanded ids**: every child's id becomes `<N.id>__<child_id>`. Internal `after:` references are remapped to the prefixed names. The expander itself is the implicit root — children with empty `after:` start as soon as the expander is `succeeded`.
+
+4. **Materialize child folders**. For each prefixed child:
+   - Create `$JOB_DIR/nodes/<N.id>/<child_id>/` (note: child folder lives under the expander's folder; the prefixed runtime id maps to this nested path for projection purposes).
+   - Write initial `state.md` with `state: pending`.
+   - Do NOT create `input.md` or `prompt.md` yet — those are written when the child is dispatched at its turn through Step E.1.
+
+5. **Update `orchestrator_state.json`**: add an `expanded_nodes` map entry for each child:
+   ```json
+   {
+     "expanded_nodes": {
+       "<N.id>__<child_id>": {
+         "parent_expander": "<N.id>",
+         "kind": "agent",
+         "prompt": "<child.prompt>",
+         "after": ["<N.id>__<other_child_id>", ...],
+         "human_review": <bool>,
+         "requires": [...],
+         "worktree": <bool>,
+         "description": "<child.description or null>"
+       },
+       ...
+     }
+   }
+   ```
+
+   The orchestrator's runtime DAG is now `static workflow.nodes ∪ expanded_nodes.values()`. From this point on, expanded children appear in your scheduling decisions exactly like static nodes — they have ids, after-edges, prompts, requires, etc.
+
+6. **Mark the expander `succeeded`** (in state.md) ONLY for its own Task — but downstream static nodes whose `after:` includes the expander's id must continue to wait until ALL expanded children are terminal (succeeded ∪ failed ∪ skipped). This is the **aggregation barrier**: an expander is "fully complete" only when every child it produced has reached terminal state. Track this in your gating logic at Step E:
+   - A static node `M` with `<N.id> ∈ M.after` is dispatchable only when `<N.id>` is in `completed_nodes` AND every `<N.id>__*` is in `completed_nodes ∪ failed_nodes ∪ skipped_nodes`.
+
+7. **Resume the main loop**. The next iteration's Step E will dispatch any expanded children whose `after:` deps are satisfied (which for children with empty `after:` means immediately).
+
+##### Notes on expander dispatch
+
+- The static workflow's expander node itself uses Step E.1 just like any agent node. Its prompt is the operator's choice (`N.prompt`); the agent must `Write` both `output.md` and `expansion.yaml` before ending its turn (the Step C.1 strict-existence check enforces this).
+- An expander cannot have `worktree: true` (schema validator rejects).
+- The orchestrator handles failed expanded children gracefully: a failed child marks itself terminal-failed; other expanded children continue. The whole job is marked failed only if (a) the expander itself fails twice, or (b) a critical child failure causes downstream cascade.
 
 ### Step F — Loop exit / job finalization
 

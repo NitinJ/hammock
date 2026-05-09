@@ -284,3 +284,70 @@ def test_orchestrator_prompt_polls_in_single_loop() -> None:
     # but it must not be the operative framing.)
     # The loop iterates ~1Hz (1 second cadence).
     assert "~1Hz" in prompt or "1Hz" in prompt or "~1 second" in prompt or "~1s" in prompt
+
+
+# --- workflow_expander handling ----------------------------------------
+
+
+def test_orchestrator_prompt_handles_workflow_expander() -> None:
+    """The prompt must explain how to handle nodes with kind: workflow_expander."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    # Mentioned by kind name
+    assert "workflow_expander" in prompt
+    # Step E.2 (or equivalent) section is present
+    assert "expansion.yaml" in prompt
+    # Validation rules are stated
+    assert (
+        "no nested" in prompt.lower()
+        or "no nesting" in prompt.lower()
+        or "single-shot" in prompt.lower()
+    )
+    # ID prefixing convention is documented
+    assert "__" in prompt and (
+        "prefix" in prompt.lower() or "<N.id>__" in prompt or "<expander_id>__" in prompt
+    )
+
+
+def test_orchestrator_prompt_documents_aggregation_barrier() -> None:
+    """The prompt must describe the aggregation-barrier semantics:
+    static nodes downstream of an expander wait for ALL expanded
+    children to be terminal."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    assert (
+        "aggregation barrier" in prompt.lower()
+        or "every expanded" in prompt.lower()
+        or "all expanded" in prompt.lower()
+    )
+
+
+def test_orchestrator_prompt_describes_expanded_nodes_state() -> None:
+    """`expanded_nodes` should appear in the persisted-state schema so
+    the orchestrator tracks parent_expander relationships for the
+    dashboard's grouping projection."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    assert "expanded_nodes" in prompt
+    assert "parent_expander" in prompt
+
+
+def test_orchestrator_prompt_rejects_nested_expanders_explicitly() -> None:
+    """The validation rules in the prompt must explicitly state that
+    nested workflow_expander is forbidden (single-shot, single-level)."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    lower = prompt.lower()
+    assert "no nested" in lower or "no nesting" in lower or "single-shot" in lower
