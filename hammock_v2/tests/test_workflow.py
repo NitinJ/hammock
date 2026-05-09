@@ -294,3 +294,162 @@ def test_bundled_fix_bug_implement_node_requires_branch_txt() -> None:
     wf = load_workflow(here)
     impl = next(n for n in wf.nodes if n.id == "implement")
     assert "branch.txt" in impl.requires
+
+
+# --- workflow_expander schema + validator -------------------------------
+
+
+def test_node_default_kind_is_agent() -> None:
+    from hammock_v2.engine.workflow import Node
+
+    n = Node(id="x", prompt="p")
+    assert n.kind == "agent"
+
+
+def test_workflow_expander_auto_adds_expansion_yaml_to_requires() -> None:
+    from hammock_v2.engine.workflow import Node
+
+    n = Node(id="ex", prompt="ex", kind="workflow_expander")
+    assert "expansion.yaml" in n.requires
+    assert "output.md" in n.requires
+
+
+def test_workflow_expander_rejects_worktree_true() -> None:
+    from hammock_v2.engine.workflow import Node
+
+    with pytest.raises(Exception, match="cannot use worktree=true"):
+        Node(id="ex", prompt="ex", kind="workflow_expander", worktree=True)
+
+
+def test_validate_expansion_happy_path(tmp_path: Path) -> None:
+    from hammock_v2.engine.workflow import validate_expansion
+
+    yaml_text = """
+nodes:
+  - id: task-a
+    prompt: implement-task
+  - id: task-b
+    prompt: implement-task
+  - id: checkpoint
+    prompt: stage-checkpoint
+    after: [task-a, task-b]
+    human_review: true
+"""
+    nodes = validate_expansion(yaml_text, expander_id="execute-plan")
+    assert [n.id for n in nodes] == ["task-a", "task-b", "checkpoint"]
+    assert nodes[2].human_review is True
+
+
+def test_validate_expansion_rejects_nested_expander() -> None:
+    from hammock_v2.engine.workflow import ExpansionError, validate_expansion
+
+    yaml_text = """
+nodes:
+  - id: nested
+    prompt: foo
+    kind: workflow_expander
+"""
+    with pytest.raises(ExpansionError, match="nested workflow_expander not allowed"):
+        validate_expansion(yaml_text, expander_id="ex")
+
+
+def test_validate_expansion_rejects_dangling_after() -> None:
+    from hammock_v2.engine.workflow import ExpansionError, validate_expansion
+
+    yaml_text = """
+nodes:
+  - id: a
+    prompt: foo
+  - id: b
+    prompt: foo
+    after: [does-not-exist]
+"""
+    with pytest.raises(ExpansionError, match="does not refer to another node"):
+        validate_expansion(yaml_text, expander_id="ex")
+
+
+def test_validate_expansion_rejects_duplicate_ids() -> None:
+    from hammock_v2.engine.workflow import ExpansionError, validate_expansion
+
+    yaml_text = """
+nodes:
+  - id: dup
+    prompt: foo
+  - id: dup
+    prompt: foo
+"""
+    with pytest.raises(ExpansionError, match="duplicate child id"):
+        validate_expansion(yaml_text, expander_id="ex")
+
+
+def test_validate_expansion_rejects_empty() -> None:
+    from hammock_v2.engine.workflow import ExpansionError, validate_expansion
+
+    with pytest.raises(ExpansionError, match="empty"):
+        validate_expansion("", expander_id="ex")
+
+
+def test_validate_expansion_rejects_missing_nodes_key() -> None:
+    from hammock_v2.engine.workflow import ExpansionError, validate_expansion
+
+    with pytest.raises(ExpansionError, match="non-empty 'nodes:' list"):
+        validate_expansion("name: foo\n", expander_id="ex")
+
+
+def test_validate_expansion_rejects_cycle() -> None:
+    from hammock_v2.engine.workflow import ExpansionError, validate_expansion
+
+    yaml_text = """
+nodes:
+  - id: a
+    prompt: foo
+    after: [b]
+  - id: b
+    prompt: foo
+    after: [a]
+"""
+    with pytest.raises(ExpansionError, match="cycle"):
+        validate_expansion(yaml_text, expander_id="ex")
+
+
+def test_prefix_expansion_ids_rewrites_after_edges() -> None:
+    from hammock_v2.engine.workflow import prefix_expansion_ids, validate_expansion
+
+    yaml_text = """
+nodes:
+  - id: task-a
+    prompt: implement-task
+  - id: checkpoint
+    prompt: stage-checkpoint
+    after: [task-a]
+"""
+    nodes = validate_expansion(yaml_text, expander_id="execute-plan")
+    prefixed = prefix_expansion_ids(nodes, expander_id="execute-plan")
+    assert [n.id for n in prefixed] == [
+        "execute-plan__task-a",
+        "execute-plan__checkpoint",
+    ]
+    assert prefixed[1].after == ["execute-plan__task-a"]
+    # Originals unchanged
+    assert nodes[0].id == "task-a"
+    assert nodes[1].after == ["task-a"]
+
+
+def test_workflow_summary_exposes_kind(tmp_path: Path) -> None:
+    """Summary projection includes the new kind field for the dashboard."""
+    p = _write(
+        tmp_path / "wf.yaml",
+        """
+name: t
+nodes:
+  - id: a
+    prompt: foo
+  - id: b
+    prompt: bar
+    kind: workflow_expander
+""",
+    )
+    wf = load_workflow(p)
+    summary = workflow_summary(wf)
+    kinds = {n["id"]: n["kind"] for n in summary["nodes"]}
+    assert kinds == {"a": "agent", "b": "workflow_expander"}

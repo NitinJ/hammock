@@ -24,18 +24,26 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 
 class WorkflowError(Exception):
     """Raised when a workflow YAML can't be parsed or fails sanity checks."""
 
 
+class ExpansionError(Exception):
+    """Raised when an expansion.yaml emitted by a workflow_expander node
+    fails validation (schema, nesting, after-edge scope)."""
+
+
 def _default_requires() -> list[str]:
     return ["output.md"]
+
+
+NodeKind = Literal["agent", "workflow_expander"]
 
 
 class Node(BaseModel):
@@ -45,6 +53,15 @@ class Node(BaseModel):
 
     id: str = Field(..., min_length=1, description="Unique node id.")
     prompt: str = Field(..., min_length=1, description="Prompt template name (without .md).")
+    kind: NodeKind = Field(
+        default="agent",
+        description=(
+            "Node kind. 'agent' (default): one Task subagent runs and writes "
+            "output.md. 'workflow_expander': subagent additionally writes "
+            "expansion.yaml; the orchestrator merges those nodes into the "
+            "runtime DAG. Single-shot, no nesting, no recursion."
+        ),
+    )
     after: list[str] = Field(default_factory=list, description="Node ids that must complete first.")
     human_review: bool = Field(
         default=False,
@@ -65,7 +82,9 @@ class Node(BaseModel):
             "If true, the orchestrator dispatches this node's subagent with "
             "isolation='worktree' so it gets its own git worktree. Use for "
             "code-bearing nodes (implement, open-pr) so concurrent or "
-            "back-to-back runs don't collide on the project repo."
+            "back-to-back runs don't collide on the project repo. Forbidden "
+            "on workflow_expander nodes — the expander reads + authors yaml; "
+            "it does not edit code."
         ),
     )
 
@@ -86,6 +105,20 @@ class Node(BaseModel):
                     "without '..' segments"
                 )
         return v
+
+    @model_validator(mode="after")
+    def _expander_constraints(self) -> Node:
+        if self.kind == "workflow_expander":
+            if "expansion.yaml" not in self.requires:
+                # Auto-add — the orchestrator depends on it, no point making
+                # operators remember to list it.
+                self.requires = [*self.requires, "expansion.yaml"]
+            if self.worktree:
+                raise ValueError(
+                    f"node {self.id!r}: workflow_expander cannot use worktree=true "
+                    "(the expander reads + authors yaml; it does not edit code)"
+                )
+        return self
 
 
 class Workflow(BaseModel):
@@ -186,6 +219,7 @@ def workflow_summary(workflow: Workflow) -> dict[str, Any]:
             {
                 "id": n.id,
                 "prompt": n.prompt,
+                "kind": n.kind,
                 "after": list(n.after),
                 "human_review": n.human_review,
                 "description": n.description,
@@ -195,3 +229,95 @@ def workflow_summary(workflow: Workflow) -> dict[str, Any]:
             for n in workflow.nodes
         ],
     }
+
+
+def validate_expansion(yaml_text: str, expander_id: str) -> list[Node]:
+    """Validate an `expansion.yaml` payload emitted by a workflow_expander
+    subagent.
+
+    Rules:
+
+    1. Top-level must be a mapping with a `nodes:` list.
+    2. Every entry validates against the Node Pydantic model (un-prefixed
+       ids — the orchestrator prefixes after this validator returns).
+    3. No entry may have `kind: workflow_expander` (no nesting).
+    4. Every `after:` reference must resolve to another id within this
+       expansion (no reaching into static workflow nodes or other
+       expansions).
+    5. Ids must be unique within the expansion.
+
+    Returns the validated list of Node objects in the order they appeared.
+    Raises ExpansionError on any failure.
+    """
+    if not yaml_text or not yaml_text.strip():
+        raise ExpansionError(f"expander {expander_id!r}: expansion.yaml is empty")
+    try:
+        raw = yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        raise ExpansionError(
+            f"expander {expander_id!r}: expansion.yaml is not valid yaml: {exc}"
+        ) from exc
+    if not isinstance(raw, Mapping):
+        raise ExpansionError(
+            f"expander {expander_id!r}: expansion top-level must be a mapping, "
+            f"got {type(raw).__name__}"
+        )
+    nodes_raw = raw.get("nodes")
+    if not isinstance(nodes_raw, list) or not nodes_raw:
+        raise ExpansionError(
+            f"expander {expander_id!r}: expansion must have a non-empty 'nodes:' list"
+        )
+
+    nodes: list[Node] = []
+    for i, entry in enumerate(nodes_raw):
+        if not isinstance(entry, Mapping):
+            raise ExpansionError(
+                f"expander {expander_id!r}: nodes[{i}] must be a mapping, "
+                f"got {type(entry).__name__}"
+            )
+        try:
+            n = Node.model_validate(entry)
+        except ValidationError as exc:
+            raise ExpansionError(
+                f"expander {expander_id!r}: nodes[{i}] schema invalid:\n{exc}"
+            ) from exc
+        if n.kind == "workflow_expander":
+            raise ExpansionError(
+                f"expander {expander_id!r}: nested workflow_expander not allowed "
+                f"(node {n.id!r} has kind=workflow_expander). Single-shot, no nesting."
+            )
+        nodes.append(n)
+
+    ids = {n.id for n in nodes}
+    if len(ids) != len(nodes):
+        seen: set[str] = set()
+        for n in nodes:
+            if n.id in seen:
+                raise ExpansionError(f"expander {expander_id!r}: duplicate child id {n.id!r}")
+            seen.add(n.id)
+    for n in nodes:
+        for dep in n.after:
+            if dep not in ids:
+                raise ExpansionError(
+                    f"expander {expander_id!r}: node {n.id!r} after: {dep!r} "
+                    "does not refer to another node in this expansion. "
+                    "Expansion's after: edges must stay within the expansion."
+                )
+    if _has_cycle(nodes):
+        raise ExpansionError(f"expander {expander_id!r}: expansion has a cycle in after: edges")
+    return nodes
+
+
+def prefix_expansion_ids(nodes: list[Node], expander_id: str) -> list[Node]:
+    """Apply the `<expander_id>__<child_id>` prefixing convention.
+
+    Returns a fresh list of Node objects with prefixed `id` and `after:`
+    fields. Original list is unmodified. The expander's id must already be
+    valid per the Node id shape; child ids must be too.
+    """
+    prefix = f"{expander_id}__"
+    out: list[Node] = []
+    for n in nodes:
+        new_after = [f"{prefix}{dep}" for dep in n.after]
+        out.append(n.model_copy(update={"id": f"{prefix}{n.id}", "after": new_after}))
+    return out
