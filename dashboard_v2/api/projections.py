@@ -51,6 +51,96 @@ def _safe_read(path: Path) -> str:
         return ""
 
 
+def _read_orchestrator_state(slug: str, root: Path) -> dict[str, Any]:
+    """Best-effort read of orchestrator_state.json. Returns empty dict
+    if missing/unparseable so callers can default cleanly."""
+    state_path = paths.orchestrator_state_json(slug, root=root)
+    if not state_path.is_file():
+        return {}
+    try:
+        parsed = json.loads(state_path.read_text() or "{}")
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def expanded_nodes_for(slug: str, root: Path) -> dict[str, dict[str, Any]]:
+    """Return the orchestrator's `expanded_nodes` map (prefixed_id →
+    metadata including parent_expander). Empty dict when none."""
+    state = _read_orchestrator_state(slug, root)
+    expanded = state.get("expanded_nodes") or {}
+    if not isinstance(expanded, dict):
+        return {}
+    # Defensive: normalize to dict[str, dict]
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in expanded.items():
+        if isinstance(k, str) and isinstance(v, dict):
+            out[k] = v
+    return out
+
+
+def _topo_order_expanded_children(
+    child_ids: list[str], expanded_map: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Topo-order a set of expanded child ids by their `after:` edges.
+
+    Children with no after-edges first, then everything that depends on
+    them. All `after:` references are within the same expansion (already
+    prefixed). Falls back to insertion order on cycle (defensive — the
+    orchestrator validator rejects cycles, but be safe).
+    """
+    in_set = set(child_ids)
+    indeg: dict[str, int] = {cid: 0 for cid in child_ids}
+    deps: dict[str, list[str]] = {cid: [] for cid in child_ids}
+    for cid in child_ids:
+        meta = expanded_map.get(cid, {})
+        after = meta.get("after") or []
+        if not isinstance(after, list):
+            continue
+        for dep in after:
+            if isinstance(dep, str) and dep in in_set:
+                indeg[cid] += 1
+                deps.setdefault(dep, []).append(cid)
+    out: list[str] = []
+    ready = [cid for cid in child_ids if indeg[cid] == 0]
+    while ready:
+        # Stable order: by original insertion within `child_ids`.
+        ready.sort(key=lambda c: child_ids.index(c))
+        cur = ready.pop(0)
+        out.append(cur)
+        for child in deps.get(cur, []):
+            indeg[child] -= 1
+            if indeg[child] == 0:
+                ready.append(child)
+    if len(out) != len(child_ids):
+        # Cycle (shouldn't happen — validator rejects). Fall back.
+        leftover = [c for c in child_ids if c not in out]
+        out.extend(leftover)
+    return out
+
+
+def _kind_for_static_node(slug: str, root: Path, node_id: str) -> str | None:
+    """Look up a static workflow node's `kind` from the workflow snapshot.
+
+    Returns "agent" / "workflow_expander" or None if not found / on
+    parse failure. Cheap on the happy path: load_workflow caches via
+    pydantic's own mechanisms; we only call this for top-level nodes.
+    """
+    snapshot = paths.workflow_yaml(slug, root=root)
+    if not snapshot.is_file():
+        return None
+    try:
+        from hammock_v2.engine.workflow import load_workflow
+
+        wf = load_workflow(snapshot)
+        for n in wf.nodes:
+            if n.id == node_id:
+                return n.kind
+        return None
+    except Exception:
+        return None
+
+
 def _ordered_node_ids_from_workflow(slug: str, root: Path) -> list[str]:
     """Topo-ordered node ids from the job's workflow.yaml snapshot.
 
@@ -80,6 +170,14 @@ def job_summary(slug: str, root: Path) -> dict[str, Any] | None:
     workflow_name = front.get("workflow", "unknown")
     nodes_overview: list[dict[str, Any]] = []
     nodes_dir = paths.nodes_dir(slug, root=root)
+    expanded_map = expanded_nodes_for(slug, root)
+    # Group expanded children by parent_expander so we can interleave
+    # them right after their parent in the timeline order.
+    expanded_by_parent: dict[str, list[str]] = {}
+    for prefixed_id, meta in expanded_map.items():
+        parent = meta.get("parent_expander")
+        if isinstance(parent, str):
+            expanded_by_parent.setdefault(parent, []).append(prefixed_id)
     if nodes_dir.is_dir():
         # Issue: previously sorted alphabetically by folder name, which
         # rendered nodes in the wrong DAG order in the UI. Resolve via
@@ -89,29 +187,51 @@ def job_summary(slug: str, root: Path) -> dict[str, Any] | None:
         on_disk = {p.name: p for p in nodes_dir.iterdir() if p.is_dir()}
         # Topo-ordered first, then any stragglers on disk (defensive).
         seen: set[str] = set()
-        ordered_paths: list[Path] = []
+        ordered_paths: list[tuple[Path, str | None]] = []  # (path, parent_expander)
         for nid in ordered_ids:
             seen.add(nid)
             # Even if no folder yet, surface a pending placeholder so
             # the timeline shows the full workflow shape from t=0.
-            ordered_paths.append(on_disk.get(nid) or (nodes_dir / nid))
+            ordered_paths.append((on_disk.get(nid) or (nodes_dir / nid), None))
+            # Right after the parent expander, append its expanded children
+            # in their topo order (children with empty after: first, then
+            # by dependency depth).
+            if nid in expanded_by_parent:
+                child_ids = _topo_order_expanded_children(expanded_by_parent[nid], expanded_map)
+                for child_id in child_ids:
+                    seen.add(child_id)
+                    child_path = nodes_dir / nid / child_id.split("__", 1)[1]
+                    ordered_paths.append((child_path, nid))
         for nid, p in sorted(on_disk.items()):
             if nid not in seen:
-                ordered_paths.append(p)
-        for node_dir_path in ordered_paths:
+                ordered_paths.append((p, None))
+        for node_dir_path, parent_expander in ordered_paths:
             state_path = node_dir_path / "state.md"
             state_front, _ = parse_frontmatter(_safe_read(state_path))
             awaiting = (node_dir_path / "awaiting_human.md").is_file()
             decision = (node_dir_path / "human_decision.md").is_file()
-            nodes_overview.append(
-                {
-                    "id": node_dir_path.name,
-                    "state": state_front.get("state", "pending"),
-                    "started_at": state_front.get("started_at"),
-                    "finished_at": state_front.get("finished_at"),
-                    "awaiting_human": awaiting and not decision,
-                }
-            )
+            # Display id: top-level uses folder name; expanded children
+            # use the prefixed runtime id so the frontend can group.
+            display_id = node_dir_path.name
+            if parent_expander is not None:
+                display_id = f"{parent_expander}__{node_dir_path.name}"
+            entry: dict[str, Any] = {
+                "id": display_id,
+                "state": state_front.get("state", "pending"),
+                "started_at": state_front.get("started_at"),
+                "finished_at": state_front.get("finished_at"),
+                "awaiting_human": awaiting and not decision,
+                "parent_expander": parent_expander,
+            }
+            # Mark the static workflow node's kind so the frontend can
+            # render an "expander" badge when applicable.
+            if parent_expander is None:
+                kind = _kind_for_static_node(slug, root, display_id)
+                if kind:
+                    entry["kind"] = kind
+            else:
+                entry["kind"] = "agent"
+            nodes_overview.append(entry)
     # Lifecycle control gate (operator pause/resume/stop). Disk-derived
     # so it survives refresh; orchestrator polls the same file.
     control_path = paths.control_md(slug, root=root)
@@ -149,9 +269,29 @@ def list_jobs(root: Path) -> list[dict[str, Any]]:
     return out
 
 
+def resolve_node_dir(slug: str, node_id: str, root: Path) -> Path | None:
+    """Resolve a node id (top-level or expanded) to its folder.
+
+    Top-level: <job_dir>/nodes/<node_id>/
+    Expanded:  <job_dir>/nodes/<parent_expander>/<child_id>/
+
+    The expanded prefix convention is `<parent_expander>__<child_id>`.
+    Returns None if the folder doesn't exist.
+    """
+    direct = paths.node_dir(slug, node_id, root=root)
+    if direct.is_dir():
+        return direct
+    if "__" in node_id:
+        parent, _, child = node_id.partition("__")
+        nested = paths.nodes_dir(slug, root=root) / parent / child
+        if nested.is_dir():
+            return nested
+    return None
+
+
 def node_detail(slug: str, node_id: str, root: Path) -> dict[str, Any] | None:
-    node_dir_path = paths.node_dir(slug, node_id, root=root)
-    if not node_dir_path.is_dir():
+    node_dir_path = resolve_node_dir(slug, node_id, root)
+    if node_dir_path is None:
         return None
     state_front, _ = parse_frontmatter(_safe_read(node_dir_path / "state.md"))
     awaiting = (node_dir_path / "awaiting_human.md").is_file()
@@ -189,7 +329,12 @@ def parse_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def node_chat(slug: str, node_id: str, root: Path) -> list[dict[str, Any]]:
-    return parse_jsonl(paths.node_chat_jsonl(slug, node_id, root=root))
+    # Resolve through the expanded-node-aware lookup so
+    # `<parent_expander>__<child_id>` ids find their nested chat.jsonl.
+    folder = resolve_node_dir(slug, node_id, root)
+    if folder is None:
+        return []
+    return parse_jsonl(folder / "chat.jsonl")
 
 
 def orchestrator_chat(slug: str, root: Path) -> list[dict[str, Any]]:
