@@ -87,6 +87,24 @@ def test_orchestrator_prompt_polls_control_md() -> None:
     assert "state: cancelled" in prompt or "state=cancelled" in prompt
 
 
+def test_orchestrator_paused_does_not_fall_through_to_exit() -> None:
+    """Regression: when paused, the orchestrator must NOT reach Step F
+    and must NOT mark the job completed. Step B's paused branch must
+    explicitly forbid falling through to subsequent steps; Step F must
+    gate on last_control_state == "running"."""
+    prompt = _orchestrator_prompt()
+    lower = prompt.lower()
+    # Step B should explicitly forbid fall-through from paused.
+    assert "do not fall through" in lower or "do not fall-through" in lower
+    # Step F should gate on running control state.
+    assert (
+        'last_control_state == "running"' in prompt or "last_control_state == 'running'" in prompt
+    )
+    # The "pending nodes are NOT terminal" warning must be present so the
+    # LLM doesn't treat 0 active_tasks during pause as "all done".
+    assert "pending nodes are not terminal" in lower or "pending nodes are NOT terminal" in prompt
+
+
 def test_submit_copies_repo(tmp_path: Path) -> None:
     src = tmp_path / "src-repo"
     (src / "subdir").mkdir(parents=True)

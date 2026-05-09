@@ -149,7 +149,7 @@ The directive is executed when the helper completes (Step C.2), not here. Fast-a
   - On transition into paused (compare to `last_control_state`): append ONE `from: orchestrator` message: `"Paused at the operator's request. Will resume when control returns to running."`
   - Set `last_control_state = "paused"`. Don't repeat the message on subsequent iterations.
   - **Don't dispatch new Tasks (nodes or helpers).** Continue polling existing `active_tasks` and `active_helpers`; in-flight Tasks finish naturally.
-  - `Bash sleep 1`, loop back to Step A.
+  - **`Bash sleep 1`, then `continue` the main loop — return to Step A.** Do NOT fall through to Step C / D / E / F. The job is NOT done. The only paths out of `paused` are `running` (resume) or `cancelled` (terminate). Pending nodes remain pending; treating the absence of `active_tasks` as "all done" is a bug — they're idle because YOU stopped dispatching, not because the work is finished.
 - **`cancelled`** —
   - Append `from: orchestrator`: `"Cancelled by operator."`
   - Write `job.md` with `state: cancelled`, `finished_at`, `error: cancelled by operator`.
@@ -302,10 +302,13 @@ Handled in Step C.1 + C.2 via the `process-expansion` helper. The orchestrator d
 
 At end of each iteration:
 
-- **All nodes terminal AND `active_tasks` empty AND `active_helpers` empty AND no node awaiting human:**
+- **HARD PRECONDITION**: `last_control_state == "running"`. If paused, you must NEVER reach this step (Step B sleeps + returns to Step A). If somehow you arrive here while paused: do NOT exit; treat as "Otherwise" branch — sleep + loop. The exit gate only applies when the operator wants the workflow to be making progress.
+
+- **All nodes terminal AND `active_tasks` empty AND `active_helpers` empty AND no node awaiting human AND `last_control_state == "running"`:**
   - Drain messages one final time (Step A) so any last-second operator note gets a fast-ack and helper spawn. (You may need one more iteration to let that helper complete; that's fine.)
   - When truly idle: no `failed_nodes` → write `job.md` with `state: completed`, `finished_at`. Has `failed_nodes` → write `job.md` with `state: failed`, `error: "<failed_nodes joined>"`, `finished_at`.
   - Exit cleanly.
+- **"All nodes terminal" definition**: every node in the runtime DAG (static workflow nodes + expanded children) is in `completed_nodes ∪ failed_nodes ∪ skipped_nodes`. **Pending nodes are NOT terminal.** If even one node is still in `pending` state, you are not done — regardless of whether anything is currently running. This is the most common mis-interpretation: a paused job has 0 active_tasks but many pending nodes; that is NOT "all terminal."
 - **Otherwise** — `Bash sleep 1` and loop back to Step A.
 
 ## Message directives
