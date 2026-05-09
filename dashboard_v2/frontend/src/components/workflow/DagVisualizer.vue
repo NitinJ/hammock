@@ -43,16 +43,29 @@
           :key="box.id"
           :transform="`translate(${box.x}, ${box.y})`"
           :data-testid="`dag-node-${box.id}`"
-          class="cursor-default"
+          :class="['transition-opacity', selectable ? 'cursor-pointer' : 'cursor-default']"
+          @click="onNodeClick(box.id)"
         >
           <rect
             :width="box.w"
             :height="box.h"
             rx="8"
             ry="8"
-            :fill="box.humanReview ? 'rgba(245, 158, 11, 0.08)' : 'rgba(124, 58, 237, 0.08)'"
-            :stroke="box.humanReview ? 'rgba(245, 158, 11, 0.5)' : 'rgba(124, 58, 237, 0.4)'"
-            stroke-width="1.5"
+            :fill="
+              selectedId === box.id
+                ? 'rgba(124, 58, 237, 0.25)'
+                : box.humanReview
+                  ? 'rgba(245, 158, 11, 0.08)'
+                  : 'rgba(124, 58, 237, 0.08)'
+            "
+            :stroke="
+              selectedId === box.id
+                ? 'rgba(124, 58, 237, 0.95)'
+                : box.humanReview
+                  ? 'rgba(245, 158, 11, 0.5)'
+                  : 'rgba(124, 58, 237, 0.4)'
+            "
+            :stroke-width="selectedId === box.id ? '2' : '1.5'"
           />
           <text
             :x="box.w / 2"
@@ -91,9 +104,20 @@ import { computed } from "vue";
 
 import type { WorkflowNode } from "@/api/types";
 
-const props = defineProps<{
-  nodes: WorkflowNode[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    nodes: WorkflowNode[];
+    selectable?: boolean;
+    selectedId?: string | null;
+  }>(),
+  { selectable: false, selectedId: null },
+);
+
+const emit = defineEmits<{ (e: "select", id: string): void }>();
+
+function onNodeClick(id: string) {
+  if (props.selectable) emit("select", id);
+}
 
 interface BoxLayout {
   id: string;
