@@ -32,7 +32,97 @@ export const QUERY_KEYS = {
   projectPrompt: (slug: string, name: string) => ["projects", slug, "prompts", name] as const,
   prompts: (source?: string | null) => ["prompts", source ?? "all"] as const,
   promptDetail: (source: string, name: string) => ["prompts", source, name] as const,
+  builderSession: (id: string) => ["workflow-builder", "sessions", id] as const,
 };
+
+export interface BuilderMessage {
+  id: string;
+  from: "user" | "agent";
+  timestamp: string;
+  text: string;
+  proposed_yaml?: string;
+}
+
+export interface BuilderSession {
+  session_id: string;
+  meta?: Record<string, unknown>;
+  messages: BuilderMessage[];
+  current_yaml: string;
+}
+
+export interface BuilderTurnResponse {
+  user_message: BuilderMessage;
+  agent_message: BuilderMessage;
+}
+
+export function useCreateBuilderSession() {
+  return useMutation({
+    mutationFn: (body: {
+      project_slug?: string | null;
+      workflow_name?: string | null;
+      starting_yaml?: string | null;
+    }) =>
+      api.post<BuilderSession>("/api/workflow-builder/sessions", {
+        project_slug: body.project_slug ?? null,
+        workflow_name: body.workflow_name ?? null,
+        starting_yaml: body.starting_yaml ?? null,
+      }),
+  });
+}
+
+export function useBuilderSession(sessionId: Ref<string | null>) {
+  const queryKey = computed(() => QUERY_KEYS.builderSession(sessionId.value ?? ""));
+  return useQuery({
+    queryKey,
+    queryFn: () => api.get<BuilderSession>(`/api/workflow-builder/sessions/${sessionId.value}`),
+    enabled: computed(() => !!sessionId.value),
+  });
+}
+
+export function useSendBuilderMessage(sessionId: Ref<string | null>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { text: string }) => {
+      if (!sessionId.value) throw new Error("no active builder session");
+      return api.post<BuilderTurnResponse>(
+        `/api/workflow-builder/sessions/${sessionId.value}/messages`,
+        body,
+      );
+    },
+    onSuccess: () => {
+      if (!sessionId.value) return;
+      void qc.invalidateQueries({
+        queryKey: QUERY_KEYS.builderSession(sessionId.value),
+      });
+    },
+  });
+}
+
+export function useApplyBuilderProposal(sessionId: Ref<string | null>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { proposed_yaml: string }) => {
+      if (!sessionId.value) throw new Error("no active builder session");
+      return api.post<{ ok: string; current_yaml: string }>(
+        `/api/workflow-builder/sessions/${sessionId.value}/apply`,
+        body,
+      );
+    },
+    onSuccess: () => {
+      if (!sessionId.value) return;
+      void qc.invalidateQueries({
+        queryKey: QUERY_KEYS.builderSession(sessionId.value),
+      });
+    },
+  });
+}
+
+export function useDeleteBuilderSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      api.del<{ ok: string }>(`/api/workflow-builder/sessions/${sessionId}`),
+  });
+}
 
 export function useWorkflows() {
   return useQuery({

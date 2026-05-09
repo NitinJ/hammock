@@ -6,6 +6,9 @@
           ← {{ backLabel }}
         </RouterLink>
         <div class="flex items-center gap-2">
+          <button class="btn-ghost text-sm" @click="showBuilder = !showBuilder">
+            {{ showBuilder ? "Hide builder" : "Talk to builder agent" }}
+          </button>
           <button class="btn-ghost text-sm" @click="showYaml = !showYaml">
             {{ showYaml ? "Graph view" : "YAML view" }}
           </button>
@@ -38,7 +41,15 @@
         />
       </div>
       <div v-else>
-        <h1 class="font-semibold text-2xl text-text-primary">Edit · {{ name }}</h1>
+        <h1 class="font-semibold text-2xl text-text-primary">
+          Edit · {{ name }}
+          <span
+            v-if="builderApplied"
+            class="ml-2 text-xs uppercase tracking-wider text-accent align-middle"
+          >
+            (modified by builder)
+          </span>
+        </h1>
       </div>
     </header>
 
@@ -48,7 +59,12 @@
 
     <div class="grid grid-cols-12 gap-5">
       <!-- Left: editor or yaml -->
-      <div class="col-span-12 lg:col-span-7 surface p-3 flex flex-col">
+      <div
+        :class="[
+          'surface p-3 flex flex-col',
+          showBuilder ? 'col-span-12 lg:col-span-5' : 'col-span-12 lg:col-span-7',
+        ]"
+      >
         <div
           v-if="!showYaml"
           class="text-xs uppercase tracking-wider text-text-tertiary px-2 py-1 mb-2"
@@ -89,8 +105,13 @@
         </p>
       </div>
 
-      <!-- Right: node side panel -->
-      <div class="col-span-12 lg:col-span-5 surface p-4 flex flex-col">
+      <!-- Center: node side panel -->
+      <div
+        :class="[
+          'surface p-4 flex flex-col',
+          showBuilder ? 'col-span-12 lg:col-span-3' : 'col-span-12 lg:col-span-5',
+        ]"
+      >
         <div v-if="selectedNode" class="space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold text-text-primary">Edit node</h3>
@@ -172,6 +193,20 @@
           {{ showYaml ? "YAML view active." : "Click a node in the DAG to edit it inline." }}
         </div>
       </div>
+
+      <!-- Right: builder chat -->
+      <div
+        v-if="showBuilder"
+        class="col-span-12 lg:col-span-4 surface flex flex-col min-h-[60vh] lg:min-h-[70vh]"
+      >
+        <WorkflowBuilderChat
+          :project-slug="projectSlug || null"
+          :workflow-name="name || null"
+          :starting-yaml="yamlText"
+          @close="showBuilder = false"
+          @applied="onBuilderApplied"
+        />
+      </div>
     </div>
   </section>
 </template>
@@ -181,6 +216,7 @@ import { computed, onMounted, ref, toRef, watch } from "vue";
 import { RouterLink, useRouter, useRoute } from "vue-router";
 
 import DagVisualizer from "@/components/workflow/DagVisualizer.vue";
+import WorkflowBuilderChat from "@/components/WorkflowBuilderChat.vue";
 import {
   useCreateWorkflow,
   useProjectPrompts,
@@ -207,6 +243,8 @@ const loadError = ref<string | null>(null);
 const saveError = ref<string | null>(null);
 const saveBusy = ref(false);
 const showYaml = ref(false);
+const showBuilder = ref(false);
+const builderApplied = ref(false);
 
 const liveNodes = ref<WorkflowNode[] | null>(null);
 const liveError = ref<string | null>(null);
@@ -428,6 +466,12 @@ function onApplyNodeEdits(): void {
   });
   yamlText.value = serializeNodes(updated, headerYaml());
   selectedNodeId.value = editId.value.trim() || selectedNodeId.value;
+}
+
+function onBuilderApplied(yaml: string): void {
+  yamlText.value = yaml;
+  builderApplied.value = true;
+  selectedNodeId.value = null;
 }
 
 async function onSavePrompt(): Promise<void> {
