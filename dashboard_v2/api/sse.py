@@ -2,7 +2,7 @@
 
 Wire format: text/event-stream with named events. Event types:
 
-- event: ping                       — keepalive every 15 ticks (~15s)
+- event: ping                       — keepalive every 30 ticks (~15s @ 500ms cadence)
 - event: node_state_changed         — `{slug, node_id}` (nodes/<id>/state.md)
 - event: chat_appended              — `{slug, node_id}` (nodes/<id>/chat.jsonl)
 - event: orchestrator_appended      — `{slug}` (orchestrator.jsonl)
@@ -11,9 +11,9 @@ Wire format: text/event-stream with named events. Event types:
 - event: job_state_changed          — `{slug}` (job.md)
 
 Coalesce: at most one event per (slug, event_type, node_id) per 500ms
-window. The poll cadence is 1s so practically each tick emits at most
-one event per (key) anyway; the explicit cap exists so spammy mtime
-storms (e.g. atomic rename rewrites) don't fan out.
+window. The poll cadence is 500ms so events surface within roughly the
+coalesce window; the explicit cap exists so spammy mtime storms
+(e.g. atomic rename rewrites) don't fan out.
 """
 
 from __future__ import annotations
@@ -118,13 +118,13 @@ async def _watch(slug: str, request: Request) -> AsyncIterator[str]:
                 yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
             seen = current
             last_ping += 1
-            if last_ping >= 15:
+            if last_ping >= 30:
                 yield "event: ping\ndata: \n\n"
                 last_ping = 0
         except Exception as exc:
             log.exception("sse watcher error: %s", exc)
             yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
 
 
 @router.get("/jobs/{slug}")

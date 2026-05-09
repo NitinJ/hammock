@@ -16,13 +16,14 @@ export interface JobStreamHandle {
  * can show a "live" indicator.
  *
  * Event types — see `dashboard_v2/api/sse.py`:
- * - `ping`                       (no-op)
- * - `node_state_changed`         (slug, node_id) — invalidates job + node
- * - `chat_appended`              (slug, node_id) — invalidates node chat
- * - `orchestrator_appended`      (slug)          — invalidates orchestrator chat
- * - `awaiting_human`             (slug, node_id) — invalidates node + job
- * - `human_decision_received`    (slug, node_id) — invalidates node + job
- * - `job_state_changed`          (slug)          — invalidates job + jobs list
+ * - `ping`                              (no-op)
+ * - `node_state_changed`                (slug, node_id) — invalidates job + node + orchestrator events
+ * - `chat_appended`                     (slug, node_id) — invalidates node chat
+ * - `orchestrator_appended`             (slug)          — invalidates orchestrator chat (Log)
+ * - `orchestrator_message_appended`     (slug)          — invalidates orchestrator messages (Chat)
+ * - `awaiting_human`                    (slug, node_id) — invalidates node + job + orchestrator events
+ * - `human_decision_received`           (slug, node_id) — invalidates node + job + orchestrator events
+ * - `job_state_changed`                 (slug)          — invalidates job + jobs list + orchestrator events
  */
 export function useJobStream(slug: Ref<string>): JobStreamHandle {
   const qc = useQueryClient();
@@ -58,6 +59,7 @@ export function useJobStream(slug: Ref<string>): JobStreamHandle {
       if (!node_id) return;
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug.value) });
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.node(slug.value, node_id) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorEvents(slug.value) });
     });
 
     es.addEventListener("chat_appended", (ev: MessageEvent) => {
@@ -70,11 +72,18 @@ export function useJobStream(slug: Ref<string>): JobStreamHandle {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorChat(slug.value) });
     });
 
+    es.addEventListener("orchestrator_message_appended", () => {
+      // Operator's chat with the orchestrator. Refetch immediately —
+      // this is the primary feedback channel for the 2-way HIL.
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorMessages(slug.value) });
+    });
+
     es.addEventListener("awaiting_human", (ev: MessageEvent) => {
       const { node_id } = parsePayload(ev.data);
       if (!node_id) return;
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug.value) });
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.node(slug.value, node_id) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorEvents(slug.value) });
     });
 
     es.addEventListener("human_decision_received", (ev: MessageEvent) => {
@@ -82,11 +91,13 @@ export function useJobStream(slug: Ref<string>): JobStreamHandle {
       if (!node_id) return;
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug.value) });
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.node(slug.value, node_id) });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorEvents(slug.value) });
     });
 
     es.addEventListener("job_state_changed", () => {
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.job(slug.value) });
       void qc.invalidateQueries({ queryKey: QUERY_KEYS.jobs() });
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.orchestratorEvents(slug.value) });
     });
   }
 

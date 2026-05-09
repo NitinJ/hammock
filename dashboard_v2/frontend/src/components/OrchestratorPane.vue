@@ -72,7 +72,7 @@
         <textarea
           v-model="messageDraft"
           rows="2"
-          placeholder="Send a message to the orchestrator (e.g., 'skip implement', 'rerun X with this comment', 'pause')"
+          placeholder="Chat with the orchestrator (e.g., 'skip implement', 'rerun X with this comment', 'pause')"
           class="input font-mono text-xs flex-1"
         ></textarea>
         <button
@@ -108,8 +108,8 @@ const send = useSendOrchestratorMessage(slugRef);
 
 const tabs = [
   { id: "events", label: "Events" },
-  { id: "chat", label: "Chat" },
-  { id: "messages", label: "Talk to orchestrator" },
+  { id: "messages", label: "Chat" },
+  { id: "chat", label: "Log" },
 ];
 
 const tab = ref<string>("events");

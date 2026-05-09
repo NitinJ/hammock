@@ -148,24 +148,29 @@ interface OrchestratorEvent {
 }
 
 export function useOrchestratorEvents(slug: Ref<string>) {
+  // SSE invalidates this on node_state_changed / job_state_changed /
+  // awaiting_human / human_decision_received. The 5s safety-net
+  // refetchInterval covers SSE drops; primary path is event-driven.
   const queryKey = computed(() => QUERY_KEYS.orchestratorEvents(slug.value));
   return useQuery({
     queryKey,
     queryFn: () =>
       api.get<{ events: OrchestratorEvent[] }>(`/api/jobs/${slug.value}/orchestrator/events`),
     enabled: computed(() => !!slug.value),
-    refetchInterval: 3000,
+    refetchInterval: 5000,
   });
 }
 
 export function useOrchestratorMessages(slug: Ref<string>) {
+  // SSE invalidates this on orchestrator_message_appended. Same
+  // safety-net polling as events.
   const queryKey = computed(() => QUERY_KEYS.orchestratorMessages(slug.value));
   return useQuery({
     queryKey,
     queryFn: () =>
       api.get<{ messages: OrchestratorMessage[] }>(`/api/jobs/${slug.value}/orchestrator/messages`),
     enabled: computed(() => !!slug.value),
-    refetchInterval: 3000,
+    refetchInterval: 5000,
   });
 }
 
