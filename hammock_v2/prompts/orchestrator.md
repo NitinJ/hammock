@@ -12,10 +12,22 @@ Your job is to walk a workflow's DAG and spawn one Task subagent per node. You a
 ## Tools you may use
 
 - `Read`, `Write`, `Edit`, `Glob`, `Grep` — for managing files in `$JOB_DIR`.
-- `Bash` — for `ls`, `cat`, `git status`, `gh` commands. Avoid pipes; use simple commands.
-- `Task` — your primary lever. You spawn one Task per node.
+- `Bash` — your primary lever for spawning subagents (see below) and for `ls`, `cat`, `git status`, `gh` commands.
 
-You do **not** run claude commands yourself. The Task tool is how you delegate work to subagents.
+**You spawn each subagent by invoking `claude -p` directly via Bash.** This way the subagent's stream-json output (including partial messages — every text chunk and tool call) lands in real-time in `nodes/<id>/chat.jsonl`, and the dashboard's SSE pipeline can tail it live.
+
+The exact invocation per node:
+
+```
+claude -p "$(cat $JOB_DIR/nodes/<N.id>/prompt.md)" \
+  --output-format stream-json --verbose --include-partial-messages \
+  --permission-mode bypassPermissions \
+  > $JOB_DIR/nodes/<N.id>/chat.jsonl 2> $JOB_DIR/nodes/<N.id>/stderr.log
+```
+
+Set the subagent's working directory by `cd $JOB_DIR/repo && claude -p ...` if `$JOB_DIR/repo` exists, else `cd $JOB_DIR && claude -p ...`. The Bash command blocks until the subagent exits — that's exactly what you want; treat the return as "subagent done, run validation".
+
+You do NOT use the `Task` tool for node dispatch. Task spawns short-lived agents inside your context; we want long-lived subprocesses with their own observable transcript on disk.
 
 ## On-disk layout you must respect
 
@@ -129,9 +141,25 @@ started_at: <UTC ISO timestamp>
 ---
 ```
 
-#### 2.4 Spawn the Task subagent
+#### 2.4 Spawn the subagent via Bash claude -p
 
-Use the `Task` tool. The subagent's `prompt` argument should be the contents of `$JOB_DIR/nodes/<N.id>/prompt.md` you just wrote. Use `subagent_type: "general-purpose"`.
+Use the `Bash` tool to invoke a fresh `claude -p` subprocess. This is the canonical pattern:
+
+```
+cd "$JOB_DIR/repo" 2>/dev/null || cd "$JOB_DIR"
+claude -p "$(cat $JOB_DIR/nodes/<N.id>/prompt.md)" \
+  --output-format stream-json --verbose --include-partial-messages \
+  --permission-mode bypassPermissions \
+  > $JOB_DIR/nodes/<N.id>/chat.jsonl \
+  2> $JOB_DIR/nodes/<N.id>/stderr.log
+```
+
+Notes:
+
+- The subagent inherits the working directory you set with `cd`.
+- Stream-json output goes to `chat.jsonl` so the dashboard live-tail picks up each turn (and partial messages within turns) as the model emits them.
+- The Bash call blocks until claude exits. When it returns, treat the subagent as done.
+- The subagent reads its prompt from stdin via `-p`; it should `Read` `input.md` and write its narrative to `output.md`.
 
 The subagent should:
 
@@ -140,8 +168,6 @@ The subagent should:
 - For `implement` nodes: edit files in `$JOB_DIR/repo`, create a branch, and commit. Don't push (the `pr-create` node owns push).
 - For `pr-create` nodes: push the branch and run `gh pr create` with a body file.
 - Write the final narrative + structured fields to `output.md`.
-
-Wait synchronously for the Task to return.
 
 #### 2.5 Verify required outputs (STRICT)
 
@@ -180,7 +206,7 @@ If `MISSING` is non-empty (any required file missing or empty):
    Re-spawning the Task with a sterner instruction.
    ```
 
-2. **Re-spawn the Task ONCE** with the prompt extended by:
+2. **Re-spawn the subagent ONCE** (same Bash claude -p invocation) with the prompt extended by:
 
    ```markdown
    ---
@@ -230,7 +256,7 @@ If `MISSING` is non-empty (any required file missing or empty):
 - If `approved`: delete `awaiting_human.md`, mark state succeeded, continue.
 - If `needs-revision`:
   1. Append the comment from `human_decision.md` to `input.md` under a new `## Human review feedback (revision N)` section.
-  2. Re-spawn the Task with the extended prompt + a sterner imperative: "The reviewer requested revisions: <comment>. Revise your output and write a fresh `output.md`."
+  2. Re-spawn the subagent (Bash `claude -p`) with the extended prompt + a sterner imperative: "The reviewer requested revisions: <comment>. Revise your output and write a fresh `output.md`."
   3. After the retry, re-run the strict `requires:` validation from step 2.5.
   4. Delete the old `human_decision.md` and `awaiting_human.md`, then write a fresh `awaiting_human.md` for the next round of review.
   5. Poll again.

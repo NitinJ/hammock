@@ -176,3 +176,21 @@ def test_orchestrator_prompt_contains_revision_loop() -> None:
         request_text="r",
     )
     assert "3 revision" in prompt.lower() or "max revisions" in prompt.lower()
+
+
+def test_orchestrator_prompt_uses_bash_claude_p_for_subagents() -> None:
+    """Orchestrator must spawn subagents via `claude -p` over Bash so the
+    chat.jsonl streams in real time with partial messages."""
+    prompt = render_orchestrator_prompt(
+        job_dir=Path("/x"),
+        workflow_path=Path("/x/workflow.yaml"),
+        request_text="r",
+    )
+    assert "claude -p" in prompt
+    assert "--include-partial-messages" in prompt
+    assert "--output-format stream-json" in prompt
+    assert "chat.jsonl" in prompt
+    # Should explicitly NOT use the Task tool for node dispatch.
+    assert "do not use the `task` tool" in prompt.lower() or (
+        "you do not use the `task` tool" in prompt.lower()
+    )
