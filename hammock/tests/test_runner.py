@@ -124,6 +124,33 @@ def test_orchestrator_prompt_demands_message_and_control_read_every_iteration() 
     assert "Pre-dispatch guard" in prompt
 
 
+def test_submit_writes_intake_hook_settings(tmp_path: Path) -> None:
+    """submit_job must write `<job_dir>/.claude/settings.json` so the
+    orchestrator subprocess (`claude -p` with cwd=<job_dir>) picks up
+    the intake-discipline hook on Stop and PreToolUse:Task. Without this
+    file, the hook never runs and the prompt is the only line of defense."""
+    import json
+
+    job = JobConfig(slug="t-hooks", workflow_name="fix-bug", request_text="x")
+    submit_job(job=job, root=tmp_path)
+    job_dir = paths.job_dir("t-hooks", root=tmp_path)
+    settings = job_dir / ".claude" / "settings.json"
+    assert settings.is_file(), "submit_job must write .claude/settings.json"
+    payload = json.loads(settings.read_text())
+
+    hooks = payload.get("hooks", {})
+    assert "Stop" in hooks
+    assert "PreToolUse" in hooks
+    # PreToolUse entry must scope to Task only.
+    pre = hooks["PreToolUse"]
+    assert any(entry.get("matcher") == "Task" for entry in pre)
+
+    # Hook command must point at the bundled check_intake.py.
+    stop_cmd = hooks["Stop"][0]["hooks"][0]["command"]
+    assert stop_cmd.endswith("check_intake.py")
+    assert Path(stop_cmd).is_file()
+
+
 def test_submit_copies_repo(tmp_path: Path) -> None:
     src = tmp_path / "src-repo"
     (src / "subdir").mkdir(parents=True)

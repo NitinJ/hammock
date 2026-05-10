@@ -10,7 +10,9 @@ orchestrator's prompt.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -102,12 +104,18 @@ def write_job_md(job_dir: Path, payload: dict[str, str]) -> None:
 def _default_runner(
     cmd: list[str], cwd: Path, stdout_path: Path, stderr_path: Path
 ) -> subprocess.CompletedProcess[bytes]:
+    env = os.environ.copy()
+    # Make the job dir discoverable to hook subprocesses spawned by claude.
+    # The intake hook (hammock/hooks/check_intake.py) reads this to locate
+    # orchestrator_state.json / messages / control on disk.
+    env["HAMMOCK_JOB_DIR"] = str(cwd)
     with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
         return subprocess.run(
             cmd,
             cwd=str(cwd),
             stdout=out,
             stderr=err,
+            env=env,
             check=False,
         )
 
@@ -177,7 +185,54 @@ def submit_job(
         control_path.write_text(
             f"---\nstate: running\nrequested_at: {now}\nrequested_by: submit\n---\n"
         )
+
+    # Wire intake-discipline hooks into the orchestrator subprocess. Claude
+    # discovers .claude/settings.json relative to its cwd; the runner spawns
+    # claude with cwd=<job_dir>, so this file lands in scope.
+    write_orchestrator_hooks_settings(job_dir)
     return job_dir
+
+
+def write_orchestrator_hooks_settings(job_dir: Path) -> None:
+    """Write ``<job_dir>/.claude/settings.json`` wiring the intake hook into
+    the orchestrator's Claude subprocess.
+
+    Two events are wired:
+
+    - ``Stop`` — fires when the orchestrator wants to end its turn. The hook
+      blocks the stop if there is an unprocessed operator message or a
+      control.md state the orchestrator hasn't observed yet.
+    - ``PreToolUse`` (matcher ``Task``) — fires before each ``Task``
+      dispatch. Same staleness check; blocks the dispatch when stale.
+
+    The hook script ships with the package; we resolve its absolute path
+    via ``__file__`` so installed (wheel) deployments work the same as
+    source-tree dev.
+    """
+    hook_path = (Path(__file__).resolve().parent.parent / "hooks" / "check_intake.py").resolve()
+    settings_dir = job_dir / ".claude"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = settings_dir / "settings.json"
+    payload = {
+        "hooks": {
+            "Stop": [
+                {
+                    "hooks": [
+                        {"type": "command", "command": str(hook_path)},
+                    ],
+                },
+            ],
+            "PreToolUse": [
+                {
+                    "matcher": "Task",
+                    "hooks": [
+                        {"type": "command", "command": str(hook_path)},
+                    ],
+                },
+            ],
+        },
+    }
+    settings_path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def run_job(
