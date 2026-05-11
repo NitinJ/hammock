@@ -229,6 +229,18 @@ def write_orchestrator_hooks_settings(job_dir: Path) -> None:
                         {"type": "command", "command": str(hook_path)},
                     ],
                 },
+                {
+                    # The orchestrator runs as ``claude -p`` (no interactive
+                    # harness). ScheduleWakeup ends the turn assuming a
+                    # harness re-invokes the agent later — but ``claude -p``
+                    # has no such harness, so the process exits and the
+                    # runner marks the job complete while subagents are
+                    # still mid-flight. Always deny.
+                    "matcher": "ScheduleWakeup",
+                    "hooks": [
+                        {"type": "command", "command": str(hook_path)},
+                    ],
+                },
             ],
         },
     }
@@ -293,7 +305,7 @@ def run_job(
     )
     finished = _dt.datetime.now(_dt.UTC).isoformat()
 
-    final_state = "completed" if completed.returncode == 0 else "failed"
+    final_state, error_text = _reconcile_terminal_state(rc=completed.returncode, job_dir=job_dir)
     write_job_md(
         job_dir,
         {
@@ -304,10 +316,96 @@ def run_job(
             "started_at": now,
             "finished_at": finished,
             "request": job.request_text,
-            "error": "" if completed.returncode == 0 else f"orchestrator rc={completed.returncode}",
+            "error": error_text,
         },
     )
     return completed.returncode
+
+
+def _reconcile_terminal_state(*, rc: int, job_dir: Path) -> tuple[str, str]:
+    """Decide the final job.md state from the orchestrator's exit code AND
+    the on-disk orchestrator_state.json.
+
+    Returns ``(state, error_text)``.
+
+    Why we can't just trust rc=0: ``claude -p`` exits cleanly whenever its
+    last turn ends. The orchestrator can end the turn legitimately (all
+    nodes terminal) or illegitimately (subagent still running, or pending
+    nodes never dispatched). The latter happens when something convinces
+    the model that its iteration is "done for now" — e.g. ``ScheduleWakeup``,
+    or just a misunderstanding of the main-loop discipline. Treating rc=0
+    as success in that case lies to the operator.
+    """
+    if rc != 0:
+        return "failed", f"orchestrator rc={rc}"
+
+    state_path = job_dir / "orchestrator_state.json"
+    workflow_path = job_dir / "workflow.yaml"
+    if not state_path.is_file() or not workflow_path.is_file():
+        # Best-effort: no state to reconcile against, assume success.
+        return "completed", ""
+
+    try:
+        state = json.loads(state_path.read_text())
+    except Exception:
+        return "completed", ""
+
+    active_tasks = state.get("active_tasks") or []
+    active_helpers = state.get("active_helpers") or []
+    completed_set = set(state.get("completed_nodes") or [])
+    failed_set = set(state.get("failed_nodes") or [])
+    skipped_set = set(state.get("skipped_nodes") or [])
+    expanded = set(state.get("expanded_nodes") or {})
+    terminal = completed_set | failed_set | skipped_set
+
+    # Enumerate workflow node ids without pulling pyyaml here. The hook
+    # uses the same handwritten parse; both must agree.
+    static_ids: list[str] = []
+    in_nodes = False
+    for raw in workflow_path.read_text().splitlines():
+        line = raw.rstrip()
+        if line.startswith("nodes:"):
+            in_nodes = True
+            continue
+        if not in_nodes:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("- id:"):
+            value = stripped[len("- id:") :].strip().strip("\"'")
+            if value:
+                static_ids.append(value)
+        elif stripped.startswith("id:"):
+            value = stripped[len("id:") :].strip().strip("\"'")
+            if value:
+                static_ids.append(value)
+    all_ids = set(static_ids) | expanded
+    pending = [nid for nid in all_ids if nid not in terminal]
+
+    if active_tasks or active_helpers or pending:
+        details: list[str] = []
+        if active_tasks:
+            details.append(
+                "active_tasks: " + ", ".join(t.get("node_id", "?") for t in active_tasks)
+            )
+        if active_helpers:
+            details.append(
+                "active_helpers: "
+                + ", ".join(
+                    f"{h.get('helper', '?')}({h.get('for_node', '?')})" for h in active_helpers
+                )
+            )
+        if pending:
+            preview = ", ".join(sorted(pending)[:5])
+            more = "" if len(pending) <= 5 else f" (+{len(pending) - 5} more)"
+            details.append(f"pending: {preview}{more}")
+        return (
+            "failed",
+            "orchestrator exited prematurely (rc=0) with work pending — " + "; ".join(details),
+        )
+
+    if failed_set:
+        return "failed", f"failed nodes: {', '.join(sorted(failed_set))}"
+    return "completed", ""
 
 
 def discover_workflows(

@@ -90,8 +90,52 @@ def _control_state(control_path: Path) -> str | None:
     return None
 
 
-def _evaluate(job_dir: Path) -> str | None:
-    """Return a `reason` string when the orchestrator is stale, else None."""
+def _workflow_node_ids(job_dir: Path) -> list[str]:
+    """Return the list of node ids declared by the static workflow.yaml.
+
+    We parse the yaml by hand to avoid pulling pyyaml into the hook
+    runtime (the hook must be stdlib-only so it runs without the venv).
+    """
+    wf_path = job_dir / "workflow.yaml"
+    if not wf_path.is_file():
+        return []
+    ids: list[str] = []
+    in_nodes = False
+    for raw in wf_path.read_text().splitlines():
+        line = raw.rstrip()
+        if line.startswith("nodes:"):
+            in_nodes = True
+            continue
+        if not in_nodes:
+            continue
+        stripped = line.strip()
+        if not stripped.startswith("- id:") and not stripped.startswith("id:"):
+            continue
+        if stripped.startswith("- id:"):
+            value = stripped[len("- id:") :].strip()
+        else:
+            value = stripped[len("id:") :].strip()
+        value = value.strip("\"'")
+        if value:
+            ids.append(value)
+    return ids
+
+
+def _evaluate(job_dir: Path, *, on_stop: bool) -> str | None:
+    """Return a `reason` string when the orchestrator should be blocked, else None.
+
+    Two failure modes both render the orchestrator broken from the operator's
+    perspective:
+
+    1. **Intake staleness** — orchestrator's state.json hasn't observed a new
+       operator message or a flipped control.md. Applies to Stop and
+       PreToolUse:Task.
+    2. **Premature stop with work pending** — Stop hook only. active_tasks or
+       active_helpers are non-empty, or some workflow node is still pending
+       and not yet in completed/failed/skipped. Ending the turn here lets
+       `claude -p` exit cleanly and the runner mark the job 'completed'
+       while subagents are still in flight.
+    """
     state_path = job_dir / "orchestrator_state.json"
     if not state_path.is_file():
         # Job hasn't initialized state yet; nothing to enforce.
@@ -108,6 +152,7 @@ def _evaluate(job_dir: Path) -> str | None:
     current_control = _control_state(job_dir / "control.md")
 
     reasons: list[str] = []
+
     if highest_msg_id is not None and highest_msg_id != last_msg_id:
         reasons.append(
             f"unprocessed operator message {highest_msg_id} (last_processed_msg_id={last_msg_id!r})"
@@ -117,6 +162,36 @@ def _evaluate(job_dir: Path) -> str | None:
             f"control.md state is {current_control!r} but state.json says "
             f"last_control_state={last_control!r}"
         )
+
+    if on_stop:
+        active_tasks = state.get("active_tasks") or []
+        active_helpers = state.get("active_helpers") or []
+        completed = set(state.get("completed_nodes") or [])
+        failed = set(state.get("failed_nodes") or [])
+        skipped = set(state.get("skipped_nodes") or [])
+        expanded = set(state.get("expanded_nodes") or {})
+
+        if active_tasks:
+            task_ids = ", ".join(t.get("node_id", "?") for t in active_tasks)
+            reasons.append(f"active_tasks non-empty (in flight: {task_ids})")
+        if active_helpers:
+            helper_names = ", ".join(
+                f"{h.get('helper', '?')}({h.get('for_node', '?')})" for h in active_helpers
+            )
+            reasons.append(f"active_helpers non-empty (in flight: {helper_names})")
+
+        terminal = completed | failed | skipped
+        # Pending = workflow nodes not yet terminal AND not expanded out yet.
+        # Expanded children are part of the runtime DAG; if their parent
+        # expander has not yet produced expansion.yaml, the parent itself
+        # is in active_tasks/state.md=preparing, which the active_tasks
+        # check covers.
+        all_nodes = set(_workflow_node_ids(job_dir)) | expanded
+        pending = [nid for nid in all_nodes if nid not in terminal]
+        if pending and not active_tasks and not active_helpers:
+            pending_str = ", ".join(sorted(pending)[:5])
+            more = "" if len(pending) <= 5 else f" (+{len(pending) - 5} more)"
+            reasons.append(f"pending nodes remain with nothing dispatched: {pending_str}{more}")
 
     if not reasons:
         return None
@@ -132,14 +207,39 @@ def main() -> None:
     hook_event = payload.get("hook_event_name", "")
     tool_name = payload.get("tool_name", "")
 
+    # Always deny ScheduleWakeup. The orchestrator must loop inline via
+    # `Bash sleep 1` within its own `claude -p` turn; ScheduleWakeup is a
+    # ``claude`` harness primitive that ends the turn and asks the harness
+    # to wake up later. `claude -p` has no harness, so the process exits
+    # cleanly and the runner marks the job 'completed' even though active
+    # subagents are still running.
+    if hook_event == "PreToolUse" and tool_name == "ScheduleWakeup":
+        print(
+            json.dumps(
+                {
+                    "decision": "block",
+                    "reason": (
+                        "ScheduleWakeup is not available to the orchestrator. "
+                        "Use `Bash sleep 1` and loop back to Step A within this same "
+                        "turn. `claude -p` has no harness to re-invoke you — calling "
+                        "ScheduleWakeup ends the orchestrator process while subagents "
+                        "are still running and the runner falsely marks the job complete."
+                    ),
+                }
+            )
+        )
+        sys.exit(0)
+
     job_dir = _resolve_job_dir()
-    reason = _evaluate(job_dir)
+    reason = _evaluate(job_dir, on_stop=(hook_event == "Stop"))
     if reason is None:
         sys.exit(0)
 
     msg_tail = (
         " Read $JOB_DIR/orchestrator_messages.jsonl and $JOB_DIR/control.md, "
-        "process them per Steps A and B of the orchestrator main loop, then continue."
+        "process them per Steps A and B of the orchestrator main loop, "
+        "then continue with `Bash sleep 1` + Step C/D/E. Do not end the "
+        "turn until every workflow node is in completed/failed/skipped."
     )
 
     if hook_event == "Stop":

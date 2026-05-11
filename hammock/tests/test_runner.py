@@ -127,8 +127,9 @@ def test_orchestrator_prompt_demands_message_and_control_read_every_iteration() 
 def test_submit_writes_intake_hook_settings(tmp_path: Path) -> None:
     """submit_job must write `<job_dir>/.claude/settings.json` so the
     orchestrator subprocess (`claude -p` with cwd=<job_dir>) picks up
-    the intake-discipline hook on Stop and PreToolUse:Task. Without this
-    file, the hook never runs and the prompt is the only line of defense."""
+    the intake-discipline hook on Stop and PreToolUse:Task /
+    PreToolUse:ScheduleWakeup. Without this file, the hook never runs
+    and the prompt is the only line of defense."""
     import json
 
     job = JobConfig(slug="t-hooks", workflow_name="fix-bug", request_text="x")
@@ -141,14 +142,124 @@ def test_submit_writes_intake_hook_settings(tmp_path: Path) -> None:
     hooks = payload.get("hooks", {})
     assert "Stop" in hooks
     assert "PreToolUse" in hooks
-    # PreToolUse entry must scope to Task only.
+    # PreToolUse entries must include matchers for both Task and ScheduleWakeup.
     pre = hooks["PreToolUse"]
-    assert any(entry.get("matcher") == "Task" for entry in pre)
+    matchers = {entry.get("matcher") for entry in pre}
+    assert "Task" in matchers
+    assert "ScheduleWakeup" in matchers, (
+        "ScheduleWakeup must be denied via PreToolUse hook so the orchestrator "
+        "can't escape its `claude -p` turn via the harness wake-up primitive"
+    )
 
     # Hook command must point at the bundled check_intake.py.
     stop_cmd = hooks["Stop"][0]["hooks"][0]["command"]
     assert stop_cmd.endswith("check_intake.py")
     assert Path(stop_cmd).is_file()
+
+
+def test_run_marks_failed_when_rc_zero_but_work_pending(tmp_path: Path) -> None:
+    """rc=0 alone does not mean the job is complete. If the fake runner
+    exits cleanly while state.json shows pending nodes / active tasks,
+    the job must be marked FAILED with an explanatory error.
+
+    This was the recurring bug behind job
+    2026-05-11-fix-bug-black-color-is-missing-from-the-highlighter-extension-01f3e2:
+    the orchestrator called ScheduleWakeup, `claude -p` exited rc=0, and
+    the runner mistakenly marked the job 'completed' while write-bug-report
+    was still running.
+    """
+    import json
+
+    def runner(
+        cmd: list[str],
+        cwd: Path,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> subprocess.CompletedProcess[bytes]:
+        # Simulate a premature, clean exit while leaving state.json in a
+        # half-done shape — active_tasks holds an in-flight node task.
+        stdout_path.write_bytes(b"")
+        stderr_path.write_bytes(b"")
+        (cwd / "orchestrator_state.json").write_text(
+            json.dumps(
+                {
+                    "last_processed_msg_id": None,
+                    "last_control_state": "running",
+                    "active_tasks": [
+                        {
+                            "node_id": "write-bug-report",
+                            "task_id": "t-x",
+                            "started_at": "x",
+                            "attempt": 1,
+                        }
+                    ],
+                    "active_helpers": [],
+                    "completed_nodes": [],
+                    "failed_nodes": [],
+                    "skipped_nodes": [],
+                    "human_review_iterations": {},
+                    "expanded_nodes": {},
+                }
+            )
+        )
+        return subprocess.CompletedProcess(cmd, returncode=0)
+
+    job = JobConfig(slug="t-premature", workflow_name="fix-bug", request_text="x")
+    rc = run_job(job=job, root=tmp_path, runner=runner)
+    assert rc == 0  # subprocess exit code preserved
+
+    job_md = (paths.job_dir("t-premature", root=tmp_path) / "job.md").read_text()
+    assert "state: failed" in job_md, job_md
+    assert "exited prematurely" in job_md
+    assert "write-bug-report" in job_md
+
+
+def test_run_marks_completed_when_rc_zero_and_state_clean(tmp_path: Path) -> None:
+    """Sanity: when the runner exits rc=0 AND state.json shows all nodes
+    terminal, the job is correctly marked completed."""
+    import json
+
+    def runner(
+        cmd: list[str],
+        cwd: Path,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> subprocess.CompletedProcess[bytes]:
+        stdout_path.write_bytes(b"")
+        stderr_path.write_bytes(b"")
+        # Mirror the bundled fix-bug workflow node ids so the
+        # reconciliation has the full set marked terminal.
+        wf_path = cwd / "workflow.yaml"
+        ids: list[str] = []
+        in_nodes = False
+        for line in wf_path.read_text().splitlines():
+            if line.strip().startswith("nodes:"):
+                in_nodes = True
+                continue
+            if in_nodes and line.strip().startswith("- id:"):
+                ids.append(line.split(":", 1)[1].strip().strip("\"'"))
+        (cwd / "orchestrator_state.json").write_text(
+            json.dumps(
+                {
+                    "last_processed_msg_id": None,
+                    "last_control_state": "running",
+                    "active_tasks": [],
+                    "active_helpers": [],
+                    "completed_nodes": ids,
+                    "failed_nodes": [],
+                    "skipped_nodes": [],
+                    "human_review_iterations": {},
+                    "expanded_nodes": {},
+                }
+            )
+        )
+        return subprocess.CompletedProcess(cmd, returncode=0)
+
+    job = JobConfig(slug="t-clean", workflow_name="fix-bug", request_text="x")
+    run_job(job=job, root=tmp_path, runner=runner)
+
+    job_md = (paths.job_dir("t-clean", root=tmp_path) / "job.md").read_text()
+    assert "state: completed" in job_md, job_md
 
 
 def test_submit_copies_repo(tmp_path: Path) -> None:

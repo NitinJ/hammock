@@ -169,6 +169,181 @@ def test_unknown_event_passes_through(job_dir: Path) -> None:
     assert out.strip() == ""
 
 
+def test_schedule_wakeup_always_denied(job_dir: Path) -> None:
+    """The orchestrator must never call ScheduleWakeup. `claude -p` has no
+    harness to re-invoke the agent when the wakeup fires, so ScheduleWakeup
+    cleanly exits the process and the runner falsely marks the job complete.
+
+    Hook denies it unconditionally, even when state is otherwise fresh."""
+    _write_state(job_dir, last_msg_id=None, last_control="running")
+    _write_control(job_dir, "running")
+
+    rc, out, _ = _run_hook(
+        {"hook_event_name": "PreToolUse", "tool_name": "ScheduleWakeup"},
+        job_dir,
+    )
+    assert rc == 0
+    decision = json.loads(out)
+    assert decision["decision"] == "block"
+    assert "ScheduleWakeup" in decision["reason"]
+    assert "Bash sleep 1" in decision["reason"]
+
+
+def test_stop_blocked_when_active_tasks_pending(job_dir: Path) -> None:
+    """A clean rc=0 exit is wrong when work is in flight. Stop hook must
+    block when active_tasks is non-empty."""
+    state_payload = {
+        "last_processed_msg_id": None,
+        "last_control_state": "running",
+        "active_tasks": [
+            {"node_id": "write-bug-report", "task_id": "t-1", "started_at": "x", "attempt": 1}
+        ],
+        "active_helpers": [],
+        "completed_nodes": [],
+        "failed_nodes": [],
+        "skipped_nodes": [],
+        "human_review_iterations": {},
+        "expanded_nodes": {},
+    }
+    (job_dir / "orchestrator_state.json").write_text(json.dumps(state_payload))
+    _write_control(job_dir, "running")
+
+    rc, out, _ = _run_hook({"hook_event_name": "Stop"}, job_dir)
+    assert rc == 0
+    decision = json.loads(out)
+    assert decision["decision"] == "block"
+    assert "active_tasks" in decision["reason"]
+    assert "write-bug-report" in decision["reason"]
+
+
+def test_stop_blocked_when_active_helpers_pending(job_dir: Path) -> None:
+    """Helper Tasks count too — they're spawned by the orchestrator and
+    we cannot end the turn while one is still running."""
+    state_payload = {
+        "last_processed_msg_id": None,
+        "last_control_state": "running",
+        "active_tasks": [],
+        "active_helpers": [
+            {
+                "helper": "prepare-node-input",
+                "for_node": "write-bug-report",
+                "task_id": "h-1",
+                "started_at": "x",
+                "context": {"trigger": "dispatch"},
+            }
+        ],
+        "completed_nodes": [],
+        "failed_nodes": [],
+        "skipped_nodes": [],
+        "human_review_iterations": {},
+        "expanded_nodes": {},
+    }
+    (job_dir / "orchestrator_state.json").write_text(json.dumps(state_payload))
+    _write_control(job_dir, "running")
+
+    rc, out, _ = _run_hook({"hook_event_name": "Stop"}, job_dir)
+    assert rc == 0
+    decision = json.loads(out)
+    assert decision["decision"] == "block"
+    assert "active_helpers" in decision["reason"]
+    assert "prepare-node-input" in decision["reason"]
+
+
+def test_stop_blocked_when_pending_nodes_remain(job_dir: Path) -> None:
+    """If active_tasks is empty but the workflow has pending nodes that
+    haven't been dispatched, the orchestrator must keep working — not stop."""
+    state_payload = {
+        "last_processed_msg_id": None,
+        "last_control_state": "running",
+        "active_tasks": [],
+        "active_helpers": [],
+        "completed_nodes": ["write-bug-report"],
+        "failed_nodes": [],
+        "skipped_nodes": [],
+        "human_review_iterations": {},
+        "expanded_nodes": {},
+    }
+    (job_dir / "orchestrator_state.json").write_text(json.dumps(state_payload))
+    _write_control(job_dir, "running")
+    # Static workflow has more nodes than just write-bug-report.
+    (job_dir / "workflow.yaml").write_text(
+        "name: x\n"
+        "nodes:\n"
+        "  - id: write-bug-report\n"
+        "    prompt: write-bug-report\n"
+        "  - id: write-design-spec\n"
+        "    prompt: write-design-spec\n"
+        "    after: [write-bug-report]\n"
+    )
+
+    rc, out, _ = _run_hook({"hook_event_name": "Stop"}, job_dir)
+    assert rc == 0
+    decision = json.loads(out)
+    assert decision["decision"] == "block"
+    assert "pending nodes" in decision["reason"]
+    assert "write-design-spec" in decision["reason"]
+
+
+def test_stop_allowed_when_all_terminal(job_dir: Path) -> None:
+    """The legitimate completion case: every workflow node terminal,
+    no in-flight tasks/helpers. Stop is allowed."""
+    state_payload = {
+        "last_processed_msg_id": None,
+        "last_control_state": "running",
+        "active_tasks": [],
+        "active_helpers": [],
+        "completed_nodes": ["write-bug-report", "write-summary"],
+        "failed_nodes": [],
+        "skipped_nodes": [],
+        "human_review_iterations": {},
+        "expanded_nodes": {},
+    }
+    (job_dir / "orchestrator_state.json").write_text(json.dumps(state_payload))
+    _write_control(job_dir, "running")
+    (job_dir / "workflow.yaml").write_text(
+        "name: x\n"
+        "nodes:\n"
+        "  - id: write-bug-report\n"
+        "    prompt: write-bug-report\n"
+        "  - id: write-summary\n"
+        "    prompt: write-summary\n"
+        "    after: [write-bug-report]\n"
+    )
+
+    rc, out, _ = _run_hook({"hook_event_name": "Stop"}, job_dir)
+    assert rc == 0
+    assert out.strip() == ""
+
+
+def test_pretooluse_task_does_not_block_on_pending_nodes(job_dir: Path) -> None:
+    """PreToolUse on Task is about intake staleness, NOT about pending
+    work — blocking dispatch when there's pending work would prevent
+    the orchestrator from making progress at all."""
+    state_payload = {
+        "last_processed_msg_id": None,
+        "last_control_state": "running",
+        "active_tasks": [],
+        "active_helpers": [],
+        "completed_nodes": [],
+        "failed_nodes": [],
+        "skipped_nodes": [],
+        "human_review_iterations": {},
+        "expanded_nodes": {},
+    }
+    (job_dir / "orchestrator_state.json").write_text(json.dumps(state_payload))
+    _write_control(job_dir, "running")
+    (job_dir / "workflow.yaml").write_text(
+        "name: x\nnodes:\n  - id: write-bug-report\n    prompt: write-bug-report\n"
+    )
+
+    rc, out, _ = _run_hook(
+        {"hook_event_name": "PreToolUse", "tool_name": "Task"},
+        job_dir,
+    )
+    assert rc == 0
+    assert out.strip() == ""
+
+
 def test_only_operator_messages_count(job_dir: Path) -> None:
     """The hook tracks operator messages; orchestrator's own self-replies
     must not trip the guard."""
