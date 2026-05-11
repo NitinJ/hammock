@@ -295,6 +295,20 @@ def run_job(
         "--verbose",
         "--permission-mode",
         "bypassPermissions",
+        # CRITICAL: skip the user-level (~/.claude/) settings cascade. The
+        # operator's personal harness — sleep-blocking PreToolUse hooks,
+        # the /loop skill (which exposes ScheduleWakeup), etc. — bleeds
+        # into the orchestrator subprocess and breaks its main loop:
+        #   - `Bash sleep 30` gets intercepted and converted to an async
+        #     Monitor, which leaves the orchestrator idle until a file
+        #     event fires (operator messages don't trigger one).
+        #   - `ScheduleWakeup` becomes available and the orchestrator
+        #     uses it to "go to sleep," causing premature exit.
+        # We still load `project` + `local` so our job-dir
+        # `.claude/settings.json` (intake hook + ScheduleWakeup deny) is
+        # honored.
+        "--setting-sources",
+        "project,local",
     ]
     log.info("v2 runner: spawning claude orchestrator for job=%s", job.slug)
     completed = runner(

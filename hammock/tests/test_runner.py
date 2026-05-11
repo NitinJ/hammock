@@ -278,6 +278,43 @@ def test_submit_copies_repo(tmp_path: Path) -> None:
     assert (repo / "README.md").read_text() == "hi"
 
 
+def test_run_isolates_orchestrator_from_user_settings(tmp_path: Path) -> None:
+    """The orchestrator must be spawned with `--setting-sources project,local`
+    so the operator's personal `~/.claude/` settings (sleep-blocking hooks,
+    the /loop skill that exposes ScheduleWakeup, etc.) don't bleed into the
+    subprocess and break the main loop's polling cadence.
+
+    Without this flag, `Bash sleep 30` from the orchestrator gets intercepted
+    by user-level hooks and converted into an async Monitor — the
+    orchestrator goes idle until a file event fires, dropping chat + pause
+    responsiveness to minutes."""
+    captured_cmd: list[list[str]] = []
+
+    def runner(
+        cmd: list[str],
+        cwd: Path,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> subprocess.CompletedProcess[bytes]:
+        captured_cmd.append(cmd)
+        stdout_path.write_bytes(b"")
+        stderr_path.write_bytes(b"")
+        return subprocess.CompletedProcess(cmd, returncode=0)
+
+    job = JobConfig(slug="t-isolate", workflow_name="fix-bug", request_text="x")
+    run_job(job=job, root=tmp_path, runner=runner)
+
+    assert captured_cmd, "runner was not invoked"
+    cmd = captured_cmd[0]
+    assert "--setting-sources" in cmd, cmd
+    idx = cmd.index("--setting-sources")
+    sources = cmd[idx + 1]
+    sources_set = {s.strip() for s in sources.split(",")}
+    assert sources_set == {"project", "local"}, (
+        f"must exclude 'user' so ~/.claude/ harness rules don't bleed in; got {sources_set!r}"
+    )
+
+
 def test_run_writes_orchestrator_jsonl_and_marks_completed(tmp_path: Path) -> None:
     job = JobConfig(slug="t-003", workflow_name="fix-bug", request_text="fix it")
     rc = run_job(

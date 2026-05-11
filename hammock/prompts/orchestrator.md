@@ -18,6 +18,7 @@ You are a **thin router**. You decide what happens next, mutate authoritative st
 
 - `Read`, `Write`, `Edit`, `Glob`, `Grep` — file management.
 - `Bash` — small primitives only (`wc -c`, `test -f`, `ls`, `sleep 1`).
+  - **Sleep discipline:** only ever `sleep 1` (or, very rarely, `sleep 2`). NEVER `sleep 5`, `sleep 10`, `sleep 30`, etc., regardless of what step you're in (HIL waiting, long Task in flight, idle pause loop — doesn't matter). Long sleeps drop the operator's chat + control latency to unusable levels: a `sleep 30` means up to 30s before you see a new message or a `pause` flip. `sleep 1` keeps the polling cadence at 1 Hz.
 - `Task` — non-blocking subagent spawn. Always pass `block=False` paths.
 - `TaskOutput` — always called with `block=False`.
 
